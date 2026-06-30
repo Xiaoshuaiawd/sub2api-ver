@@ -15,9 +15,11 @@ import (
 
 type adminUsageRepoCapture struct {
 	service.UsageLogRepository
-	listParams   pagination.PaginationParams
-	listFilters  usagestats.UsageLogFilters
-	statsFilters usagestats.UsageLogFilters
+	listParams             pagination.PaginationParams
+	listFilters            usagestats.UsageLogFilters
+	statsFilters           usagestats.UsageLogFilters
+	oauthCostSummary       *usagestats.OAuthCostSummary
+	oauthCostSummaryCalled bool
 }
 
 func (s *adminUsageRepoCapture) ListWithFilters(ctx context.Context, params pagination.PaginationParams, filters usagestats.UsageLogFilters) ([]service.UsageLog, *pagination.PaginationResult, error) {
@@ -34,6 +36,14 @@ func (s *adminUsageRepoCapture) ListWithFilters(ctx context.Context, params pagi
 func (s *adminUsageRepoCapture) GetStatsWithFilters(ctx context.Context, filters usagestats.UsageLogFilters) (*usagestats.UsageStats, error) {
 	s.statsFilters = filters
 	return &usagestats.UsageStats{}, nil
+}
+
+func (s *adminUsageRepoCapture) GetOAuthCostSummary(ctx context.Context) (*usagestats.OAuthCostSummary, error) {
+	s.oauthCostSummaryCalled = true
+	if s.oauthCostSummary != nil {
+		return s.oauthCostSummary, nil
+	}
+	return &usagestats.OAuthCostSummary{}, nil
 }
 
 func newAdminUsageRequestTypeTestRouter(repo *adminUsageRepoCapture) *gin.Engine {

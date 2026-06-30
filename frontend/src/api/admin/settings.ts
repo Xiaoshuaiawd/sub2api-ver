@@ -877,6 +877,10 @@ export interface UpdateSettingsRequest {
   allow_user_view_error_requests?: boolean;
 }
 
+export interface OAuthCostConfig {
+  purchase_cost_cny: number;
+}
+
 /**
  * Get all system settings
  * @returns System settings
@@ -897,6 +901,23 @@ export async function updateSettings(
   const { data } = await apiClient.put<SystemSettings>(
     "/admin/settings",
     settings,
+  );
+  return data;
+}
+
+export async function getOAuthCost(): Promise<OAuthCostConfig> {
+  const { data } = await apiClient.get<OAuthCostConfig>(
+    "/admin/settings/oauth-cost",
+  );
+  return data;
+}
+
+export async function updateOAuthCost(
+  payload: OAuthCostConfig,
+): Promise<OAuthCostConfig> {
+  const { data } = await apiClient.put<OAuthCostConfig>(
+    "/admin/settings/oauth-cost",
+    payload,
   );
   return data;
 }
@@ -1361,6 +1382,8 @@ export async function resetWebSearchUsage(payload: {
 export const settingsAPI = {
   getSettings,
   updateSettings,
+  getOAuthCost,
+  updateOAuthCost,
   testSmtpConnection,
   sendTestEmail,
   getEmailTemplates,

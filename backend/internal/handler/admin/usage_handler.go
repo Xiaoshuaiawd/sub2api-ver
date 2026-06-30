@@ -348,6 +348,17 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 	response.Success(c, stats)
 }
 
+// OAuthCostSummary handles getting all-time OAuth account-side usage summary.
+// GET /api/v1/admin/usage/oauth-cost-summary
+func (h *UsageHandler) OAuthCostSummary(c *gin.Context) {
+	summary, err := h.usageService.GetOAuthCostSummary(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, summary)
+}
+
 // SearchUsers handles searching users by email keyword
 // GET /api/v1/admin/usage/search-users
 func (h *UsageHandler) SearchUsers(c *gin.Context) {

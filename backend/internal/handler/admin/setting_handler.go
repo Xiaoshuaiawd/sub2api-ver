@@ -3167,6 +3167,40 @@ func (h *SettingHandler) DeleteAdminAPIKey(c *gin.Context) {
 	response.Success(c, gin.H{"message": "Admin API key deleted"})
 }
 
+type oauthCostResponse struct {
+	PurchaseCostCNY float64 `json:"purchase_cost_cny"`
+}
+
+type updateOAuthCostRequest struct {
+	PurchaseCostCNY float64 `json:"purchase_cost_cny"`
+}
+
+// GetOAuthCost returns the stored OAuth purchase cost.
+// GET /api/v1/admin/settings/oauth-cost
+func (h *SettingHandler) GetOAuthCost(c *gin.Context) {
+	amount, err := h.settingService.GetOAuthPurchaseCostCNY(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, oauthCostResponse{PurchaseCostCNY: amount})
+}
+
+// UpdateOAuthCost stores the OAuth purchase cost.
+// PUT /api/v1/admin/settings/oauth-cost
+func (h *SettingHandler) UpdateOAuthCost(c *gin.Context) {
+	var req updateOAuthCostRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	if err := h.settingService.SetOAuthPurchaseCostCNY(c.Request.Context(), req.PurchaseCostCNY); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	response.Success(c, oauthCostResponse{PurchaseCostCNY: req.PurchaseCostCNY})
+}
+
 // GetOverloadCooldownSettings 获取529过载冷却配置
 // GET /api/v1/admin/settings/overload-cooldown
 func (h *SettingHandler) GetOverloadCooldownSettings(c *gin.Context) {
