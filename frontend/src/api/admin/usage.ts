@@ -26,6 +26,13 @@ export interface AdminUsageStatsResponse {
   endpoint_paths?: EndpointStat[]
 }
 
+export interface OAuthCostSummaryResponse {
+  account_count: number
+  total_consumed_quota: number
+  total_requests: number
+  total_tokens: number
+}
+
 export interface SimpleUser {
   id: number
   email: string
@@ -132,6 +139,15 @@ export async function getStats(params: {
 }
 
 /**
+ * Get all-time OAuth account-side usage summary (admin only)
+ * @returns OAuth cost summary
+ */
+export async function getOAuthCostSummary(): Promise<OAuthCostSummaryResponse> {
+  const { data } = await apiClient.get<OAuthCostSummaryResponse>('/admin/usage/oauth-cost-summary')
+  return data
+}
+
+/**
  * Search users by email keyword (admin only)
  * @param keyword - Email keyword to search
  * @returns List of matching users (max 30)
@@ -203,6 +219,7 @@ export async function cancelCleanupTask(taskId: number): Promise<{ id: number; s
 export const adminUsageAPI = {
   list,
   getStats,
+  getOAuthCostSummary,
   searchUsers,
   searchApiKeys,
   listCleanupTasks,

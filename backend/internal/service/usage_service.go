@@ -393,3 +393,12 @@ func (s *UsageService) GetStatsWithFilters(ctx context.Context, filters usagesta
 	}
 	return stats, nil
 }
+
+// GetOAuthCostSummary returns all-time account-side usage for active OAuth accounts.
+func (s *UsageService) GetOAuthCostSummary(ctx context.Context) (*usagestats.OAuthCostSummary, error) {
+	summary, err := s.usageRepo.GetOAuthCostSummary(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get oauth cost summary: %w", err)
+	}
+	return summary, nil
+}

@@ -115,6 +115,14 @@ type EndpointStat struct {
 	ActualCost  float64 `json:"actual_cost"` // 实际扣除
 }
 
+// OAuthCostSummary represents all-time account-side consumption for active OAuth accounts.
+type OAuthCostSummary struct {
+	AccountCount       int64   `json:"account_count"`
+	TotalConsumedQuota float64 `json:"total_consumed_quota"`
+	TotalRequests      int64   `json:"total_requests"`
+	TotalTokens        int64   `json:"total_tokens"`
+}
+
 // GroupUsageSummary represents today's and cumulative cost for a single group.
 type GroupUsageSummary struct {
 	GroupID   int64   `json:"group_id"`

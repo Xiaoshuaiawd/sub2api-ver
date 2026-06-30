@@ -691,6 +691,34 @@ func (s *SettingService) LoadAPIKeyACLTrustForwardedIPSetting(ctx context.Contex
 	return nil
 }
 
+// GetOAuthPurchaseCostCNY returns the stored OAuth account purchase cost in CNY.
+func (s *SettingService) GetOAuthPurchaseCostCNY(ctx context.Context) (float64, error) {
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyOAuthPurchaseCostCNY)
+	if err != nil {
+		if errors.Is(err, ErrSettingNotFound) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("get oauth purchase cost cny: %w", err)
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, nil
+	}
+	amount, err := strconv.ParseFloat(value, 64)
+	if err != nil || math.IsNaN(amount) || math.IsInf(amount, 0) || amount < 0 {
+		return 0, nil
+	}
+	return amount, nil
+}
+
+// SetOAuthPurchaseCostCNY stores the OAuth account purchase cost in CNY.
+func (s *SettingService) SetOAuthPurchaseCostCNY(ctx context.Context, amount float64) error {
+	if math.IsNaN(amount) || math.IsInf(amount, 0) || amount < 0 {
+		return fmt.Errorf("purchase_cost_cny must be a finite number greater than or equal to 0")
+	}
+	return s.settingRepo.Set(ctx, SettingKeyOAuthPurchaseCostCNY, strconv.FormatFloat(amount, 'f', 8, 64))
+}
+
 // GetAllSettings 获取所有系统设置
 func (s *SettingService) GetAllSettings(ctx context.Context) (*SystemSettings, error) {
 	settings, err := s.settingRepo.GetAll(ctx)
