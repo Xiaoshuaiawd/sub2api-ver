@@ -2720,7 +2720,7 @@ func TestGatewayService_SelectAccountWithLoadAwareness(t *testing.T) {
 		require.Equal(t, int64(2), cache.sessionBindings[sessionHash])
 	})
 
-	t.Run("模型路由-按负载选择账号", func(t *testing.T) {
+	t.Run("模型路由-固定主账号优先", func(t *testing.T) {
 		groupID := int64(21)
 
 		repo := &mockAccountRepoForPlatform{
@@ -2773,8 +2773,46 @@ func TestGatewayService_SelectAccountWithLoadAwareness(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.Account)
+		require.Equal(t, int64(1), result.Account.ID)
+		require.Equal(t, int64(1), cache.sessionBindings["route"])
+	})
+
+	t.Run("主账号被排除-切换到下一个单账号", func(t *testing.T) {
+		repo := &mockAccountRepoForPlatform{
+			accounts: []Account{
+				{ID: 1, Platform: PlatformAnthropic, Priority: 1, Status: StatusActive, Schedulable: true, Concurrency: 5},
+				{ID: 2, Platform: PlatformAnthropic, Priority: 1, Status: StatusActive, Schedulable: true, Concurrency: 5},
+			},
+			accountsByID: map[int64]*Account{},
+		}
+		for i := range repo.accounts {
+			repo.accountsByID[repo.accounts[i].ID] = &repo.accounts[i]
+		}
+
+		cache := &mockGatewayCacheForPlatform{}
+		cfg := testConfig()
+		cfg.Gateway.Scheduling.LoadBatchEnabled = true
+
+		concurrencyCache := &mockConcurrencyCache{
+			loadMap: map[int64]*AccountLoadInfo{
+				1: {AccountID: 1, LoadRate: 10},
+				2: {AccountID: 2, LoadRate: 90},
+			},
+		}
+
+		svc := &GatewayService{
+			accountRepo:        repo,
+			cache:              cache,
+			cfg:                cfg,
+			concurrencyService: NewConcurrencyService(concurrencyCache),
+		}
+
+		result, err := svc.SelectAccountWithLoadAwareness(ctx, nil, "failover", "claude-3-5-sonnet-20241022", map[int64]struct{}{1: {}}, "", int64(0))
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.NotNil(t, result.Account)
 		require.Equal(t, int64(2), result.Account.ID)
-		require.Equal(t, int64(2), cache.sessionBindings["route"])
+		require.Equal(t, int64(2), cache.sessionBindings["failover"])
 	})
 
 	t.Run("模型路由-路由账号全满返回等待计划", func(t *testing.T) {
@@ -3219,7 +3257,7 @@ func TestGatewayService_SelectAccountWithLoadAwareness(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.Account)
-		require.Equal(t, int64(2), result.Account.ID)
+		require.Equal(t, int64(1), result.Account.ID)
 	})
 }
 
