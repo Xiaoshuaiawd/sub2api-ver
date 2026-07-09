@@ -67,10 +67,7 @@ const (
 	maxRateLimit429CooldownSeconds     = 7200
 )
 
-const (
-	openAIImageRateLimitDefaultCooldown = time.Minute
-	openAIImageRateLimitReason          = "openai_image_rate_limited"
-)
+const openAIImageRateLimitReason = "openai_image_rate_limited"
 
 var openAIImageTryAgainPattern = regexp.MustCompile(`(?i)try again in\s+([0-9]+(?:\.[0-9]+)?)\s*(ms|s|sec|secs|second|seconds|m|min|mins|minute|minutes)`)
 
@@ -1003,8 +1000,7 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 			return
 		}
 
-		// 其他平台：没有重置时间，使用可配置的秒级默认回避，避免误伤长时间不可调度。
-		s.apply429FallbackRateLimit(ctx, account, "no_reset_time")
+		slog.Info("rate_limit_429_no_reset_time_skipped", "account_id", account.ID, "platform", account.Platform, "reason", "no reset time in upstream response")
 		return
 	}
 
@@ -1012,7 +1008,6 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 	ts, err := strconv.ParseInt(resetTimestamp, 10, 64)
 	if err != nil {
 		slog.Warn("rate_limit_reset_parse_failed", "reset_timestamp", resetTimestamp, "error", err)
-		s.apply429FallbackRateLimit(ctx, account, "reset_parse_failed")
 		return
 	}
 
@@ -1914,11 +1909,15 @@ func (s *RateLimitService) HandleOpenAIImageRateLimit(ctx context.Context, accou
 	}
 
 	resetAt := openAIImageRateLimitResetAt(headers, responseBody)
-	if err := s.accountRepo.SetModelRateLimit(ctx, account.ID, openAIImageGenerationRateLimitKey, resetAt, openAIImageRateLimitReason); err != nil {
+	if resetAt == nil {
+		slog.Info("openai_image_rate_limit_no_retry_time_skipped", "account_id", account.ID, "scope", openAIImageGenerationRateLimitKey)
+		return false
+	}
+	if err := s.accountRepo.SetModelRateLimit(ctx, account.ID, openAIImageGenerationRateLimitKey, *resetAt, openAIImageRateLimitReason); err != nil {
 		slog.Warn("openai_image_rate_limit_set_model_rate_limit_failed", "account_id", account.ID, "scope", openAIImageGenerationRateLimitKey, "error", err)
 		return true
 	}
-	slog.Info("openai_image_rate_limited", "account_id", account.ID, "scope", openAIImageGenerationRateLimitKey, "reset_at", resetAt, "reset_in", time.Until(resetAt).Truncate(time.Second))
+	slog.Info("openai_image_rate_limited", "account_id", account.ID, "scope", openAIImageGenerationRateLimitKey, "reset_at", *resetAt, "reset_in", time.Until(*resetAt).Truncate(time.Second))
 	return true
 }
 
@@ -1940,23 +1939,32 @@ func isOpenAIImageRateLimitError(statusCode int, body []byte) bool {
 	return false
 }
 
-func openAIImageRateLimitResetAt(headers http.Header, body []byte) time.Time {
+func openAIImageRateLimitResetAt(headers http.Header, body []byte) *time.Time {
+	return explicit429RetryResetAt(headers, body)
+}
+
+func hasExplicit429RetrySignal(headers http.Header, body []byte) bool {
+	return explicit429RetryResetAt(headers, body) != nil
+}
+
+func explicit429RetryResetAt(headers http.Header, body []byte) *time.Time {
 	now := time.Now()
 	if resetAt := parseRetryAfterResetTime(headers, now); resetAt != nil && resetAt.After(now) {
-		return *resetAt
+		return resetAt
 	}
 	if resetAt := calculateOpenAI429ResetTime(headers); resetAt != nil && resetAt.After(now) {
-		return *resetAt
+		return resetAt
 	}
 	if resetUnix := parseOpenAIRateLimitResetTime(body); resetUnix != nil {
 		if resetAt := time.Unix(*resetUnix, 0); resetAt.After(now) {
-			return resetAt
+			return &resetAt
 		}
 	}
 	if cooldown := parseOpenAIImageTryAgainCooldown(body); cooldown > 0 {
-		return now.Add(cooldown)
+		resetAt := now.Add(cooldown)
+		return &resetAt
 	}
-	return now.Add(openAIImageRateLimitDefaultCooldown)
+	return nil
 }
 
 func parseRetryAfterResetTime(headers http.Header, now time.Time) *time.Time {

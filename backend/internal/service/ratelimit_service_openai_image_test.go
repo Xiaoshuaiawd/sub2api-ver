@@ -43,21 +43,16 @@ func TestRateLimitService_HandleOpenAIImageRateLimit_ParsesTryAgainCooldown(t *t
 	require.WithinDuration(t, before.Add(2*time.Second), call.resetAt, time.Second)
 }
 
-func TestRateLimitService_HandleOpenAIImageRateLimit_DefaultsToOneMinute(t *testing.T) {
+func TestRateLimitService_HandleOpenAIImageRateLimit_NoRetryTimeSkipsLocalCooldown(t *testing.T) {
 	repo := &modelNotFoundAccountRepoStub{}
 	svc := &RateLimitService{accountRepo: repo}
 	account := &Account{ID: 202, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
 	body := []byte(`{"error":{"type":"rate_limit_exceeded","message":"Rate limit reached for gpt-image-2-codex (for limit gpt-image) on input-images per min."}}`)
 
-	before := time.Now()
 	handled := svc.HandleOpenAIImageRateLimit(context.Background(), account, http.StatusTooManyRequests, http.Header{}, body)
 
-	require.True(t, handled)
-	require.Len(t, repo.modelRateLimitCalls, 1)
-	call := repo.modelRateLimitCalls[0]
-	require.Equal(t, openAIImageGenerationRateLimitKey, call.scope)
-	require.Equal(t, openAIImageRateLimitReason, call.reason)
-	require.WithinDuration(t, before.Add(time.Minute), call.resetAt, time.Second)
+	require.False(t, handled)
+	require.Empty(t, repo.modelRateLimitCalls)
 }
 
 func TestOpenAIGatewayService_HandleOpenAIAccountUpstreamError_ImageRateLimitDoesNotBlockWholeAccount(t *testing.T) {

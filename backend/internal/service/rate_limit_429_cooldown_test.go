@@ -61,7 +61,7 @@ func TestSetRateLimit429CooldownSettings_EnabledRejectsOutOfRange(t *testing.T) 
 	}
 }
 
-func TestHandle429_FallbackUsesDBSeconds(t *testing.T) {
+func TestHandle429_NoResetSkipsLocalMarkEvenWhenFallbackSettingEnabled(t *testing.T) {
 	accountRepo := &rateLimit429AccountRepoStub{}
 	settingRepo := newMockSettingRepo()
 	data, _ := json.Marshal(RateLimit429CooldownSettings{Enabled: true, CooldownSeconds: 12})
@@ -72,13 +72,9 @@ func TestHandle429_FallbackUsesDBSeconds(t *testing.T) {
 	svc.SetSettingService(settingSvc)
 
 	account := &Account{ID: 42, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
-	before := time.Now()
 	svc.handle429(context.Background(), account, http.Header{}, []byte(`{"error":{"type":"rate_limit_error","message":"slow down"}}`))
-	after := time.Now()
 
-	require.Equal(t, 1, accountRepo.rateLimitCalls)
-	require.Equal(t, int64(42), accountRepo.lastRateLimitID)
-	require.True(t, !accountRepo.lastRateLimitReset.Before(before.Add(12*time.Second)) && !accountRepo.lastRateLimitReset.After(after.Add(12*time.Second)))
+	require.Zero(t, accountRepo.rateLimitCalls)
 }
 
 func TestHandle429_FallbackDisabledSkipsLocalMark(t *testing.T) {
@@ -97,17 +93,13 @@ func TestHandle429_FallbackDisabledSkipsLocalMark(t *testing.T) {
 	require.Zero(t, accountRepo.rateLimitCalls)
 }
 
-func TestHandle429_FallbackUsesDefaultSecondsWhenSettingServiceMissing(t *testing.T) {
+func TestHandle429_NoResetSkipsLocalMarkWhenSettingServiceMissing(t *testing.T) {
 	accountRepo := &rateLimit429AccountRepoStub{}
 	cfg := &config.Config{}
 	svc := NewRateLimitService(accountRepo, nil, cfg, nil, nil)
 
 	account := &Account{ID: 44, Platform: PlatformGemini, Type: AccountTypeAPIKey}
-	before := time.Now()
 	svc.handle429(context.Background(), account, http.Header{}, []byte(`{"error":{"message":"slow down"}}`))
-	after := time.Now()
 
-	require.Equal(t, 1, accountRepo.rateLimitCalls)
-	require.Equal(t, int64(44), accountRepo.lastRateLimitID)
-	require.True(t, !accountRepo.lastRateLimitReset.Before(before.Add(5*time.Second)) && !accountRepo.lastRateLimitReset.After(after.Add(5*time.Second)))
+	require.Zero(t, accountRepo.rateLimitCalls)
 }

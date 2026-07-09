@@ -79,7 +79,7 @@ func TestOpenAIGatewayService_Forward_FailoverReparsesCachedBodyForNextAccount(t
 			upstream := &httpUpstreamRecorder{responses: []*http.Response{
 				{
 					StatusCode: http.StatusTooManyRequests,
-					Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid-failover-a"}},
+					Header:     http.Header{"Content-Type": []string{"application/json"}, "Retry-After": []string{"1"}, "x-request-id": []string{"rid-failover-a"}},
 					Body:       io.NopCloser(strings.NewReader(`{"error":{"type":"rate_limit_error","message":"rate limited"}}`)),
 				},
 				{
@@ -127,7 +127,7 @@ func TestOpenAIGatewayService_HandleFailoverSideEffects_DoesNotRereadResponseBod
 		svc.handleFailoverSideEffects(context.Background(), resp, account, []byte(`{"error":{"type":"rate_limit_error","message":"rate limited"}}`))
 	})
 
-	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
 }
 
 func TestGetOpenAIRequestBodyMap_IgnoresLegacyContextCache(t *testing.T) {

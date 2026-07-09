@@ -272,8 +272,28 @@ func TestShouldFailoverOpenAIUpstreamResponseContextWindow502(t *testing.T) {
 	svc := &OpenAIGatewayService{}
 	body := []byte(`{"error":{"message":"Your input exceeds the context window of this model. Please adjust your input and try again.","type":"upstream_error","code":null}}`)
 
-	require.False(t, svc.shouldFailoverOpenAIUpstreamResponse(http.StatusBadGateway, "", body))
-	require.True(t, svc.shouldFailoverOpenAIUpstreamResponse(http.StatusBadGateway, "temporary upstream outage", []byte(`{"error":{"message":"temporary upstream outage"}}`)))
+	require.False(t, svc.shouldFailoverOpenAIUpstreamResponse(http.StatusBadGateway, nil, "", body))
+	require.True(t, svc.shouldFailoverOpenAIUpstreamResponse(http.StatusBadGateway, nil, "temporary upstream outage", []byte(`{"error":{"message":"temporary upstream outage"}}`)))
+}
+
+func TestShouldFailoverOpenAIUpstreamResponse429RequiresRetrySignal(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+
+	require.False(t, svc.shouldFailoverOpenAIUpstreamResponse(
+		http.StatusTooManyRequests,
+		http.Header{},
+		"rate limited",
+		[]byte(`{"error":{"message":"rate limited"}}`),
+	))
+
+	headers := http.Header{}
+	headers.Set("Retry-After", "2")
+	require.True(t, svc.shouldFailoverOpenAIUpstreamResponse(
+		http.StatusTooManyRequests,
+		headers,
+		"rate limited",
+		[]byte(`{"error":{"message":"rate limited"}}`),
+	))
 }
 
 func TestOpenAIGatewayService_Forward_LogsInstructionsRequiredDetails(t *testing.T) {
