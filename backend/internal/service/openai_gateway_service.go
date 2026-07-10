@@ -2503,13 +2503,21 @@ func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(statusCode i
 	if isOpenAIContextWindowError(upstreamMsg, upstreamBody) {
 		return false
 	}
-	if statusCode == http.StatusTooManyRequests && !hasExplicit429RetrySignal(headers, upstreamBody) {
+	return statusCode == http.StatusTooManyRequests && hasExplicit429RetrySignal(headers, upstreamBody)
+}
+
+// ShouldSwitchAccountOnFailover is the final routing gate for OpenAI-compatible
+// handlers. OpenAI accounts may switch only when the upstream 429 includes an
+// explicit retry/reset time. Other platforms keep their existing policy.
+func (s *OpenAIGatewayService) ShouldSwitchAccountOnFailover(account *Account, failoverErr *UpstreamFailoverError) bool {
+	if account == nil || failoverErr == nil {
 		return false
 	}
-	if s.shouldFailoverUpstreamError(statusCode) {
+	if account.Platform != PlatformOpenAI {
 		return true
 	}
-	return isOpenAITransientProcessingError(statusCode, upstreamMsg, upstreamBody)
+	return failoverErr.StatusCode == http.StatusTooManyRequests &&
+		hasExplicit429RetrySignal(failoverErr.ResponseHeaders, failoverErr.ResponseBody)
 }
 
 func marshalOpenAIUpstreamJSON(v any) ([]byte, error) {
@@ -3217,9 +3225,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
-			// Transport-level failure (proxy/DNS/TCP/TLS — no HTTP response). Convert to
-			// a failover so the handler switches to a healthy account, and temporarily
-			// unschedule the account on durable faults (e.g. rejected proxy credentials).
+			// Preserve the primary account; the handler returns the transport error
+			// downstream without switching accounts.
 			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 		}
 
@@ -3272,6 +3279,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				return nil, &UpstreamFailoverError{
 					StatusCode:             resp.StatusCode,
 					ResponseBody:           respBody,
+					ResponseHeaders:        resp.Header.Clone(),
 					RetryableOnSameAccount: account.IsPoolMode() && (account.IsPoolModeRetryableStatus(resp.StatusCode) || isOpenAITransientProcessingError(resp.StatusCode, upstreamMsg, respBody)),
 				}
 			}
@@ -3509,17 +3517,16 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
-		// Transport-level failure (proxy/DNS/TCP/TLS — no HTTP response). Convert to
-		// a failover so the handler switches to a healthy account, and temporarily
-		// unschedule the account on durable faults (e.g. rejected proxy credentials).
+		// Transport-level failure (proxy/DNS/TCP/TLS — no HTTP response). Preserve
+		// the primary account and let the handler return a protocol-correct error.
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, true)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
-		// 透传模式默认保持原样代理；但 429/529 属于网关必须兜底的
-		// 上游容量类错误，应先触发多账号 failover 以维持基础 SLA。
-		if shouldFailoverOpenAIPassthroughResponse(resp.StatusCode) {
+		respBody := s.readUpstreamErrorBody(resp)
+		resp.Body = io.NopCloser(bytes.NewReader(respBody))
+		if shouldFailoverOpenAIPassthroughResponse(resp.StatusCode, resp.Header, respBody) {
 			return nil, s.handleFailoverErrorResponsePassthrough(ctx, resp, c, account, body)
 		}
 		return nil, s.handleErrorResponsePassthrough(ctx, resp, c, account, body)
@@ -3735,13 +3742,8 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	return req, nil
 }
 
-func shouldFailoverOpenAIPassthroughResponse(statusCode int) bool {
-	switch statusCode {
-	case http.StatusTooManyRequests, 529:
-		return true
-	default:
-		return false
-	}
+func shouldFailoverOpenAIPassthroughResponse(statusCode int, headers http.Header, body []byte) bool {
+	return statusCode == http.StatusTooManyRequests && hasExplicit429RetrySignal(headers, body)
 }
 
 func (s *OpenAIGatewayService) handleFailoverErrorResponsePassthrough(

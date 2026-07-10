@@ -600,7 +600,7 @@ func openAIImagesUpstreamErrorFromSSEPayload(payload []byte) *OpenAIImagesUpstre
 	case "response.incomplete":
 		// 上游在生成预算内未产出图片（超时/被截断），返回 response.incomplete 而非 error。
 		// 旧逻辑识别不到，统一报成模糊的 "upstream did not return image output" + 502，
-		// 且不触发 failover。这里把它显式建模为可重试的上游错误，使其能换账号重试。
+		// 这里把它显式建模为上游错误，由 handler 返回给下游但不切换账号。
 		return openAIImagesIncompleteUpstreamError(gjson.GetBytes(payload, "response"))
 	default:
 		return nil
@@ -710,7 +710,7 @@ func summarizeOpenAIImagesNoOutputBody(body []byte) string {
 // openAIImagesIncompleteUpstreamError 从 response.incomplete 事件构建可重试的上游错误。
 // incomplete_details.reason 常见取值：max_output_tokens / content_filter 等。
 // content_filter 视为客户端错误（400，重试无意义）；其余（生成超时/截断）视为
-// 可重试的 502，触发 failover 换账号重试。
+// 可重试的 502；OpenAI handler 仍保持当前账号，不切换到其他账号。
 func openAIImagesIncompleteUpstreamError(response gjson.Result) *OpenAIImagesUpstreamError {
 	if !response.Exists() {
 		return nil
@@ -1578,6 +1578,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 			return nil, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
+				ResponseHeaders:        resp.Header.Clone(),
 				RetryableOnSameAccount: account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
 			}
 		}

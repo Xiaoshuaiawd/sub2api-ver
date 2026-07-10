@@ -576,7 +576,8 @@ type ForwardResult struct {
 	ImageSizeBreakdown map[string]int
 }
 
-// UpstreamFailoverError indicates an upstream error that should trigger account failover.
+// UpstreamFailoverError carries an upstream error to the handler's retry/switch
+// policy. OpenAI handlers may return it downstream without switching accounts.
 type UpstreamFailoverError struct {
 	StatusCode             int
 	ResponseBody           []byte      // 上游响应体，用于错误透传规则匹配

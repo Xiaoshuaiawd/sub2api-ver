@@ -54,34 +54,24 @@ func (u *failingOpenAIHTTPUpstream) DoWithTLS(_ *http.Request, _ string, _ int64
 	return nil, u.err
 }
 
-// A durable proxy/credential failure must (a) temporarily unschedule the account
-// so it stops being hammered, and (b) return a failover error so the handler
-// switches to a healthy account instead of writing a hard 502 itself.
-func TestHandleOpenAIUpstreamTransportError_PersistentEvictsAndFailsOver(t *testing.T) {
+// A durable proxy/credential failure is returned to the handler, but it must not
+// evict the primary OpenAI account because only a timed 429 may switch accounts.
+func TestHandleOpenAIUpstreamTransportError_PersistentDoesNotEvictPrimary(t *testing.T) {
 	repo := &openaiTransportAccountRepoStub{}
 	svc := &OpenAIGatewayService{accountRepo: repo}
 	account := &Account{ID: 4627, Name: "proxy-expired", Platform: PlatformOpenAI}
 	c, rec := newOpenAITransportErrTestContext()
 
-	before := time.Now()
 	retErr := svc.handleOpenAIUpstreamTransportError(context.Background(), c, account,
 		errors.New(`Post "https://chatgpt.com/backend-api/codex/responses": socks connect tcp 85.255.176.68:12324->chatgpt.com:443: username/password authentication failed`), false)
-	after := time.Now()
 
-	// Failover error (handler will switch accounts), not a direct response.
+	// The handler turns this into the downstream error without switching accounts.
 	var fo *UpstreamFailoverError
-	require.True(t, errors.As(retErr, &fo), "persistent error must return *UpstreamFailoverError")
+	require.True(t, errors.As(retErr, &fo))
 	require.Equal(t, http.StatusBadGateway, fo.StatusCode)
 
-	// Persistent → account temporarily unscheduled for ~10min, reason carries cause.
-	require.Len(t, repo.tempUnschedCalls, 1)
-	require.Equal(t, int64(4627), repo.tempUnschedCalls[0].accountID)
-	require.Contains(t, repo.tempUnschedCalls[0].reason, "authentication failed")
-	require.True(t, repo.tempUnschedCalls[0].until.After(before.Add(openAITransportErrorTempUnschedDuration-time.Second)))
-	require.True(t, repo.tempUnschedCalls[0].until.Before(after.Add(openAITransportErrorTempUnschedDuration+time.Second)))
-
-	// Immediate in-memory effect so subsequent requests skip it before DB/cache catches up.
-	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	require.Empty(t, repo.tempUnschedCalls)
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
 
 	// Must NOT write a response body — the handler owns the (failover) response.
 	require.Equal(t, 0, rec.Body.Len())

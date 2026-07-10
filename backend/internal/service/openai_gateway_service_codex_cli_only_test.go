@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -273,7 +274,7 @@ func TestShouldFailoverOpenAIUpstreamResponseContextWindow502(t *testing.T) {
 	body := []byte(`{"error":{"message":"Your input exceeds the context window of this model. Please adjust your input and try again.","type":"upstream_error","code":null}}`)
 
 	require.False(t, svc.shouldFailoverOpenAIUpstreamResponse(http.StatusBadGateway, nil, "", body))
-	require.True(t, svc.shouldFailoverOpenAIUpstreamResponse(http.StatusBadGateway, nil, "temporary upstream outage", []byte(`{"error":{"message":"temporary upstream outage"}}`)))
+	require.False(t, svc.shouldFailoverOpenAIUpstreamResponse(http.StatusBadGateway, nil, "temporary upstream outage", []byte(`{"error":{"message":"temporary upstream outage"}}`)))
 }
 
 func TestShouldFailoverOpenAIUpstreamResponse429RequiresRetrySignal(t *testing.T) {
@@ -293,6 +294,36 @@ func TestShouldFailoverOpenAIUpstreamResponse429RequiresRetrySignal(t *testing.T
 		headers,
 		"rate limited",
 		[]byte(`{"error":{"message":"rate limited"}}`),
+	))
+}
+
+func TestShouldSwitchOpenAIAccount_OnlyExplicitCooldown429(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	account := &Account{Platform: PlatformOpenAI}
+
+	require.False(t, svc.ShouldSwitchAccountOnFailover(account, &UpstreamFailoverError{
+		StatusCode:   http.StatusBadGateway,
+		ResponseBody: []byte(`{"error":{"message":"temporary upstream outage"}}`),
+	}))
+	require.False(t, svc.ShouldSwitchAccountOnFailover(account, &UpstreamFailoverError{
+		StatusCode:   http.StatusTooManyRequests,
+		ResponseBody: []byte(`{"error":{"message":"rate limited"}}`),
+	}))
+	require.True(t, svc.ShouldSwitchAccountOnFailover(account, &UpstreamFailoverError{
+		StatusCode: http.StatusTooManyRequests,
+		ResponseHeaders: http.Header{
+			"Retry-After": []string{"2"},
+		},
+	}))
+	require.True(t, svc.ShouldSwitchAccountOnFailover(account, &UpstreamFailoverError{
+		StatusCode:   http.StatusTooManyRequests,
+		ResponseBody: []byte(`{"error":{"message":"rate limited; please try again in 2s"}}`),
+	}))
+
+	// This policy only changes OpenAI account routing.
+	require.True(t, svc.ShouldSwitchAccountOnFailover(
+		&Account{Platform: PlatformGrok},
+		&UpstreamFailoverError{StatusCode: http.StatusBadGateway},
 	))
 }
 
@@ -350,7 +381,7 @@ func TestOpenAIGatewayService_Forward_LogsInstructionsRequiredDetails(t *testing
 	require.False(t, logSink.ContainsField("request_body_preview"))
 }
 
-func TestOpenAIGatewayService_Forward_TransientProcessingErrorTriggersFailover(t *testing.T) {
+func TestOpenAIGatewayService_Forward_TransientProcessingErrorDoesNotFailover(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	rec := httptest.NewRecorder()
@@ -392,13 +423,12 @@ func TestOpenAIGatewayService_Forward_TransientProcessingErrorTriggersFailover(t
 	require.Error(t, err)
 
 	var failoverErr *UpstreamFailoverError
-	require.ErrorAs(t, err, &failoverErr)
-	require.Equal(t, http.StatusBadRequest, failoverErr.StatusCode)
-	require.Contains(t, string(failoverErr.ResponseBody), "An error occurred while processing your request")
-	require.False(t, c.Writer.Written(), "service 层应返回 failover 错误给上层换号，而不是直接向客户端写响应")
+	require.False(t, errors.As(err, &failoverErr))
+	require.True(t, c.Writer.Written())
+	require.Contains(t, rec.Body.String(), "Upstream request failed")
 }
 
-func TestOpenAIGatewayService_Forward_ModelCapacityErrorTriggersFailoverAndSameAccountRetry(t *testing.T) {
+func TestOpenAIGatewayService_Forward_ModelCapacityErrorDoesNotFailover(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	rec := httptest.NewRecorder()
@@ -443,9 +473,7 @@ func TestOpenAIGatewayService_Forward_ModelCapacityErrorTriggersFailoverAndSameA
 	require.Error(t, err)
 
 	var failoverErr *UpstreamFailoverError
-	require.ErrorAs(t, err, &failoverErr)
-	require.Equal(t, http.StatusBadRequest, failoverErr.StatusCode)
-	require.True(t, failoverErr.RetryableOnSameAccount)
-	require.Contains(t, string(failoverErr.ResponseBody), "Selected model is at capacity")
-	require.False(t, c.Writer.Written(), "service 层应返回 failover 错误给上层重试/换号，而不是直接向客户端写响应")
+	require.False(t, errors.As(err, &failoverErr))
+	require.True(t, c.Writer.Written())
+	require.Contains(t, rec.Body.String(), "Upstream request failed")
 }
