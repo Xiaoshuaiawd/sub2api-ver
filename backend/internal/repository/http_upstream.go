@@ -2,6 +2,7 @@ package repository
 
 import (
 	"bufio"
+	"bytes"
 	"compress/flate"
 	"compress/gzip"
 	"context"
@@ -57,6 +58,9 @@ const (
 	defaultOpenAIHTTP2FallbackErrorThreshold = 2
 	defaultOpenAIHTTP2FallbackWindow         = 60 * time.Second
 	defaultOpenAIHTTP2FallbackTTL            = 10 * time.Minute
+	defaultOpenAIUpstreamRetryDelay          = 500 * time.Millisecond
+	openAI429RetryInspectBodyMaxBytes        = 64 << 10
+	openAIRetryResponseDrainMaxBytes         = 64 << 10
 )
 
 const (
@@ -175,19 +179,15 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 		return nil, err
 	}
 
-	// 执行请求
-	resp, err := entry.client.Do(req)
+	// 执行请求。OpenAI profile 可在同一账号、同一代理上消耗请求级重试预算；
+	// 中间失败不会离开 repository 层，因此不会提前写入 Ops 错误或下游响应。
+	resp, err := s.doRequestWithOpenAIRetry(req, entry, profile, accountID)
 	if err != nil {
-		s.recordOpenAIHTTP2Failure(profile, entry.protocolMode, entry.proxyKey, err)
 		// 请求失败，立即减少计数
 		atomic.AddInt64(&entry.inFlight, -1)
 		atomic.StoreInt64(&entry.lastUsed, time.Now().UnixNano())
 		return nil, err
 	}
-	s.recordOpenAIHTTP2Success(profile, entry.protocolMode, entry.proxyKey)
-
-	// 如果上游返回了压缩内容，解压后再交给业务层
-	decompressResponseBody(resp)
 
 	// 包装响应体，在关闭时自动减少计数并更新时间戳
 	// 这确保了流式响应（如 SSE）在完全读取前不会被淘汰
@@ -197,6 +197,168 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 	})
 
 	return resp, nil
+}
+
+func (s *httpUpstreamService) doRequestWithOpenAIRetry(
+	req *http.Request,
+	entry *upstreamClientEntry,
+	profile service.HTTPUpstreamProfile,
+	accountID int64,
+) (*http.Response, error) {
+	if entry == nil || entry.client == nil {
+		return nil, errors.New("upstream client is nil")
+	}
+
+	currentReq := req
+	for {
+		resp, err := entry.client.Do(currentReq)
+		if err != nil {
+			s.recordOpenAIHTTP2Failure(profile, entry.protocolMode, entry.proxyKey, err)
+			attempt, retry := acquireOpenAIRequestRetry(req, profile)
+			if !retry {
+				return nil, err
+			}
+			nextReq, cloneErr := cloneRequestForRetry(req)
+			if cloneErr != nil {
+				return nil, err
+			}
+			slog.Info("openai_upstream_same_account_retry",
+				"account_id", accountID,
+				"retry", attempt,
+				"max_retries", service.OpenAIUpstreamRetryLimitFromContext(req.Context()),
+				"error", err,
+			)
+			if !waitForOpenAIRequestRetry(req.Context(), defaultOpenAIUpstreamRetryDelay) {
+				return nil, err
+			}
+			currentReq = nextReq
+			continue
+		}
+
+		s.recordOpenAIHTTP2Success(profile, entry.protocolMode, entry.proxyKey)
+		decompressResponseBody(resp)
+		if profile != service.HTTPUpstreamProfileOpenAI || resp.StatusCode < http.StatusBadRequest {
+			return resp, nil
+		}
+
+		explicitCooldown, _ := responseHasExplicitOpenAI429Cooldown(resp)
+		if explicitCooldown {
+			return resp, nil
+		}
+
+		attempt, retry := acquireOpenAIRequestRetry(req, profile)
+		if !retry {
+			return resp, nil
+		}
+		nextReq, cloneErr := cloneRequestForRetry(req)
+		if cloneErr != nil {
+			return resp, nil
+		}
+		slog.Info("openai_upstream_same_account_retry",
+			"account_id", accountID,
+			"retry", attempt,
+			"max_retries", service.OpenAIUpstreamRetryLimitFromContext(req.Context()),
+			"upstream_status", resp.StatusCode,
+		)
+		drainAndCloseRetryResponse(resp)
+		if !waitForOpenAIRequestRetry(req.Context(), defaultOpenAIUpstreamRetryDelay) {
+			return nil, context.Canceled
+		}
+		currentReq = nextReq
+	}
+}
+
+func acquireOpenAIRequestRetry(req *http.Request, profile service.HTTPUpstreamProfile) (int, bool) {
+	if profile != service.HTTPUpstreamProfileOpenAI || req == nil || !requestCanBeRetried(req) {
+		return 0, false
+	}
+	return service.AcquireOpenAIUpstreamRetry(req.Context())
+}
+
+func requestCanBeRetried(req *http.Request) bool {
+	if req == nil {
+		return false
+	}
+	return req.Body == nil || req.Body == http.NoBody || req.GetBody != nil
+}
+
+func cloneRequestForRetry(req *http.Request) (*http.Request, error) {
+	if req == nil {
+		return nil, errors.New("upstream request is nil")
+	}
+	clone := req.Clone(req.Context())
+	if req.Body == nil || req.Body == http.NoBody {
+		clone.Body = req.Body
+		return clone, nil
+	}
+	if req.GetBody == nil {
+		return nil, errors.New("upstream request body is not replayable")
+	}
+	body, err := req.GetBody()
+	if err != nil {
+		return nil, err
+	}
+	clone.Body = body
+	clone.GetBody = req.GetBody
+	clone.ContentLength = req.ContentLength
+	return clone, nil
+}
+
+type prefixReplayReadCloser struct {
+	io.Reader
+	closer io.Closer
+}
+
+func (r *prefixReplayReadCloser) Close() error {
+	if r == nil || r.closer == nil {
+		return nil
+	}
+	return r.closer.Close()
+}
+
+func responseHasExplicitOpenAI429Cooldown(resp *http.Response) (bool, error) {
+	if resp == nil || resp.StatusCode != http.StatusTooManyRequests {
+		return false, nil
+	}
+	if service.HasExplicitOpenAI429RetrySignal(resp.Header, nil) {
+		return true, nil
+	}
+	if resp.Body == nil {
+		return false, nil
+	}
+
+	original := resp.Body
+	prefix, err := io.ReadAll(io.LimitReader(original, openAI429RetryInspectBodyMaxBytes))
+	resp.Body = &prefixReplayReadCloser{
+		Reader: io.MultiReader(bytes.NewReader(prefix), original),
+		closer: original,
+	}
+	if err != nil {
+		return false, err
+	}
+	return service.HasExplicitOpenAI429RetrySignal(resp.Header, prefix), nil
+}
+
+func drainAndCloseRetryResponse(resp *http.Response) {
+	if resp == nil || resp.Body == nil {
+		return
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, openAIRetryResponseDrainMaxBytes))
+	_ = resp.Body.Close()
+}
+
+func waitForOpenAIRequestRetry(ctx context.Context, delay time.Duration) bool {
+	if service.OpenAIUpstreamRetryCanceled(ctx) {
+		return false
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return !service.OpenAIUpstreamRetryCanceled(ctx)
+	case <-service.OpenAIUpstreamRetryDone(ctx):
+		return false
+	}
 }
 
 // DoWithTLS 执行带 TLS 指纹伪装的 HTTP 请求
@@ -232,15 +394,13 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 		return nil, err
 	}
 
-	resp, err := entry.client.Do(req)
+	resp, err := s.doRequestWithOpenAIRetry(req, entry, upstreamProfile, accountID)
 	if err != nil {
 		atomic.AddInt64(&entry.inFlight, -1)
 		atomic.StoreInt64(&entry.lastUsed, time.Now().UnixNano())
 		slog.Debug("tls_fingerprint_request_failed", "account_id", accountID, "error", err)
 		return nil, err
 	}
-
-	decompressResponseBody(resp)
 
 	resp.Body = wrapTrackedBody(resp.Body, func() {
 		atomic.AddInt64(&entry.inFlight, -1)

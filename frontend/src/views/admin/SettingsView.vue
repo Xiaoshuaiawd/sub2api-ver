@@ -1158,7 +1158,11 @@
                     <Select
                       :modelValue="rule.action"
                       @update:modelValue="
-                        rule.action = $event as 'pass' | 'filter' | 'block'
+                        rule.action = $event as
+                          | 'pass'
+                          | 'filter'
+                          | 'block'
+                          | 'force_priority'
                       "
                       :options="openaiFastPolicyActionOptions"
                     />
@@ -1297,6 +1301,7 @@
                         | 'pass'
                         | 'filter'
                         | 'block'
+                        | 'force_priority'
                     "
                     :options="openaiFastPolicyActionOptions"
                   />
@@ -4525,6 +4530,32 @@
                       "admin.settings.gatewayForwarding.openaiCodexUserAgentHint",
                     )
                   }}
+                </p>
+              </div>
+
+              <!-- OpenAI same-account upstream retries -->
+              <div>
+                <label
+                  for="openai-upstream-retry-count"
+                  class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  {{ t("admin.settings.gatewayForwarding.openaiUpstreamRetryCount") }}
+                </label>
+                <input
+                  id="openai-upstream-retry-count"
+                  v-model.number="form.openai_upstream_retry_count"
+                  type="number"
+                  min="0"
+                  max="10"
+                  step="1"
+                  class="input max-w-xs"
+                  aria-describedby="openai-upstream-retry-count-hint"
+                />
+                <p
+                  id="openai-upstream-retry-count-hint"
+                  class="mt-1.5 text-xs text-gray-500 dark:text-gray-400"
+                >
+                  {{ t("admin.settings.gatewayForwarding.openaiUpstreamRetryCountHint") }}
                 </p>
               </div>
 
@@ -8234,6 +8265,7 @@ const form = reactive<SettingsForm>({
   enable_client_dateline_normalization: true,
   antigravity_user_agent_version: "",
   openai_codex_user_agent: "",
+  openai_upstream_retry_count: 3,
   // codex_cli_only 加固
   min_codex_version: "",
   max_codex_version: "",
@@ -9539,6 +9571,10 @@ async function saveSettings() {
         form.antigravity_user_agent_version?.trim() || "",
       openai_codex_user_agent:
         form.openai_codex_user_agent?.trim() || "",
+      openai_upstream_retry_count: Math.min(
+        10,
+        Math.max(0, Number(form.openai_upstream_retry_count) || 0),
+      ),
       min_codex_version: form.min_codex_version?.trim() || "",
       max_codex_version: form.max_codex_version?.trim() || "",
       codex_cli_only_allow_app_server_clients:
@@ -10115,6 +10151,10 @@ const openaiFastPolicyTierOptions = computed(() => [
 const openaiFastPolicyActionOptions = computed(() => [
   { value: "pass", label: t("admin.settings.openaiFastPolicy.actionPass") },
   { value: "filter", label: t("admin.settings.openaiFastPolicy.actionFilter") },
+  {
+    value: "force_priority",
+    label: t("admin.settings.openaiFastPolicy.actionForcePriority"),
+  },
   { value: "block", label: t("admin.settings.openaiFastPolicy.actionBlock") },
 ]);
 

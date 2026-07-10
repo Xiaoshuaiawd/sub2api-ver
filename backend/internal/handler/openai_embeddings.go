@@ -60,6 +60,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 		return
 	}
 	if !gjson.ValidBytes(body) {
+		logRequestBodyParseFailure(reqLog, body, nil)
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return
 	}
@@ -187,6 +188,12 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 					h.handleFailoverExhausted(c, failoverErr, true)
 					return
 				}
+				switch handleOpenAISameAccountRetry(c, account.ID, failoverErr) {
+				case openAISameAccountRetryContinue:
+					continue
+				case openAISameAccountRetryCanceled:
+					return
+				}
 				if !h.gatewayService.ShouldSwitchAccountOnFailover(account, failoverErr) {
 					h.handleFailoverExhausted(c, failoverErr, false)
 					return
@@ -209,6 +216,12 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 				continue
 			}
 			if c.Writer.Size() == writerSizeBeforeForward {
+				switch handleOpenAISameAccountErrorRetry(c, account.ID, 0, nil, nil) {
+				case openAISameAccountRetryContinue:
+					continue
+				case openAISameAccountRetryCanceled:
+					return
+				}
 				h.errorResponse(c, http.StatusBadGateway, "upstream_error", "Upstream request failed")
 			}
 			reqLog.Warn("openai_embeddings.forward_failed",

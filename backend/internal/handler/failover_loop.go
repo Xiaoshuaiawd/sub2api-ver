@@ -7,6 +7,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
 
@@ -27,6 +28,51 @@ const (
 	// FailoverCanceled context 已取消（调用方应直接 return）
 	FailoverCanceled
 )
+
+type openAISameAccountRetryDecision int
+
+const (
+	openAISameAccountRetrySkipped openAISameAccountRetryDecision = iota
+	openAISameAccountRetryContinue
+	openAISameAccountRetryCanceled
+)
+
+func handleOpenAISameAccountRetry(c *gin.Context, accountID int64, failoverErr *service.UpstreamFailoverError) openAISameAccountRetryDecision {
+	if c == nil || failoverErr == nil {
+		return openAISameAccountRetrySkipped
+	}
+	return handleOpenAISameAccountErrorRetry(
+		c,
+		accountID,
+		failoverErr.StatusCode,
+		failoverErr.ResponseHeaders,
+		failoverErr.ResponseBody,
+	)
+}
+
+func handleOpenAISameAccountErrorRetry(c *gin.Context, accountID int64, statusCode int, headers http.Header, body []byte) openAISameAccountRetryDecision {
+	if c == nil || c.Request == nil {
+		return openAISameAccountRetrySkipped
+	}
+	if statusCode == http.StatusTooManyRequests && service.HasExplicitOpenAI429RetrySignal(headers, body) {
+		return openAISameAccountRetrySkipped
+	}
+	attempt, ok := service.AcquireOpenAIUpstreamRetry(c.Request.Context())
+	if !ok {
+		return openAISameAccountRetrySkipped
+	}
+	service.ClearOpsUpstreamErrorForRetry(c)
+	logger.FromContext(c.Request.Context()).Info("openai.same_account_retry",
+		zap.Int64("account_id", accountID),
+		zap.Int("upstream_status", statusCode),
+		zap.Int("retry_count", attempt),
+		zap.Int("retry_limit", service.OpenAIUpstreamRetryLimitFromContext(c.Request.Context())),
+	)
+	if !sleepWithContext(c.Request.Context(), sameAccountRetryDelay) {
+		return openAISameAccountRetryCanceled
+	}
+	return openAISameAccountRetryContinue
+}
 
 const (
 	// maxSameAccountRetries 同账号重试次数上限（针对 RetryableOnSameAccount 错误）
