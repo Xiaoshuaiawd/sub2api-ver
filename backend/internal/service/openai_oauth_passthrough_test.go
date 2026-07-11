@@ -817,7 +817,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_UpstreamErrorIncludesPassthroughF
 	require.Equal(t, "http_error", arr[len(arr)-1].Kind)
 }
 
-func TestOpenAIGatewayService_OpenAIPassthrough_RetryableStatusesTriggerFailover(t *testing.T) {
+func TestOpenAIGatewayService_OpenAIPassthrough_OnlyExplicitCooldown429TriggersFailover(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	originalBody := []byte(`{"model":"gpt-5.2","stream":false,"instructions":"local-test-instructions","input":[{"type":"text","text":"hi"}]}`)
 

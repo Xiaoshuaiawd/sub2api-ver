@@ -327,6 +327,13 @@ func TestShouldFailoverOpenAIUpstreamResponse429RequiresRetrySignal(t *testing.T
 	svc := &OpenAIGatewayService{}
 
 	require.False(t, svc.shouldFailoverOpenAIUpstreamResponse(
+		http.StatusBadRequest,
+		nil,
+		"an error occurred while processing your request",
+		[]byte(`{"error":{"message":"an error occurred while processing your request"}}`),
+	))
+
+	require.False(t, svc.shouldFailoverOpenAIUpstreamResponse(
 		http.StatusTooManyRequests,
 		http.Header{},
 		"rate limited",

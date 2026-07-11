@@ -1,8 +1,7 @@
 package service
 
-// 本文件由 openai_gateway_service.go 纯移动拆分而来：/v1/responses 直通
-// （passthrough）转发路径及其流式/非流式响应处理与错误处理。仅做代码搬迁，
-// 无任何行为变更。
+// 本文件承载 /v1/responses 直通（passthrough）转发路径及其流式/非流式
+// 响应处理与错误处理。
 
 import (
 	"bufio"
@@ -11,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -189,9 +189,9 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
-		// 透传模式默认保持原样代理；但 429/529 属于网关必须兜底的
-		// 上游容量类错误，应先触发多账号 failover 以维持基础 SLA。
-		if shouldFailoverOpenAIPassthroughResponse(resp.StatusCode) {
+		respBody := s.readUpstreamErrorBody(resp)
+		resp.Body = io.NopCloser(bytes.NewReader(respBody))
+		if shouldFailoverOpenAIPassthroughResponse(resp.StatusCode, resp.Header, respBody) {
 			return nil, s.handleFailoverErrorResponsePassthrough(ctx, resp, c, account, body)
 		}
 		return nil, s.handleErrorResponsePassthrough(ctx, resp, c, account, body)
@@ -417,13 +417,8 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	return req, nil
 }
 
-func shouldFailoverOpenAIPassthroughResponse(statusCode int) bool {
-	switch statusCode {
-	case http.StatusTooManyRequests, 529:
-		return true
-	default:
-		return false
-	}
+func shouldFailoverOpenAIPassthroughResponse(statusCode int, headers http.Header, body []byte) bool {
+	return statusCode == http.StatusTooManyRequests && HasExplicitOpenAI429RetrySignal(headers, body)
 }
 
 func (s *OpenAIGatewayService) handleFailoverErrorResponsePassthrough(

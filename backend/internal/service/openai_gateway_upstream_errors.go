@@ -222,10 +222,7 @@ func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(statusCode i
 	if isOpenAIContextWindowError(upstreamMsg, upstreamBody) {
 		return false
 	}
-	if statusCode == http.StatusTooManyRequests {
-		return HasExplicitOpenAI429RetrySignal(headers, upstreamBody)
-	}
-	return isOpenAITransientProcessingError(statusCode, upstreamMsg, upstreamBody)
+	return statusCode == http.StatusTooManyRequests && HasExplicitOpenAI429RetrySignal(headers, upstreamBody)
 }
 
 func shouldSwitchAccountOnFailover(account *Account, failoverErr *UpstreamFailoverError) bool {
@@ -425,6 +422,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		return nil, &UpstreamFailoverError{
 			StatusCode:             resp.StatusCode,
 			ResponseBody:           body,
+			ResponseHeaders:        resp.Header.Clone(),
 			RetryableOnSameAccount: account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
 		}
 	}
@@ -594,6 +592,7 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 		return nil, &UpstreamFailoverError{
 			StatusCode:             resp.StatusCode,
 			ResponseBody:           body,
+			ResponseHeaders:        resp.Header.Clone(),
 			RetryableOnSameAccount: account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
 		}
 	}
