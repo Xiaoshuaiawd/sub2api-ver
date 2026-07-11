@@ -88,7 +88,7 @@ func (s *OpenAIGatewayService) failoverOpenAIUpstreamHTTPError(
 	upstreamMsg string,
 	upstreamModel string,
 ) *UpstreamFailoverError {
-	if !s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
+	if !s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, resp.Header, upstreamMsg, respBody) {
 		return nil
 	}
 	upstreamDetail := ""

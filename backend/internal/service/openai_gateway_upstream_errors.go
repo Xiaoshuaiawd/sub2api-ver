@@ -218,14 +218,35 @@ func (s *OpenAIGatewayService) shouldFailoverUpstreamError(statusCode int) bool 
 	}
 }
 
-func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(statusCode int, upstreamMsg string, upstreamBody []byte) bool {
+func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(statusCode int, headers http.Header, upstreamMsg string, upstreamBody []byte) bool {
 	if isOpenAIContextWindowError(upstreamMsg, upstreamBody) {
 		return false
 	}
-	if s.shouldFailoverUpstreamError(statusCode) {
-		return true
+	if statusCode == http.StatusTooManyRequests {
+		return HasExplicitOpenAI429RetrySignal(headers, upstreamBody)
 	}
 	return isOpenAITransientProcessingError(statusCode, upstreamMsg, upstreamBody)
+}
+
+func shouldSwitchAccountOnFailover(account *Account, failoverErr *UpstreamFailoverError) bool {
+	if failoverErr == nil {
+		return false
+	}
+	if account == nil || account.Platform != PlatformOpenAI {
+		return true
+	}
+	if failoverErr.StatusCode != http.StatusTooManyRequests {
+		return false
+	}
+	return HasExplicitOpenAI429RetrySignal(failoverErr.ResponseHeaders, failoverErr.ResponseBody)
+}
+
+func (s *GatewayService) ShouldSwitchAccountOnFailover(account *Account, failoverErr *UpstreamFailoverError) bool {
+	return shouldSwitchAccountOnFailover(account, failoverErr)
+}
+
+func (s *OpenAIGatewayService) ShouldSwitchAccountOnFailover(account *Account, failoverErr *UpstreamFailoverError) bool {
+	return shouldSwitchAccountOnFailover(account, failoverErr)
 }
 
 func marshalOpenAIUpstreamJSON(v any) ([]byte, error) {

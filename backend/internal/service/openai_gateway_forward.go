@@ -735,7 +735,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				}
 				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Skip non-WSv2 invalid_encrypted_content retry because encrypted reasoning items are missing (account: %s)", account.Name)
 			}
-			if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
+			if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, resp.Header, upstreamMsg, respBody) {
 				upstreamDetail := ""
 				if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 					maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
