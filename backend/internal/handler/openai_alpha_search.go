@@ -184,6 +184,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 			reqLog.Warn("openai_alpha_search.forward_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 			return
 		}
+		service.ApplyOpenAIAccountFailoverPolicy(account.Platform, failoverErr)
 
 		h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(requestedModel), false, nil)
 		if c.Writer.Size() != writerSizeBeforeForward {
@@ -195,6 +196,10 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 				zap.Int64("account_id", account.ID),
 				zap.Int("upstream_status", failoverErr.StatusCode),
 			)
+			return
+		}
+		if !failoverErr.ShouldRetryNextAccount() {
+			h.handleFailoverExhausted(c, failoverErr, false)
 			return
 		}
 		h.gatewayService.RecordOpenAIAccountSwitch()

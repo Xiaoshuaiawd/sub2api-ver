@@ -155,6 +155,26 @@ func TestHandleFailoverError_BasicSwitch(t *testing.T) {
 		require.Contains(t, fs.FailedAccountIDs, int64(100))
 	})
 
+	t.Run("显式停止的可重试错误只重试当前账号", func(t *testing.T) {
+		mock := &mockTempUnscheduler{}
+		fs := NewFailoverState(3, false)
+		err := &service.UpstreamFailoverError{
+			StatusCode:             http.StatusBadGateway,
+			RetryableOnSameAccount: true,
+			NextAccountAction:      service.NextAccountStop,
+		}
+
+		action := fs.HandleFailoverError(context.Background(), mock, 100, service.PlatformOpenAI, 1, err)
+		require.Equal(t, FailoverContinue, action)
+		require.Equal(t, 1, fs.SameAccountRetryCount[100])
+
+		action = fs.HandleFailoverError(context.Background(), mock, 100, service.PlatformOpenAI, 1, err)
+		require.Equal(t, FailoverExhausted, action)
+		require.Zero(t, fs.SwitchCount)
+		require.Empty(t, fs.FailedAccountIDs)
+		require.Empty(t, mock.calls)
+	})
+
 	t.Run("已取消的认证失败不改变切换状态", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()

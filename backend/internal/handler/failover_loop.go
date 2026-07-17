@@ -78,8 +78,9 @@ func (s *FailoverState) HandleFailoverError(
 	if ctx != nil && ctx.Err() != nil {
 		return FailoverCanceled
 	}
+	service.ApplyOpenAIAccountFailoverPolicy(platform, failoverErr)
 	s.LastFailoverErr = failoverErr
-	if failoverErr == nil || !failoverErr.ShouldRetryNextAccount() {
+	if failoverErr == nil {
 		return FailoverExhausted
 	}
 
@@ -102,6 +103,13 @@ func (s *FailoverState) HandleFailoverError(
 			return FailoverCanceled
 		}
 		return FailoverContinue
+	}
+
+	// Errors marked as stop-after-same-account retry are returned to the client
+	// once their retry budget is exhausted. They must not exclude this account or
+	// consume the next account in the group.
+	if !failoverErr.ShouldRetryNextAccount() {
+		return FailoverExhausted
 	}
 
 	// 同账号重试用尽，执行临时封禁

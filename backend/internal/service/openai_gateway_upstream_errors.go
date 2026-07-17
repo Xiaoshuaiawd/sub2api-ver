@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -254,6 +255,16 @@ func newOpenAIUpstreamFailoverError(
 		ResponseHeaders:        responseHeaders.Clone(),
 		RetryableOnSameAccount: retryableOnSameAccount,
 	}
+	// A request must stay on its selected account unless upstream has explicitly
+	// told us that a 429 is in a cooldown window. This avoids spreading transient
+	// failures, including burst 429s without reset metadata, across the account
+	// pool.
+	if !shouldSwitchOpenAIAccountOnFailover(statusCode, responseHeaders, responseBody) {
+		failoverErr.NextAccountAction = NextAccountStop
+		if statusCode != http.StatusTooManyRequests {
+			failoverErr.RetryableOnSameAccount = true
+		}
+	}
 	if isOpenAIRequestBodyTooLargeError(statusCode, upstreamMsg, responseBody) {
 		failoverErr.RetryableOnSameAccount = false
 		failoverErr.Scope = GatewayFailureScopeAccount
@@ -263,6 +274,28 @@ func newOpenAIUpstreamFailoverError(
 		failoverErr.ClientMessage = OpenAIRequestBodyTooLargeClientMessage
 	}
 	return failoverErr
+}
+
+func shouldSwitchOpenAIAccountOnFailover(statusCode int, responseHeaders http.Header, responseBody []byte) bool {
+	return statusCode == http.StatusTooManyRequests && openAI429CooldownResetAt(responseHeaders, responseBody, time.Now()) != nil
+}
+
+// ApplyOpenAIAccountFailoverPolicy ensures every OpenAI entry point, including
+// ones that construct UpstreamFailoverError directly, follows single-account
+// retry semantics. A different account is only eligible after an explicit 429
+// cooldown signal.
+func ApplyOpenAIAccountFailoverPolicy(platform string, failoverErr *UpstreamFailoverError) {
+	if platform != PlatformOpenAI || failoverErr == nil ||
+		isOpenAIRequestBodyTooLargeError(failoverErr.StatusCode, "", failoverErr.ResponseBody) {
+		return
+	}
+	if shouldSwitchOpenAIAccountOnFailover(failoverErr.StatusCode, failoverErr.ResponseHeaders, failoverErr.ResponseBody) {
+		return
+	}
+	failoverErr.NextAccountAction = NextAccountStop
+	if failoverErr.StatusCode != http.StatusTooManyRequests {
+		failoverErr.RetryableOnSameAccount = true
+	}
 }
 
 // IsOpenAIRequestBodyTooLarge reports whether another account may accept the

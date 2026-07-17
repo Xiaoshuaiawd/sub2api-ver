@@ -209,7 +209,7 @@ func TestHandle429_OpenAISyncsObservedPlanType(t *testing.T) {
 		Type:        AccountTypeOAuth,
 		Credentials: map[string]any{"plan_type": "plus"},
 	}
-	body := []byte(`{"error":{"type":"usage_limit_reached","message":"limit reached","plan_type":"free","resets_at":1777283883}}`)
+	body := []byte(`{"error":{"type":"usage_limit_reached","message":"limit reached","plan_type":"free","resets_in_seconds":3600}}`)
 
 	svc.handle429(context.Background(), account, http.Header{}, body)
 
