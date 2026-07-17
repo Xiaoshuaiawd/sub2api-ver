@@ -21,6 +21,7 @@ import (
 const (
 	openAIAccountScheduleLayerPreviousResponse = "previous_response_id"
 	openAIAccountScheduleLayerSessionSticky    = "session_hash"
+	openAIAccountScheduleLayerGroupActive      = "group_active_account"
 	openAIAccountScheduleLayerLoadBalance      = "load_balance"
 	openAIAdvancedSchedulerSettingKey          = "openai_advanced_scheduler_enabled"
 )
@@ -411,6 +412,25 @@ func (s *defaultOpenAIAccountScheduler) Select(
 		}
 	}
 
+	if selection, err := s.service.selectOpenAIGroupActiveAccount(
+		ctx,
+		req.GroupID,
+		req.Platform,
+		req.RequestedModel,
+		req.ExcludedIDs,
+		req.RequireCompact,
+		req.RequiredCapability,
+	); err != nil {
+		return nil, decision, err
+	} else if selection != nil && selection.Account != nil {
+		decision.Layer = openAIAccountScheduleLayerGroupActive
+		decision.StickySessionHit = true
+		decision.SelectedAccountID = selection.Account.ID
+		decision.SelectedAccountType = selection.Account.Type
+		s.service.refreshOpenAIGroupActiveAccount(ctx, req.GroupID, req.Platform)
+		return selection, decision, nil
+	}
+
 	if !req.StickyWeighted {
 		selection, escapedSticky, err := s.selectBySessionHash(ctx, req)
 		if err != nil {
@@ -439,6 +459,7 @@ func (s *defaultOpenAIAccountScheduler) Select(
 	if selection != nil && selection.Account != nil {
 		decision.SelectedAccountID = selection.Account.ID
 		decision.SelectedAccountType = selection.Account.Type
+		s.service.bindOpenAIGroupActiveAccount(ctx, req.GroupID, req.Platform, selection.Account.ID)
 		if req.StickyWeighted {
 			if req.StickyPreviousAccountID > 0 && selection.Account.ID == req.StickyPreviousAccountID {
 				decision.StickyPreviousHit = true
@@ -1989,6 +2010,7 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 					return selection, decision, nil
 				}
 				if accountSupportsOpenAICapabilities(selection.Account, requiredCapability, requiredImageCapability) {
+					s.bindOpenAIGroupActiveAccount(ctx, groupID, platform, selection.Account.ID)
 					return selection, decision, nil
 				}
 				if selection.ReleaseFunc != nil {
@@ -2015,6 +2037,7 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 			}
 			if s.isOpenAIAccountTransportCompatible(selection.Account, requiredTransport) &&
 				accountSupportsOpenAICapabilities(selection.Account, requiredCapability, requiredImageCapability) {
+				s.bindOpenAIGroupActiveAccount(ctx, groupID, platform, selection.Account.ID)
 				return selection, decision, nil
 			}
 			if selection.ReleaseFunc != nil {

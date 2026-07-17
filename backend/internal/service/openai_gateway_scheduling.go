@@ -810,6 +810,12 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	}
 
 	cfg := s.schedulingConfig()
+	if selection, err := s.selectOpenAIGroupActiveAccount(ctx, groupID, platform, requestedModel, excludedIDs, requireCompact, requiredCapability); err != nil {
+		return nil, err
+	} else if selection != nil {
+		s.refreshOpenAIGroupActiveAccount(ctx, groupID, platform)
+		return selection, nil
+	}
 	preferLowUpstreamRate := useUpstreamTokenCost && s.isOpenAILowUpstreamRatePriorityEnabled(ctx)
 	needsUpstreamCheck := s.needsUpstreamChannelRestrictionCheck(ctx, groupID)
 	var stickyAccountID int64
