@@ -186,6 +186,10 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 				if txErr != nil {
 					continue
 				}
+				if err := rotateAccountProxyGroupForRetry(ctx, account, s.accountRepo); err != nil {
+					return nil, err
+				}
+				proxyURL = accountProxyURL(account)
 				retryResult, retryErr := s.antigravityRetryLoop(antigravityRetryLoopParams{
 					ctx:             ctx,
 					prefix:          prefix,
@@ -308,6 +312,10 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 
 					retryGeminiBody, txErr := antigravity.TransformClaudeToGeminiWithOptions(&retryClaudeReq, projectID, mappedModel, transformOpts)
 					if txErr == nil {
+						if err := rotateAccountProxyGroupForRetry(ctx, account, s.accountRepo); err != nil {
+							return nil, err
+						}
+						proxyURL = accountProxyURL(account)
 						retryResult, retryErr := s.antigravityRetryLoop(antigravityRetryLoopParams{
 							ctx:             ctx,
 							prefix:          prefix,

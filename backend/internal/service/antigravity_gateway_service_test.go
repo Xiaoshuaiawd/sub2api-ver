@@ -148,11 +148,13 @@ type queuedHTTPUpstreamStub struct {
 	responses     []*http.Response
 	errors        []error
 	requestBodies [][]byte
+	proxyURLs     []string
 	callCount     int
 	onCall        func(*http.Request, *queuedHTTPUpstreamStub)
 }
 
-func (s *queuedHTTPUpstreamStub) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+func (s *queuedHTTPUpstreamStub) Do(req *http.Request, proxyURL string, _ int64, _ int) (*http.Response, error) {
+	s.proxyURLs = append(s.proxyURLs, proxyURL)
 	if req != nil && req.Body != nil {
 		body, _ := io.ReadAll(req.Body)
 		s.requestBodies = append(s.requestBodies, body)
@@ -338,6 +340,102 @@ func TestAntigravityGatewayService_ForwardGemini_UsesConfiguredProjectFallback(t
 	var wrapped map[string]any
 	require.NoError(t, json.Unmarshal(upstream.requestBodies[0], &wrapped))
 	require.Equal(t, "configured-project", wrapped["project"])
+}
+
+func TestAntigravityGatewayService_ForwardGeminiResolvesProxyGroup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	writer := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(writer)
+
+	body := []byte(`{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.5-flash:streamGenerateContent", bytes.NewReader(body))
+	upstream := &queuedHTTPUpstreamStub{responses: []*http.Response{{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader("data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}]}}\n\n")),
+	}}}
+	group := "residential-us"
+	proxy := Proxy{ID: 7, Protocol: "http", Host: "proxy.internal", Port: 8080, Status: StatusActive}
+	svc := &AntigravityGatewayService{
+		settingService: NewSettingService(&antigravitySettingRepoStub{}, &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}}),
+		tokenProvider:  &AntigravityTokenProvider{},
+		httpUpstream:   upstream,
+		accountRepo:    &proxyGroupMemberSourceStub{members: []Proxy{proxy}},
+	}
+	account := &Account{
+		ID:          103,
+		Name:        "acc-proxy-group",
+		Platform:    PlatformAntigravity,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Concurrency: 1,
+		ProxyGroup:  &group,
+		Credentials: map[string]any{
+			"access_token": "token",
+			antigravityProjectIDFallbackCredentialKey: "configured-project",
+			"model_mapping": map[string]any{"gemini-2.5-flash": "gemini-2.5-flash"},
+		},
+	}
+
+	result, err := svc.ForwardGemini(context.Background(), c, account, "gemini-2.5-flash", "streamGenerateContent", true, body, false)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, []string{proxy.URL()}, upstream.proxyURLs)
+	require.NotNil(t, account.ProxyID)
+	require.Equal(t, proxy.ID, *account.ProxyID)
+}
+
+func TestAntigravityRetryLoopSwitchesProxyGroupMemberOnRetry(t *testing.T) {
+	t.Setenv(antigravityForwardBaseURLEnv, "")
+	oldBaseURLs := append([]string(nil), antigravity.BaseURLs...)
+	oldAvailability := antigravity.DefaultURLAvailability
+	defer func() {
+		antigravity.BaseURLs = oldBaseURLs
+		antigravity.DefaultURLAvailability = oldAvailability
+	}()
+	antigravity.BaseURLs = []string{"https://antigravity.test"}
+	antigravity.DefaultURLAvailability = antigravity.NewURLAvailability(time.Minute)
+
+	group := "residential-us"
+	firstProxy := Proxy{ID: 1, Protocol: "http", Host: "proxy-one.internal", Port: 8080, Status: StatusActive}
+	secondProxy := Proxy{ID: 2, Protocol: "http", Host: "proxy-two.internal", Port: 8080, Status: StatusActive}
+	account := &Account{
+		ID:          104,
+		Name:        "acc-retry-proxy-group",
+		Platform:    PlatformAntigravity,
+		Status:      StatusActive,
+		Concurrency: 1,
+		ProxyGroup:  &group,
+		ProxyID:     &firstProxy.ID,
+		Proxy:       &firstProxy,
+	}
+	upstream := &queuedHTTPUpstreamStub{responses: []*http.Response{
+		{StatusCode: http.StatusInternalServerError, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"error":{"message":"retry"}}`))},
+		{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("ok"))},
+	}}
+	svc := &AntigravityGatewayService{}
+
+	result, err := svc.antigravityRetryLoop(antigravityRetryLoopParams{
+		ctx:          context.Background(),
+		prefix:       "[test]",
+		account:      account,
+		proxyURL:     firstProxy.URL(),
+		accessToken:  "token",
+		action:       "generateContent",
+		body:         []byte(`{"contents":[]}`),
+		httpUpstream: upstream,
+		accountRepo:  &proxyGroupMemberSourceStub{members: []Proxy{firstProxy, secondProxy}},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.resp)
+	defer func() { _ = result.resp.Body.Close() }()
+	require.Equal(t, http.StatusOK, result.resp.StatusCode)
+	require.Equal(t, []string{firstProxy.URL(), secondProxy.URL()}, upstream.proxyURLs)
+	require.NotNil(t, account.ProxyID)
+	require.Equal(t, secondProxy.ID, *account.ProxyID)
 }
 
 func TestAntigravityGatewayService_ForwardGemini_MissingProjectReturnsLocalError(t *testing.T) {

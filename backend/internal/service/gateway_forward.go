@@ -370,6 +370,14 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	lastWireBody := body
 	retryStart := time.Now()
 	for attempt := 1; attempt <= maxRetryAttempts; attempt++ {
+		if attempt > 1 {
+			if err := rotateAccountProxyGroupForRetry(ctx, account, s.accountRepo); err != nil {
+				return nil, err
+			}
+			if !account.IsCustomBaseURLEnabled() || account.GetCustomBaseURL() == "" {
+				proxyURL = accountProxyURL(account)
+			}
+		}
 		// 构建上游请求（每次重试需要重新构建，因为请求体需要重新读取）
 		upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, reqStream)
 		upstreamReq, wireBody, err := s.buildUpstreamRequest(upstreamCtx, c, account, body, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
@@ -459,6 +467,12 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					//    also downgrade tool_use/tool_result blocks to text.
 
 					filteredBody := FilterThinkingBlocksForRetry(body, reqModel)
+					if err := rotateAccountProxyGroupForRetry(ctx, account, s.accountRepo); err != nil {
+						return nil, err
+					}
+					if !account.IsCustomBaseURLEnabled() || account.GetCustomBaseURL() == "" {
+						proxyURL = accountProxyURL(account)
+					}
 					retryCtx, releaseRetryCtx := detachStreamUpstreamContext(ctx, reqStream)
 					retryReq, retryWireBody, buildErr := s.buildUpstreamRequest(retryCtx, c, account, filteredBody, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
 					releaseRetryCtx()
@@ -500,6 +514,12 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 								if looksLikeToolSignatureError(msg2) && time.Since(retryStart) < maxRetryElapsed {
 									logger.LegacyPrintf("service.gateway", "Account %d: signature retry still failing and looks tool-related, retrying with tool blocks downgraded", account.ID)
 									filteredBody2 := FilterSignatureSensitiveBlocksForRetry(body, reqModel)
+									if err := rotateAccountProxyGroupForRetry(ctx, account, s.accountRepo); err != nil {
+										return nil, err
+									}
+									if !account.IsCustomBaseURLEnabled() || account.GetCustomBaseURL() == "" {
+										proxyURL = accountProxyURL(account)
+									}
 									retryCtx2, releaseRetryCtx2 := detachStreamUpstreamContext(ctx, reqStream)
 									retryReq2, retryWireBody2, buildErr2 := s.buildUpstreamRequest(retryCtx2, c, account, filteredBody2, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
 									releaseRetryCtx2()
@@ -579,6 +599,12 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					rectifiedBody, applied := RectifyThinkingBudget(body)
 					if applied && time.Since(retryStart) < maxRetryElapsed {
 						logger.LegacyPrintf("service.gateway", "Account %d: detected budget_tokens constraint error, retrying with rectified budget (budget_tokens=%d, max_tokens=%d)", account.ID, BudgetRectifyBudgetTokens, BudgetRectifyMaxTokens)
+						if err := rotateAccountProxyGroupForRetry(ctx, account, s.accountRepo); err != nil {
+							return nil, err
+						}
+						if !account.IsCustomBaseURLEnabled() || account.GetCustomBaseURL() == "" {
+							proxyURL = accountProxyURL(account)
+						}
 						budgetRetryCtx, releaseBudgetRetryCtx := detachStreamUpstreamContext(ctx, reqStream)
 						budgetRetryReq, budgetWireBody, buildErr := s.buildUpstreamRequest(budgetRetryCtx, c, account, rectifiedBody, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
 						releaseBudgetRetryCtx()

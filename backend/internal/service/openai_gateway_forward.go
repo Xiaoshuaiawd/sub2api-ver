@@ -652,6 +652,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		retryStartedAt := time.Now()
 	wsRetryLoop:
 		for attempt := 1; attempt <= maxAttempts; attempt++ {
+			if attempt > 1 {
+				if err := rotateAccountProxyGroupForRetry(ctx, account, s.accountRepo); err != nil {
+					return nil, err
+				}
+			}
 			wsAttempts = attempt
 			wsResult, wsErr = s.forwardOpenAIWSV2(
 				ctx,
@@ -799,7 +804,14 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	httpInvalidEncryptedContentRetryTried := false
 	agentTaskRecoveryTried := false
 	rejectedFieldRetryState := newOpenAIResponsesRejectedFieldRetryState(body)
+	httpAttempt := 0
 	for {
+		if httpAttempt > 0 {
+			if err := rotateAccountProxyGroupForRetry(ctx, account, s.accountRepo); err != nil {
+				return nil, err
+			}
+		}
+		httpAttempt++
 		// Build upstream request
 		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 		var headerGuard *openAIFirstOutputHeaderGuard

@@ -105,6 +105,12 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	upstreamStart := time.Now()
 	var resp *http.Response
 	for attempt := 0; ; attempt++ {
+		if attempt > 0 {
+			if err := rotateAccountProxyGroupForRetry(ctx, account, s.accountRepo); err != nil {
+				return nil, err
+			}
+			proxyURL = accountProxyURL(account)
+		}
 		upstreamReq, buildErr := buildGrokResponsesRequest(upstreamCtx, c, account, patchedBody, token, cacheIdentity, s.cfg, s.settingService)
 		if buildErr != nil {
 			return nil, buildErr

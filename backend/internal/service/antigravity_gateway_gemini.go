@@ -85,6 +85,9 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 	default:
 		return nil, s.writeGoogleError(c, http.StatusNotFound, "Unsupported action: "+action)
 	}
+	if err := resolveAccountProxyGroup(ctx, account, s.accountRepo); err != nil {
+		return nil, err
+	}
 
 	mappedModel := s.getMappedModel(account, originalModel)
 	if mappedModel == "" {
@@ -198,6 +201,10 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 
 				fallbackWrapped, err := s.wrapV1InternalRequest(projectID, fallbackModel, injectedBody)
 				if err == nil {
+					if err := rotateAccountProxyGroupForRetry(ctx, account, s.accountRepo); err != nil {
+						return nil, err
+					}
+					proxyURL = accountProxyURL(account)
 					fallbackReq, err := antigravity.NewAPIRequest(ctx, upstreamAction, accessToken, fallbackWrapped)
 					if err == nil {
 						fallbackResp, err := s.httpUpstream.Do(fallbackReq, proxyURL, account.ID, account.Concurrency)
@@ -242,6 +249,10 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 			cleanedInjectedBody := CleanGeminiNativeThoughtSignatures(injectedBody)
 			retryWrappedBody, wrapErr := s.wrapV1InternalRequest(projectID, mappedModel, cleanedInjectedBody)
 			if wrapErr == nil {
+				if err := rotateAccountProxyGroupForRetry(ctx, account, s.accountRepo); err != nil {
+					return nil, err
+				}
+				proxyURL = accountProxyURL(account)
 				retryResult, retryErr := s.antigravityRetryLoop(antigravityRetryLoopParams{
 					ctx:             ctx,
 					prefix:          prefix,

@@ -46,6 +46,17 @@ type antigravityRetryLoopResult struct {
 	resp *http.Response
 }
 
+func rotateAntigravityRetryProxy(p *antigravityRetryLoopParams) error {
+	if p == nil {
+		return nil
+	}
+	if err := rotateAccountProxyGroupForRetry(p.ctx, p.account, p.accountRepo); err != nil {
+		return err
+	}
+	p.proxyURL = accountProxyURL(p.account)
+	return nil
+}
+
 // resolveAntigravityForwardBaseURL 解析转发用 base URL。
 //
 // 默认使用生产端点 cloudcode-pa.googleapis.com（antigravity.BaseURLs 的首个地址，
@@ -185,6 +196,9 @@ func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParam
 		}
 
 		for attempt := 1; attempt <= maxAttempts; attempt++ {
+			if err := rotateAntigravityRetryProxy(&p); err != nil {
+				return &smartRetryResult{action: smartRetryActionBreakWithResp, err: err}
+			}
 			log.Printf("%s status=%d oauth_smart_retry attempt=%d/%d delay=%v model=%s account=%d",
 				p.prefix, resp.StatusCode, attempt, maxAttempts, waitDuration, modelName, p.account.ID)
 
@@ -356,6 +370,9 @@ func (s *AntigravityGatewayService) handleSingleAccountRetryInPlace(
 	totalWaited := time.Duration(0)
 
 	for attempt := 1; attempt <= antigravitySingleAccountSmartRetryMaxAttempts; attempt++ {
+		if err := rotateAntigravityRetryProxy(&p); err != nil {
+			return &smartRetryResult{action: smartRetryActionBreakWithResp, err: err}
+		}
 		// 检查累计等待是否超限
 		if totalWaited+waitDuration > antigravitySingleAccountSmartRetryTotalMaxWait {
 			remaining := antigravitySingleAccountSmartRetryTotalMaxWait - totalWaited
@@ -513,6 +530,11 @@ urlFallbackLoop:
 		usedBaseURL = baseURL
 		allAttemptsInternal500 := true // 追踪本轮所有 attempt 是否全部命中 INTERNAL 500
 		for attempt := 1; attempt <= antigravityMaxRetries; attempt++ {
+			if attempt > 1 {
+				if err := rotateAntigravityRetryProxy(&p); err != nil {
+					return nil, err
+				}
+			}
 			select {
 			case <-p.ctx.Done():
 				logger.LegacyPrintf("service.antigravity_gateway", "%s status=context_canceled error=%v", p.prefix, p.ctx.Err())

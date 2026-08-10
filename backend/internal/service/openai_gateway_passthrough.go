@@ -193,7 +193,15 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 
 	agentTaskRecoveryTried := false
 	var resp *http.Response
+	attempt := 0
 	for {
+		if attempt > 0 {
+			if err := rotateAccountProxyGroupForRetry(ctx, account, s.accountRepo); err != nil {
+				return nil, err
+			}
+			proxyURL = accountProxyURL(account)
+		}
+		attempt++
 		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 		upstreamReq, buildErr := s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token)
 		releaseUpstreamCtx()

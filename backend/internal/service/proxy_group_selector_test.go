@@ -51,6 +51,31 @@ func TestSelectProxyGroupMemberReturnsUnavailableForEmptyEligibleSet(t *testing.
 	require.ErrorIs(t, err, ErrProxyGroupNoAvailableProxy)
 }
 
+func TestSelectProxyGroupMemberExceptAvoidsFailedProxyWhenAnotherMemberIsAvailable(t *testing.T) {
+	now := time.Date(2026, time.August, 10, 0, 0, 0, 0, time.UTC)
+	failedProxyID := int64(1)
+
+	selected, err := SelectProxyGroupMemberExcept([]Proxy{
+		{ID: failedProxyID, Status: StatusActive},
+		{ID: 2, Status: StatusActive},
+	}, now, rand.New(rand.NewSource(1)), &failedProxyID)
+
+	require.NoError(t, err)
+	require.Equal(t, int64(2), selected.ID)
+}
+
+func TestSelectProxyGroupMemberExceptKeepsOnlyEligibleMember(t *testing.T) {
+	now := time.Date(2026, time.August, 10, 0, 0, 0, 0, time.UTC)
+	failedProxyID := int64(1)
+
+	selected, err := SelectProxyGroupMemberExcept([]Proxy{
+		{ID: failedProxyID, Status: StatusActive},
+	}, now, rand.New(rand.NewSource(1)), &failedProxyID)
+
+	require.NoError(t, err)
+	require.Equal(t, failedProxyID, selected.ID)
+}
+
 func TestResolveAccountProxyGroupUsesEligibleGroupMemberForThisRequest(t *testing.T) {
 	group := "residential-us"
 	repository := &proxyGroupMemberSourceStub{members: []Proxy{
@@ -67,4 +92,24 @@ func TestResolveAccountProxyGroupUsesEligibleGroupMemberForThisRequest(t *testin
 	require.Equal(t, int64(2), *account.ProxyID)
 	require.NotNil(t, account.Proxy)
 	require.Equal(t, int64(2), account.Proxy.ID)
+}
+
+func TestRotateAccountProxyGroupForRetryAvoidsCurrentProxy(t *testing.T) {
+	group := "residential-us"
+	currentID := int64(1)
+	repository := &proxyGroupMemberSourceStub{members: []Proxy{
+		{ID: currentID, Status: StatusActive},
+		{ID: 2, Status: StatusActive},
+	}}
+	account := &Account{
+		ProxyGroup: &group,
+		ProxyID:    &currentID,
+		Proxy:      &Proxy{ID: currentID, Status: StatusActive},
+	}
+
+	err := rotateAccountProxyGroupForRetry(context.Background(), account, repository)
+
+	require.NoError(t, err)
+	require.NotNil(t, account.ProxyID)
+	require.Equal(t, int64(2), *account.ProxyID)
 }

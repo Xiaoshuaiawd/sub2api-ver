@@ -771,6 +771,12 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 	var resp *http.Response
 	signatureRetryStage := 0
 	for attempt := 1; attempt <= geminiMaxRetries; attempt++ {
+		if attempt > 1 {
+			if err := rotateAccountProxyGroupForRetry(ctx, account, s.accountRepo); err != nil {
+				return nil, err
+			}
+			proxyURL = accountProxyURL(account)
+		}
 		upstreamReq, idHeader, err := buildReq(ctx)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -1304,6 +1310,12 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 
 	var resp *http.Response
 	for attempt := 1; attempt <= geminiMaxRetries; attempt++ {
+		if attempt > 1 {
+			if err := rotateAccountProxyGroupForRetry(ctx, account, s.accountRepo); err != nil {
+				return nil, err
+			}
+			proxyURL = accountProxyURL(account)
+		}
 		upstreamReq, idHeader, err := buildReq(ctx)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
