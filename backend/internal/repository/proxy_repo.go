@@ -48,6 +48,9 @@ func (r *proxyRepository) Create(ctx context.Context, proxyIn *service.Proxy) er
 	if proxyIn.Password != "" {
 		builder.SetPassword(proxyIn.Password)
 	}
+	if strings.TrimSpace(proxyIn.ProxyGroup) != "" {
+		builder.SetProxyGroup(strings.TrimSpace(proxyIn.ProxyGroup))
+	}
 	if proxyIn.ExpiresAt != nil {
 		builder.SetExpiresAt(*proxyIn.ExpiresAt)
 	}
@@ -170,6 +173,11 @@ func updateProxyAndInvalidateProbeSnapshots(ctx context.Context, client *dbent.C
 		builder.SetExpiresAt(*proxyIn.ExpiresAt)
 	} else {
 		builder.ClearExpiresAt()
+	}
+	if strings.TrimSpace(proxyIn.ProxyGroup) != "" {
+		builder.SetProxyGroup(strings.TrimSpace(proxyIn.ProxyGroup))
+	} else {
+		builder.ClearProxyGroup()
 	}
 	if proxyIn.BackupProxyID != nil {
 		builder.SetBackupProxyID(*proxyIn.BackupProxyID)
@@ -596,6 +604,7 @@ func proxyEntityToService(m *dbent.Proxy) *service.Proxy {
 		FallbackMode:   m.FallbackMode,
 		BackupProxyID:  m.BackupProxyID,
 		ExpiryWarnDays: m.ExpiryWarnDays,
+		ProxyGroup:     derefString(m.ProxyGroup),
 	}
 	if m.Username != nil {
 		out.Username = *m.Username

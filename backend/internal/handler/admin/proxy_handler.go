@@ -37,6 +37,7 @@ type CreateProxyRequest struct {
 	FallbackMode   string `json:"fallback_mode" binding:"omitempty,oneof=none proxy direct"`
 	BackupProxyID  *int64 `json:"backup_proxy_id"`
 	ExpiryWarnDays int    `json:"expiry_warn_days" binding:"omitempty,min=0"`
+	ProxyGroup     string `json:"proxy_group"`
 }
 
 // UpdateProxyRequest represents update proxy request
@@ -52,6 +53,7 @@ type UpdateProxyRequest struct {
 	FallbackMode   string `json:"fallback_mode" binding:"omitempty,oneof=none proxy direct"`
 	BackupProxyID  *int64 `json:"backup_proxy_id"`
 	ExpiryWarnDays int    `json:"expiry_warn_days" binding:"omitempty,min=0"`
+	ProxyGroup     string `json:"proxy_group"`
 }
 
 // List handles listing all proxies with pagination
@@ -159,6 +161,7 @@ func (h *ProxyHandler) Create(c *gin.Context) {
 			FallbackMode:   strings.TrimSpace(req.FallbackMode),
 			BackupProxyID:  req.BackupProxyID,
 			ExpiryWarnDays: req.ExpiryWarnDays,
+			ProxyGroup:     req.ProxyGroup,
 		})
 		if err != nil {
 			return nil, err
@@ -199,6 +202,7 @@ func (h *ProxyHandler) Update(c *gin.Context) {
 		FallbackMode:   strings.TrimSpace(req.FallbackMode),
 		BackupProxyID:  req.BackupProxyID,
 		ExpiryWarnDays: req.ExpiryWarnDays,
+		ProxyGroup:     req.ProxyGroup,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)

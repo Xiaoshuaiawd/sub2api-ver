@@ -35,6 +35,8 @@ const (
 	FieldPassword = "password"
 	// FieldStatus holds the string denoting the status field in the database.
 	FieldStatus = "status"
+	// FieldProxyGroup holds the string denoting the proxy_group field in the database.
+	FieldProxyGroup = "proxy_group"
 	// FieldExpiresAt holds the string denoting the expires_at field in the database.
 	FieldExpiresAt = "expires_at"
 	// FieldFallbackMode holds the string denoting the fallback_mode field in the database.
@@ -75,6 +77,7 @@ var Columns = []string{
 	FieldUsername,
 	FieldPassword,
 	FieldStatus,
+	FieldProxyGroup,
 	FieldExpiresAt,
 	FieldFallbackMode,
 	FieldBackupProxyID,
@@ -119,6 +122,8 @@ var (
 	DefaultStatus string
 	// StatusValidator is a validator for the "status" field. It is called by the builders before save.
 	StatusValidator func(string) error
+	// ProxyGroupValidator is a validator for the "proxy_group" field. It is called by the builders before save.
+	ProxyGroupValidator func(string) error
 	// DefaultFallbackMode holds the default value on creation for the "fallback_mode" field.
 	DefaultFallbackMode string
 	// FallbackModeValidator is a validator for the "fallback_mode" field. It is called by the builders before save.
@@ -183,6 +188,11 @@ func ByPassword(opts ...sql.OrderTermOption) OrderOption {
 // ByStatus orders the results by the status field.
 func ByStatus(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldStatus, opts...).ToFunc()
+}
+
+// ByProxyGroup orders the results by the proxy_group field.
+func ByProxyGroup(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldProxyGroup, opts...).ToFunc()
 }
 
 // ByExpiresAt orders the results by the expires_at field.

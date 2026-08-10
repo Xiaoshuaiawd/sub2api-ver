@@ -36,6 +36,8 @@ const (
 	FieldExtra = "extra"
 	// FieldProxyID holds the string denoting the proxy_id field in the database.
 	FieldProxyID = "proxy_id"
+	// FieldProxyGroup holds the string denoting the proxy_group field in the database.
+	FieldProxyGroup = "proxy_group"
 	// FieldProxyFallbackOriginID holds the string denoting the proxy_fallback_origin_id field in the database.
 	FieldProxyFallbackOriginID = "proxy_fallback_origin_id"
 	// FieldConcurrency holds the string denoting the concurrency field in the database.
@@ -141,6 +143,7 @@ var Columns = []string{
 	FieldCredentials,
 	FieldExtra,
 	FieldProxyID,
+	FieldProxyGroup,
 	FieldProxyFallbackOriginID,
 	FieldConcurrency,
 	FieldLoadFactor,
@@ -204,6 +207,8 @@ var (
 	DefaultCredentials func() map[string]interface{}
 	// DefaultExtra holds the default value on creation for the "extra" field.
 	DefaultExtra func() map[string]interface{}
+	// ProxyGroupValidator is a validator for the "proxy_group" field. It is called by the builders before save.
+	ProxyGroupValidator func(string) error
 	// DefaultConcurrency holds the default value on creation for the "concurrency" field.
 	DefaultConcurrency int
 	// DefaultPriority holds the default value on creation for the "priority" field.
@@ -294,6 +299,11 @@ func ByType(opts ...sql.OrderTermOption) OrderOption {
 // ByProxyID orders the results by the proxy_id field.
 func ByProxyID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldProxyID, opts...).ToFunc()
+}
+
+// ByProxyGroup orders the results by the proxy_group field.
+func ByProxyGroup(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldProxyGroup, opts...).ToFunc()
 }
 
 // ByProxyFallbackOriginID orders the results by the proxy_fallback_origin_id field.

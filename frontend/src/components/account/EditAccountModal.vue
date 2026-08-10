@@ -1446,7 +1446,29 @@
           <label class="input-label mb-0">{{ t('admin.accounts.proxy') }}</label>
           <ProxyAdBanner />
         </div>
-        <ProxySelector v-model="form.proxy_id" :proxies="proxies" />
+        <select
+          v-model="proxyRoutingMode"
+          data-testid="proxy-routing-mode"
+          class="input mb-3"
+          @change="applyProxyRoutingMode"
+        >
+          <option value="direct">{{ t('admin.accounts.proxyRoutingDirect') }}</option>
+          <option value="fixed">{{ t('admin.accounts.proxyRoutingFixed') }}</option>
+          <option value="group">{{ t('admin.accounts.proxyRoutingGroup') }}</option>
+        </select>
+        <ProxySelector v-if="proxyRoutingMode === 'fixed'" v-model="form.proxy_id" :proxies="proxies" />
+        <select
+          v-else-if="proxyRoutingMode === 'group'"
+          v-model="form.proxy_group"
+          data-testid="proxy-group-select"
+          class="input"
+        >
+          <option value="">{{ t('admin.accounts.proxyRoutingSelectGroup') }}</option>
+          <option v-for="group in proxyGroupOptions" :key="group" :value="group">{{ group }}</option>
+        </select>
+        <p v-if="proxyRoutingMode === 'group'" class="input-hint">
+          {{ t('admin.accounts.proxyRoutingGroupHint') }}
+        </p>
       </div>
 
       <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -3259,6 +3281,7 @@ const form = reactive({
   name: '',
   notes: '',
   proxy_id: null as number | null,
+  proxy_group: '' as string,
   concurrency: 1,
   load_factor: null as number | null,
   priority: 1,
@@ -3267,6 +3290,24 @@ const form = reactive({
   group_ids: [] as number[],
   expires_at: null as number | null
 })
+
+const proxyRoutingMode = ref<'direct' | 'fixed' | 'group'>('direct')
+const proxyGroupOptions = computed(() => [...new Set(
+  props.proxies
+    .map(proxy => proxy.proxy_group?.trim() || '')
+    .filter(Boolean)
+)].sort((left, right) => left.localeCompare(right)))
+
+const applyProxyRoutingMode = () => {
+  if (proxyRoutingMode.value === 'direct') {
+    form.proxy_id = null
+    form.proxy_group = ''
+  } else if (proxyRoutingMode.value === 'fixed') {
+    form.proxy_group = ''
+  } else {
+    form.proxy_id = null
+  }
+}
 
 const handleUpstreamBillingRateSyncChange = (enabled: boolean) => {
   upstreamBillingRateSyncEnabled.value = enabled
@@ -3362,6 +3403,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   form.name = newAccount.name
   form.notes = newAccount.notes || ''
   form.proxy_id = newAccount.proxy_id
+  form.proxy_group = newAccount.proxy_group || ''
+  proxyRoutingMode.value = form.proxy_group ? 'group' : form.proxy_id != null ? 'fixed' : 'direct'
   form.concurrency = newAccount.concurrency
   form.load_factor = newAccount.load_factor ?? null
   form.priority = newAccount.priority
@@ -4233,6 +4276,11 @@ const handleSubmit = async () => {
     // 后端期望 proxy_id: 0 表示清除代理，而不是 null
     if (updatePayload.proxy_id === null) {
       updatePayload.proxy_id = 0
+    }
+    if (proxyRoutingMode.value === 'group') {
+      updatePayload.proxy_id = 0
+    } else {
+      updatePayload.proxy_group = ''
     }
     if (form.expires_at === null) {
       updatePayload.expires_at = 0

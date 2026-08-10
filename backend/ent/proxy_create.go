@@ -131,6 +131,20 @@ func (_c *ProxyCreate) SetNillableStatus(v *string) *ProxyCreate {
 	return _c
 }
 
+// SetProxyGroup sets the "proxy_group" field.
+func (_c *ProxyCreate) SetProxyGroup(v string) *ProxyCreate {
+	_c.mutation.SetProxyGroup(v)
+	return _c
+}
+
+// SetNillableProxyGroup sets the "proxy_group" field if the given value is not nil.
+func (_c *ProxyCreate) SetNillableProxyGroup(v *string) *ProxyCreate {
+	if v != nil {
+		_c.SetProxyGroup(*v)
+	}
+	return _c
+}
+
 // SetExpiresAt sets the "expires_at" field.
 func (_c *ProxyCreate) SetExpiresAt(v time.Time) *ProxyCreate {
 	_c.mutation.SetExpiresAt(v)
@@ -326,6 +340,11 @@ func (_c *ProxyCreate) check() error {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "Proxy.status": %w`, err)}
 		}
 	}
+	if v, ok := _c.mutation.ProxyGroup(); ok {
+		if err := proxy.ProxyGroupValidator(v); err != nil {
+			return &ValidationError{Name: "proxy_group", err: fmt.Errorf(`ent: validator failed for field "Proxy.proxy_group": %w`, err)}
+		}
+	}
 	if _, ok := _c.mutation.FallbackMode(); !ok {
 		return &ValidationError{Name: "fallback_mode", err: errors.New(`ent: missing required field "Proxy.fallback_mode"`)}
 	}
@@ -403,6 +422,10 @@ func (_c *ProxyCreate) createSpec() (*Proxy, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Status(); ok {
 		_spec.SetField(proxy.FieldStatus, field.TypeString, value)
 		_node.Status = value
+	}
+	if value, ok := _c.mutation.ProxyGroup(); ok {
+		_spec.SetField(proxy.FieldProxyGroup, field.TypeString, value)
+		_node.ProxyGroup = &value
 	}
 	if value, ok := _c.mutation.ExpiresAt(); ok {
 		_spec.SetField(proxy.FieldExpiresAt, field.TypeTime, value)
@@ -630,6 +653,24 @@ func (u *ProxyUpsert) SetStatus(v string) *ProxyUpsert {
 // UpdateStatus sets the "status" field to the value that was provided on create.
 func (u *ProxyUpsert) UpdateStatus() *ProxyUpsert {
 	u.SetExcluded(proxy.FieldStatus)
+	return u
+}
+
+// SetProxyGroup sets the "proxy_group" field.
+func (u *ProxyUpsert) SetProxyGroup(v string) *ProxyUpsert {
+	u.Set(proxy.FieldProxyGroup, v)
+	return u
+}
+
+// UpdateProxyGroup sets the "proxy_group" field to the value that was provided on create.
+func (u *ProxyUpsert) UpdateProxyGroup() *ProxyUpsert {
+	u.SetExcluded(proxy.FieldProxyGroup)
+	return u
+}
+
+// ClearProxyGroup clears the value of the "proxy_group" field.
+func (u *ProxyUpsert) ClearProxyGroup() *ProxyUpsert {
+	u.SetNull(proxy.FieldProxyGroup)
 	return u
 }
 
@@ -895,6 +936,27 @@ func (u *ProxyUpsertOne) SetStatus(v string) *ProxyUpsertOne {
 func (u *ProxyUpsertOne) UpdateStatus() *ProxyUpsertOne {
 	return u.Update(func(s *ProxyUpsert) {
 		s.UpdateStatus()
+	})
+}
+
+// SetProxyGroup sets the "proxy_group" field.
+func (u *ProxyUpsertOne) SetProxyGroup(v string) *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.SetProxyGroup(v)
+	})
+}
+
+// UpdateProxyGroup sets the "proxy_group" field to the value that was provided on create.
+func (u *ProxyUpsertOne) UpdateProxyGroup() *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.UpdateProxyGroup()
+	})
+}
+
+// ClearProxyGroup clears the value of the "proxy_group" field.
+func (u *ProxyUpsertOne) ClearProxyGroup() *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.ClearProxyGroup()
 	})
 }
 
@@ -1337,6 +1399,27 @@ func (u *ProxyUpsertBulk) SetStatus(v string) *ProxyUpsertBulk {
 func (u *ProxyUpsertBulk) UpdateStatus() *ProxyUpsertBulk {
 	return u.Update(func(s *ProxyUpsert) {
 		s.UpdateStatus()
+	})
+}
+
+// SetProxyGroup sets the "proxy_group" field.
+func (u *ProxyUpsertBulk) SetProxyGroup(v string) *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.SetProxyGroup(v)
+	})
+}
+
+// UpdateProxyGroup sets the "proxy_group" field to the value that was provided on create.
+func (u *ProxyUpsertBulk) UpdateProxyGroup() *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.UpdateProxyGroup()
+	})
+}
+
+// ClearProxyGroup clears the value of the "proxy_group" field.
+func (u *ProxyUpsertBulk) ClearProxyGroup() *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.ClearProxyGroup()
 	})
 }
 

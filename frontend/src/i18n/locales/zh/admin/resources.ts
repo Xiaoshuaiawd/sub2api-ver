@@ -73,7 +73,10 @@ export default {
       dataExportConfirm: '确认导出',
       dataExported: '数据导出成功',
       dataExportFailed: '数据导出失败',
+      proxyGroup: '代理分组',
+      proxyGroupPlaceholder: '例如 residential-us',
       columns: {
+        proxyGroup: '代理分组',
         name: '名称',
         protocol: '协议',
         address: '地址',

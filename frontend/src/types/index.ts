@@ -916,6 +916,7 @@ export interface Proxy {
   fallback_mode: 'none' | 'proxy' | 'direct'
   backup_proxy_id?: number | null
   expiry_warn_days: number
+  proxy_group?: string | null
   created_at: string
   updated_at: string
 }
@@ -1127,6 +1128,7 @@ export interface Account {
     }
   } & Record<string, unknown>)
   proxy_id: number | null
+  proxy_group?: string | null
   proxy_fallback_origin_id?: number | null
   proxy_fallback_origin_name?: string | null
   concurrency: number
@@ -1409,6 +1411,7 @@ export interface CreateAccountRequest {
   credentials: Record<string, unknown>
   extra?: Record<string, unknown>
   proxy_id?: number | null
+  proxy_group?: string | null
   concurrency?: number
   load_factor?: number | null
   priority?: number
@@ -1427,6 +1430,7 @@ export interface UpdateAccountRequest {
   credentials?: Record<string, unknown>
   extra?: Record<string, unknown>
   proxy_id?: number | null
+  proxy_group?: string | null
   concurrency?: number
   load_factor?: number | null
   priority?: number
@@ -1472,6 +1476,7 @@ export interface CreateProxyRequest {
   fallback_mode?: 'none' | 'proxy' | 'direct'
   backup_proxy_id?: number | null
   expiry_warn_days?: number
+  proxy_group?: string | null
 }
 
 export interface UpdateProxyRequest {
@@ -1486,6 +1491,7 @@ export interface UpdateProxyRequest {
   fallback_mode?: 'none' | 'proxy' | 'direct'
   backup_proxy_id?: number | null
   expiry_warn_days?: number
+  proxy_group?: string | null
 }
 
 export interface AdminDataPayload {

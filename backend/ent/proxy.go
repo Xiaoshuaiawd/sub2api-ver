@@ -37,6 +37,8 @@ type Proxy struct {
 	Password *string `json:"password,omitempty"`
 	// Status holds the value of the "status" field.
 	Status string `json:"status,omitempty"`
+	// Optional routing group name used to randomly select a proxy per request.
+	ProxyGroup *string `json:"proxy_group,omitempty"`
 	// Proxy expiration time (NULL means never expires).
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	// Fallback target on expiry: none | proxy | direct.
@@ -89,7 +91,7 @@ func (*Proxy) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case proxy.FieldID, proxy.FieldPort, proxy.FieldBackupProxyID, proxy.FieldExpiryWarnDays:
 			values[i] = new(sql.NullInt64)
-		case proxy.FieldName, proxy.FieldProtocol, proxy.FieldHost, proxy.FieldUsername, proxy.FieldPassword, proxy.FieldStatus, proxy.FieldFallbackMode:
+		case proxy.FieldName, proxy.FieldProtocol, proxy.FieldHost, proxy.FieldUsername, proxy.FieldPassword, proxy.FieldStatus, proxy.FieldProxyGroup, proxy.FieldFallbackMode:
 			values[i] = new(sql.NullString)
 		case proxy.FieldCreatedAt, proxy.FieldUpdatedAt, proxy.FieldDeletedAt, proxy.FieldExpiresAt:
 			values[i] = new(sql.NullTime)
@@ -176,6 +178,13 @@ func (_m *Proxy) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field status", values[i])
 			} else if value.Valid {
 				_m.Status = value.String
+			}
+		case proxy.FieldProxyGroup:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field proxy_group", values[i])
+			} else if value.Valid {
+				_m.ProxyGroup = new(string)
+				*_m.ProxyGroup = value.String
 			}
 		case proxy.FieldExpiresAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -284,6 +293,11 @@ func (_m *Proxy) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("status=")
 	builder.WriteString(_m.Status)
+	builder.WriteString(", ")
+	if v := _m.ProxyGroup; v != nil {
+		builder.WriteString("proxy_group=")
+		builder.WriteString(*v)
+	}
 	builder.WriteString(", ")
 	if v := _m.ExpiresAt; v != nil {
 		builder.WriteString("expires_at=")

@@ -412,10 +412,14 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 		Credentials: input.Credentials,
 		Extra:       accountExtra,
 		ProxyID:     input.ProxyID,
+		ProxyGroup:  normalizeProxyGroup(input.ProxyGroup),
 		Concurrency: normalizeAccountConcurrency(input.Platform, input.Type, input.Concurrency),
 		Priority:    input.Priority,
 		Status:      StatusActive,
 		Schedulable: true,
+	}
+	if account.ProxyGroup != nil {
+		account.ProxyID = nil
 	}
 	if input.ProbeEnabled != nil && *input.ProbeEnabled {
 		if !isUpstreamBillingProbeAccount(account) {
@@ -710,6 +714,13 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		}
 		account.Proxy = nil // 清除关联对象，防止 GORM Save 时根据 Proxy.ID 覆盖 ProxyID
 	}
+	if input.ProxyGroup != nil && !account.IsCredentialShadow() {
+		account.ProxyGroup = normalizeProxyGroup(input.ProxyGroup)
+		if account.ProxyGroup != nil {
+			account.ProxyID = nil
+		}
+		account.Proxy = nil
+	}
 	if !reflect.DeepEqual(previousProbeIdentity, upstreamBillingProbeIdentity(account)) && account.Extra != nil {
 		delete(account.Extra, UpstreamBillingProbeExtraKey)
 		if !isUpstreamBillingProbeAccount(account) {
@@ -828,8 +839,11 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 
 	// 将 proxy 变更传播到 spark 影子账号（同步；Update 内部已触发调度快照）。
 	// 影子自身 proxy 不可独立编辑(见上),故对影子的更新不触发传播。
-	if input.ProxyID != nil && !account.IsCredentialShadow() {
+	if (input.ProxyID != nil || input.ProxyGroup != nil) && !account.IsCredentialShadow() {
 		if err := s.propagateProxyToShadows(ctx, id, account.ProxyID); err != nil {
+			return nil, err
+		}
+		if err := s.propagateProxyGroupToShadows(ctx, id, account.ProxyGroup); err != nil {
 			return nil, err
 		}
 	}
@@ -1356,6 +1370,7 @@ func (s *adminServiceImpl) CreateShadow(ctx context.Context, parentID int64, opt
 		ParentAccountID: &parentID,
 		QuotaDimension:  QuotaDimensionSpark,
 		ProxyID:         parent.ProxyID,
+		ProxyGroup:      parent.ProxyGroup,
 		Priority:        priority,
 		Concurrency:     concurrency,
 		Schedulable:     true,
@@ -1398,6 +1413,31 @@ func (s *adminServiceImpl) CreateShadow(ctx context.Context, parentID int64, opt
 // Calling this for a non-parent account is a harmless no-op.
 func (s *adminServiceImpl) propagateProxyToShadows(ctx context.Context, parentID int64, proxyID *int64) error {
 	return propagateAccountProxyToShadows(ctx, s.accountRepo, parentID, proxyID)
+}
+
+func (s *adminServiceImpl) propagateProxyGroupToShadows(ctx context.Context, parentID int64, proxyGroup *string) error {
+	shadows, err := s.accountRepo.ListShadowsByParent(ctx, parentID)
+	if err != nil {
+		return fmt.Errorf("list spark shadows for proxy group propagation: %w", err)
+	}
+	for _, shadow := range shadows {
+		shadow.ProxyGroup = proxyGroup
+		if err := s.accountRepo.Update(ctx, shadow); err != nil {
+			return fmt.Errorf("update spark shadow %d proxy group: %w", shadow.ID, err)
+		}
+	}
+	return nil
+}
+
+func normalizeProxyGroup(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	group := strings.TrimSpace(*value)
+	if group == "" {
+		return nil
+	}
+	return &group
 }
 
 // propagateAccountProxyToShadows 把母账号的 proxy 同步到其所有 spark 影子(影子 proxy 恒继承母账号)。

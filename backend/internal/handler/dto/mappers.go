@@ -244,6 +244,7 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 		Extra:                   extra,
 		OllamaCloudUsage:        ollamaCloudUsage,
 		ProxyID:                 a.ProxyID,
+		ProxyGroup:              a.ProxyGroup,
 		ProxyFallbackOriginID:   a.ProxyFallbackOriginID,
 		ProxyFallbackOriginName: a.ProxyFallbackOriginName,
 		Concurrency:             a.Concurrency,
@@ -479,6 +480,7 @@ func ProxyFromService(p *service.Proxy) *Proxy {
 		ExpiresAt:      p.ExpiresAt,
 		FallbackMode:   p.FallbackMode,
 		BackupProxyID:  p.BackupProxyID,
+		ProxyGroup:     p.ProxyGroup,
 		ExpiryWarnDays: p.ExpiryWarnDays,
 	}
 }

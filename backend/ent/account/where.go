@@ -95,6 +95,11 @@ func ProxyID(v int64) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldProxyID, v))
 }
 
+// ProxyGroup applies equality check predicate on the "proxy_group" field. It's identical to ProxyGroupEQ.
+func ProxyGroup(v string) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldProxyGroup, v))
+}
+
 // ProxyFallbackOriginID applies equality check predicate on the "proxy_fallback_origin_id" field. It's identical to ProxyFallbackOriginIDEQ.
 func ProxyFallbackOriginID(v int64) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldProxyFallbackOriginID, v))
@@ -623,6 +628,81 @@ func ProxyIDIsNil() predicate.Account {
 // ProxyIDNotNil applies the NotNil predicate on the "proxy_id" field.
 func ProxyIDNotNil() predicate.Account {
 	return predicate.Account(sql.FieldNotNull(FieldProxyID))
+}
+
+// ProxyGroupEQ applies the EQ predicate on the "proxy_group" field.
+func ProxyGroupEQ(v string) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldProxyGroup, v))
+}
+
+// ProxyGroupNEQ applies the NEQ predicate on the "proxy_group" field.
+func ProxyGroupNEQ(v string) predicate.Account {
+	return predicate.Account(sql.FieldNEQ(FieldProxyGroup, v))
+}
+
+// ProxyGroupIn applies the In predicate on the "proxy_group" field.
+func ProxyGroupIn(vs ...string) predicate.Account {
+	return predicate.Account(sql.FieldIn(FieldProxyGroup, vs...))
+}
+
+// ProxyGroupNotIn applies the NotIn predicate on the "proxy_group" field.
+func ProxyGroupNotIn(vs ...string) predicate.Account {
+	return predicate.Account(sql.FieldNotIn(FieldProxyGroup, vs...))
+}
+
+// ProxyGroupGT applies the GT predicate on the "proxy_group" field.
+func ProxyGroupGT(v string) predicate.Account {
+	return predicate.Account(sql.FieldGT(FieldProxyGroup, v))
+}
+
+// ProxyGroupGTE applies the GTE predicate on the "proxy_group" field.
+func ProxyGroupGTE(v string) predicate.Account {
+	return predicate.Account(sql.FieldGTE(FieldProxyGroup, v))
+}
+
+// ProxyGroupLT applies the LT predicate on the "proxy_group" field.
+func ProxyGroupLT(v string) predicate.Account {
+	return predicate.Account(sql.FieldLT(FieldProxyGroup, v))
+}
+
+// ProxyGroupLTE applies the LTE predicate on the "proxy_group" field.
+func ProxyGroupLTE(v string) predicate.Account {
+	return predicate.Account(sql.FieldLTE(FieldProxyGroup, v))
+}
+
+// ProxyGroupContains applies the Contains predicate on the "proxy_group" field.
+func ProxyGroupContains(v string) predicate.Account {
+	return predicate.Account(sql.FieldContains(FieldProxyGroup, v))
+}
+
+// ProxyGroupHasPrefix applies the HasPrefix predicate on the "proxy_group" field.
+func ProxyGroupHasPrefix(v string) predicate.Account {
+	return predicate.Account(sql.FieldHasPrefix(FieldProxyGroup, v))
+}
+
+// ProxyGroupHasSuffix applies the HasSuffix predicate on the "proxy_group" field.
+func ProxyGroupHasSuffix(v string) predicate.Account {
+	return predicate.Account(sql.FieldHasSuffix(FieldProxyGroup, v))
+}
+
+// ProxyGroupIsNil applies the IsNil predicate on the "proxy_group" field.
+func ProxyGroupIsNil() predicate.Account {
+	return predicate.Account(sql.FieldIsNull(FieldProxyGroup))
+}
+
+// ProxyGroupNotNil applies the NotNil predicate on the "proxy_group" field.
+func ProxyGroupNotNil() predicate.Account {
+	return predicate.Account(sql.FieldNotNull(FieldProxyGroup))
+}
+
+// ProxyGroupEqualFold applies the EqualFold predicate on the "proxy_group" field.
+func ProxyGroupEqualFold(v string) predicate.Account {
+	return predicate.Account(sql.FieldEqualFold(FieldProxyGroup, v))
+}
+
+// ProxyGroupContainsFold applies the ContainsFold predicate on the "proxy_group" field.
+func ProxyGroupContainsFold(v string) predicate.Account {
+	return predicate.Account(sql.FieldContainsFold(FieldProxyGroup, v))
 }
 
 // ProxyFallbackOriginIDEQ applies the EQ predicate on the "proxy_fallback_origin_id" field.

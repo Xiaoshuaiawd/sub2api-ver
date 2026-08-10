@@ -125,6 +125,20 @@ func (_c *AccountCreate) SetNillableProxyID(v *int64) *AccountCreate {
 	return _c
 }
 
+// SetProxyGroup sets the "proxy_group" field.
+func (_c *AccountCreate) SetProxyGroup(v string) *AccountCreate {
+	_c.mutation.SetProxyGroup(v)
+	return _c
+}
+
+// SetNillableProxyGroup sets the "proxy_group" field if the given value is not nil.
+func (_c *AccountCreate) SetNillableProxyGroup(v *string) *AccountCreate {
+	if v != nil {
+		_c.SetProxyGroup(*v)
+	}
+	return _c
+}
+
 // SetProxyFallbackOriginID sets the "proxy_fallback_origin_id" field.
 func (_c *AccountCreate) SetProxyFallbackOriginID(v int64) *AccountCreate {
 	_c.mutation.SetProxyFallbackOriginID(v)
@@ -622,6 +636,11 @@ func (_c *AccountCreate) check() error {
 	if _, ok := _c.mutation.Extra(); !ok {
 		return &ValidationError{Name: "extra", err: errors.New(`ent: missing required field "Account.extra"`)}
 	}
+	if v, ok := _c.mutation.ProxyGroup(); ok {
+		if err := account.ProxyGroupValidator(v); err != nil {
+			return &ValidationError{Name: "proxy_group", err: fmt.Errorf(`ent: validator failed for field "Account.proxy_group": %w`, err)}
+		}
+	}
 	if _, ok := _c.mutation.Concurrency(); !ok {
 		return &ValidationError{Name: "concurrency", err: errors.New(`ent: missing required field "Account.concurrency"`)}
 	}
@@ -720,6 +739,10 @@ func (_c *AccountCreate) createSpec() (*Account, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Extra(); ok {
 		_spec.SetField(account.FieldExtra, field.TypeJSON, value)
 		_node.Extra = value
+	}
+	if value, ok := _c.mutation.ProxyGroup(); ok {
+		_spec.SetField(account.FieldProxyGroup, field.TypeString, value)
+		_node.ProxyGroup = &value
 	}
 	if value, ok := _c.mutation.ProxyFallbackOriginID(); ok {
 		_spec.SetField(account.FieldProxyFallbackOriginID, field.TypeInt64, value)
@@ -1062,6 +1085,24 @@ func (u *AccountUpsert) UpdateProxyID() *AccountUpsert {
 // ClearProxyID clears the value of the "proxy_id" field.
 func (u *AccountUpsert) ClearProxyID() *AccountUpsert {
 	u.SetNull(account.FieldProxyID)
+	return u
+}
+
+// SetProxyGroup sets the "proxy_group" field.
+func (u *AccountUpsert) SetProxyGroup(v string) *AccountUpsert {
+	u.Set(account.FieldProxyGroup, v)
+	return u
+}
+
+// UpdateProxyGroup sets the "proxy_group" field to the value that was provided on create.
+func (u *AccountUpsert) UpdateProxyGroup() *AccountUpsert {
+	u.SetExcluded(account.FieldProxyGroup)
+	return u
+}
+
+// ClearProxyGroup clears the value of the "proxy_group" field.
+func (u *AccountUpsert) ClearProxyGroup() *AccountUpsert {
+	u.SetNull(account.FieldProxyGroup)
 	return u
 }
 
@@ -1620,6 +1661,27 @@ func (u *AccountUpsertOne) UpdateProxyID() *AccountUpsertOne {
 func (u *AccountUpsertOne) ClearProxyID() *AccountUpsertOne {
 	return u.Update(func(s *AccountUpsert) {
 		s.ClearProxyID()
+	})
+}
+
+// SetProxyGroup sets the "proxy_group" field.
+func (u *AccountUpsertOne) SetProxyGroup(v string) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetProxyGroup(v)
+	})
+}
+
+// UpdateProxyGroup sets the "proxy_group" field to the value that was provided on create.
+func (u *AccountUpsertOne) UpdateProxyGroup() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateProxyGroup()
+	})
+}
+
+// ClearProxyGroup clears the value of the "proxy_group" field.
+func (u *AccountUpsertOne) ClearProxyGroup() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.ClearProxyGroup()
 	})
 }
 
@@ -2405,6 +2467,27 @@ func (u *AccountUpsertBulk) UpdateProxyID() *AccountUpsertBulk {
 func (u *AccountUpsertBulk) ClearProxyID() *AccountUpsertBulk {
 	return u.Update(func(s *AccountUpsert) {
 		s.ClearProxyID()
+	})
+}
+
+// SetProxyGroup sets the "proxy_group" field.
+func (u *AccountUpsertBulk) SetProxyGroup(v string) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetProxyGroup(v)
+	})
+}
+
+// UpdateProxyGroup sets the "proxy_group" field to the value that was provided on create.
+func (u *AccountUpsertBulk) UpdateProxyGroup() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateProxyGroup()
+	})
+}
+
+// ClearProxyGroup clears the value of the "proxy_group" field.
+func (u *AccountUpsertBulk) ClearProxyGroup() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.ClearProxyGroup()
 	})
 }
 

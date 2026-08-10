@@ -105,6 +105,11 @@ func Status(v string) predicate.Proxy {
 	return predicate.Proxy(sql.FieldEQ(FieldStatus, v))
 }
 
+// ProxyGroup applies equality check predicate on the "proxy_group" field. It's identical to ProxyGroupEQ.
+func ProxyGroup(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldEQ(FieldProxyGroup, v))
+}
+
 // ExpiresAt applies equality check predicate on the "expires_at" field. It's identical to ExpiresAtEQ.
 func ExpiresAt(v time.Time) predicate.Proxy {
 	return predicate.Proxy(sql.FieldEQ(FieldExpiresAt, v))
@@ -703,6 +708,81 @@ func StatusEqualFold(v string) predicate.Proxy {
 // StatusContainsFold applies the ContainsFold predicate on the "status" field.
 func StatusContainsFold(v string) predicate.Proxy {
 	return predicate.Proxy(sql.FieldContainsFold(FieldStatus, v))
+}
+
+// ProxyGroupEQ applies the EQ predicate on the "proxy_group" field.
+func ProxyGroupEQ(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldEQ(FieldProxyGroup, v))
+}
+
+// ProxyGroupNEQ applies the NEQ predicate on the "proxy_group" field.
+func ProxyGroupNEQ(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldNEQ(FieldProxyGroup, v))
+}
+
+// ProxyGroupIn applies the In predicate on the "proxy_group" field.
+func ProxyGroupIn(vs ...string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldIn(FieldProxyGroup, vs...))
+}
+
+// ProxyGroupNotIn applies the NotIn predicate on the "proxy_group" field.
+func ProxyGroupNotIn(vs ...string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldNotIn(FieldProxyGroup, vs...))
+}
+
+// ProxyGroupGT applies the GT predicate on the "proxy_group" field.
+func ProxyGroupGT(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldGT(FieldProxyGroup, v))
+}
+
+// ProxyGroupGTE applies the GTE predicate on the "proxy_group" field.
+func ProxyGroupGTE(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldGTE(FieldProxyGroup, v))
+}
+
+// ProxyGroupLT applies the LT predicate on the "proxy_group" field.
+func ProxyGroupLT(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldLT(FieldProxyGroup, v))
+}
+
+// ProxyGroupLTE applies the LTE predicate on the "proxy_group" field.
+func ProxyGroupLTE(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldLTE(FieldProxyGroup, v))
+}
+
+// ProxyGroupContains applies the Contains predicate on the "proxy_group" field.
+func ProxyGroupContains(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldContains(FieldProxyGroup, v))
+}
+
+// ProxyGroupHasPrefix applies the HasPrefix predicate on the "proxy_group" field.
+func ProxyGroupHasPrefix(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldHasPrefix(FieldProxyGroup, v))
+}
+
+// ProxyGroupHasSuffix applies the HasSuffix predicate on the "proxy_group" field.
+func ProxyGroupHasSuffix(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldHasSuffix(FieldProxyGroup, v))
+}
+
+// ProxyGroupIsNil applies the IsNil predicate on the "proxy_group" field.
+func ProxyGroupIsNil() predicate.Proxy {
+	return predicate.Proxy(sql.FieldIsNull(FieldProxyGroup))
+}
+
+// ProxyGroupNotNil applies the NotNil predicate on the "proxy_group" field.
+func ProxyGroupNotNil() predicate.Proxy {
+	return predicate.Proxy(sql.FieldNotNull(FieldProxyGroup))
+}
+
+// ProxyGroupEqualFold applies the EqualFold predicate on the "proxy_group" field.
+func ProxyGroupEqualFold(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldEqualFold(FieldProxyGroup, v))
+}
+
+// ProxyGroupContainsFold applies the ContainsFold predicate on the "proxy_group" field.
+func ProxyGroupContainsFold(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldContainsFold(FieldProxyGroup, v))
 }
 
 // ExpiresAtEQ applies the EQ predicate on the "expires_at" field.

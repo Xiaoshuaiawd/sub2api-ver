@@ -2294,6 +2294,7 @@ type AccountMutation struct {
 	_type                       *string
 	credentials                 *map[string]interface{}
 	extra                       *map[string]interface{}
+	proxy_group                 *string
 	proxy_fallback_origin_id    *int64
 	addproxy_fallback_origin_id *int64
 	concurrency                 *int
@@ -2833,6 +2834,55 @@ func (m *AccountMutation) ProxyIDCleared() bool {
 func (m *AccountMutation) ResetProxyID() {
 	m.proxy = nil
 	delete(m.clearedFields, account.FieldProxyID)
+}
+
+// SetProxyGroup sets the "proxy_group" field.
+func (m *AccountMutation) SetProxyGroup(s string) {
+	m.proxy_group = &s
+}
+
+// ProxyGroup returns the value of the "proxy_group" field in the mutation.
+func (m *AccountMutation) ProxyGroup() (r string, exists bool) {
+	v := m.proxy_group
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldProxyGroup returns the old "proxy_group" field's value of the Account entity.
+// If the Account object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountMutation) OldProxyGroup(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldProxyGroup is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldProxyGroup requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldProxyGroup: %w", err)
+	}
+	return oldValue.ProxyGroup, nil
+}
+
+// ClearProxyGroup clears the value of the "proxy_group" field.
+func (m *AccountMutation) ClearProxyGroup() {
+	m.proxy_group = nil
+	m.clearedFields[account.FieldProxyGroup] = struct{}{}
+}
+
+// ProxyGroupCleared returns if the "proxy_group" field was cleared in this mutation.
+func (m *AccountMutation) ProxyGroupCleared() bool {
+	_, ok := m.clearedFields[account.FieldProxyGroup]
+	return ok
+}
+
+// ResetProxyGroup resets all changes to the "proxy_group" field.
+func (m *AccountMutation) ResetProxyGroup() {
+	m.proxy_group = nil
+	delete(m.clearedFields, account.FieldProxyGroup)
 }
 
 // SetProxyFallbackOriginID sets the "proxy_fallback_origin_id" field.
@@ -4138,7 +4188,7 @@ func (m *AccountMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *AccountMutation) Fields() []string {
-	fields := make([]string, 0, 31)
+	fields := make([]string, 0, 32)
 	if m.created_at != nil {
 		fields = append(fields, account.FieldCreatedAt)
 	}
@@ -4168,6 +4218,9 @@ func (m *AccountMutation) Fields() []string {
 	}
 	if m.proxy != nil {
 		fields = append(fields, account.FieldProxyID)
+	}
+	if m.proxy_group != nil {
+		fields = append(fields, account.FieldProxyGroup)
 	}
 	if m.proxy_fallback_origin_id != nil {
 		fields = append(fields, account.FieldProxyFallbackOriginID)
@@ -4260,6 +4313,8 @@ func (m *AccountMutation) Field(name string) (ent.Value, bool) {
 		return m.Extra()
 	case account.FieldProxyID:
 		return m.ProxyID()
+	case account.FieldProxyGroup:
+		return m.ProxyGroup()
 	case account.FieldProxyFallbackOriginID:
 		return m.ProxyFallbackOriginID()
 	case account.FieldConcurrency:
@@ -4331,6 +4386,8 @@ func (m *AccountMutation) OldField(ctx context.Context, name string) (ent.Value,
 		return m.OldExtra(ctx)
 	case account.FieldProxyID:
 		return m.OldProxyID(ctx)
+	case account.FieldProxyGroup:
+		return m.OldProxyGroup(ctx)
 	case account.FieldProxyFallbackOriginID:
 		return m.OldProxyFallbackOriginID(ctx)
 	case account.FieldConcurrency:
@@ -4451,6 +4508,13 @@ func (m *AccountMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetProxyID(v)
+		return nil
+	case account.FieldProxyGroup:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetProxyGroup(v)
 		return nil
 	case account.FieldProxyFallbackOriginID:
 		v, ok := value.(int64)
@@ -4701,6 +4765,9 @@ func (m *AccountMutation) ClearedFields() []string {
 	if m.FieldCleared(account.FieldProxyID) {
 		fields = append(fields, account.FieldProxyID)
 	}
+	if m.FieldCleared(account.FieldProxyGroup) {
+		fields = append(fields, account.FieldProxyGroup)
+	}
 	if m.FieldCleared(account.FieldProxyFallbackOriginID) {
 		fields = append(fields, account.FieldProxyFallbackOriginID)
 	}
@@ -4765,6 +4832,9 @@ func (m *AccountMutation) ClearField(name string) error {
 		return nil
 	case account.FieldProxyID:
 		m.ClearProxyID()
+		return nil
+	case account.FieldProxyGroup:
+		m.ClearProxyGroup()
 		return nil
 	case account.FieldProxyFallbackOriginID:
 		m.ClearProxyFallbackOriginID()
@@ -4845,6 +4915,9 @@ func (m *AccountMutation) ResetField(name string) error {
 		return nil
 	case account.FieldProxyID:
 		m.ResetProxyID()
+		return nil
+	case account.FieldProxyGroup:
+		m.ResetProxyGroup()
 		return nil
 	case account.FieldProxyFallbackOriginID:
 		m.ResetProxyFallbackOriginID()
@@ -36786,6 +36859,7 @@ type ProxyMutation struct {
 	username            *string
 	password            *string
 	status              *string
+	proxy_group         *string
 	expires_at          *time.Time
 	fallback_mode       *string
 	expiry_warn_days    *int
@@ -37318,6 +37392,55 @@ func (m *ProxyMutation) ResetStatus() {
 	m.status = nil
 }
 
+// SetProxyGroup sets the "proxy_group" field.
+func (m *ProxyMutation) SetProxyGroup(s string) {
+	m.proxy_group = &s
+}
+
+// ProxyGroup returns the value of the "proxy_group" field in the mutation.
+func (m *ProxyMutation) ProxyGroup() (r string, exists bool) {
+	v := m.proxy_group
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldProxyGroup returns the old "proxy_group" field's value of the Proxy entity.
+// If the Proxy object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProxyMutation) OldProxyGroup(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldProxyGroup is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldProxyGroup requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldProxyGroup: %w", err)
+	}
+	return oldValue.ProxyGroup, nil
+}
+
+// ClearProxyGroup clears the value of the "proxy_group" field.
+func (m *ProxyMutation) ClearProxyGroup() {
+	m.proxy_group = nil
+	m.clearedFields[proxy.FieldProxyGroup] = struct{}{}
+}
+
+// ProxyGroupCleared returns if the "proxy_group" field was cleared in this mutation.
+func (m *ProxyMutation) ProxyGroupCleared() bool {
+	_, ok := m.clearedFields[proxy.FieldProxyGroup]
+	return ok
+}
+
+// ResetProxyGroup resets all changes to the "proxy_group" field.
+func (m *ProxyMutation) ResetProxyGroup() {
+	m.proxy_group = nil
+	delete(m.clearedFields, proxy.FieldProxyGroup)
+}
+
 // SetExpiresAt sets the "expires_at" field.
 func (m *ProxyMutation) SetExpiresAt(t time.Time) {
 	m.expires_at = &t
@@ -37623,7 +37746,7 @@ func (m *ProxyMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ProxyMutation) Fields() []string {
-	fields := make([]string, 0, 14)
+	fields := make([]string, 0, 15)
 	if m.created_at != nil {
 		fields = append(fields, proxy.FieldCreatedAt)
 	}
@@ -37653,6 +37776,9 @@ func (m *ProxyMutation) Fields() []string {
 	}
 	if m.status != nil {
 		fields = append(fields, proxy.FieldStatus)
+	}
+	if m.proxy_group != nil {
+		fields = append(fields, proxy.FieldProxyGroup)
 	}
 	if m.expires_at != nil {
 		fields = append(fields, proxy.FieldExpiresAt)
@@ -37694,6 +37820,8 @@ func (m *ProxyMutation) Field(name string) (ent.Value, bool) {
 		return m.Password()
 	case proxy.FieldStatus:
 		return m.Status()
+	case proxy.FieldProxyGroup:
+		return m.ProxyGroup()
 	case proxy.FieldExpiresAt:
 		return m.ExpiresAt()
 	case proxy.FieldFallbackMode:
@@ -37731,6 +37859,8 @@ func (m *ProxyMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldPassword(ctx)
 	case proxy.FieldStatus:
 		return m.OldStatus(ctx)
+	case proxy.FieldProxyGroup:
+		return m.OldProxyGroup(ctx)
 	case proxy.FieldExpiresAt:
 		return m.OldExpiresAt(ctx)
 	case proxy.FieldFallbackMode:
@@ -37817,6 +37947,13 @@ func (m *ProxyMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetStatus(v)
+		return nil
+	case proxy.FieldProxyGroup:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetProxyGroup(v)
 		return nil
 	case proxy.FieldExpiresAt:
 		v, ok := value.(time.Time)
@@ -37912,6 +38049,9 @@ func (m *ProxyMutation) ClearedFields() []string {
 	if m.FieldCleared(proxy.FieldPassword) {
 		fields = append(fields, proxy.FieldPassword)
 	}
+	if m.FieldCleared(proxy.FieldProxyGroup) {
+		fields = append(fields, proxy.FieldProxyGroup)
+	}
 	if m.FieldCleared(proxy.FieldExpiresAt) {
 		fields = append(fields, proxy.FieldExpiresAt)
 	}
@@ -37940,6 +38080,9 @@ func (m *ProxyMutation) ClearField(name string) error {
 		return nil
 	case proxy.FieldPassword:
 		m.ClearPassword()
+		return nil
+	case proxy.FieldProxyGroup:
+		m.ClearProxyGroup()
 		return nil
 	case proxy.FieldExpiresAt:
 		m.ClearExpiresAt()
@@ -37984,6 +38127,9 @@ func (m *ProxyMutation) ResetField(name string) error {
 		return nil
 	case proxy.FieldStatus:
 		m.ResetStatus()
+		return nil
+	case proxy.FieldProxyGroup:
+		m.ResetProxyGroup()
 		return nil
 	case proxy.FieldExpiresAt:
 		m.ResetExpiresAt()

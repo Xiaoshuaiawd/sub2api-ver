@@ -122,6 +122,11 @@
             <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
           </template>
 
+          <template #cell-proxy_group="{ value }">
+            <span v-if="value" class="badge badge-primary">{{ value }}</span>
+            <span v-else class="text-sm text-gray-400">-</span>
+          </template>
+
           <template #cell-protocol="{ value }">
             <span
               v-if="value"
@@ -493,6 +498,10 @@
           </div>
         </div>
         <div>
+          <label class="input-label">{{ t('admin.proxies.proxyGroup') }}</label>
+          <input v-model="createForm.proxy_group" type="text" class="input" :placeholder="t('admin.proxies.proxyGroupPlaceholder')" />
+        </div>
+        <div>
           <label class="input-label">{{ t('admin.proxies.expiresAt') }}</label>
           <div class="mb-2 flex flex-wrap gap-2">
             <button
@@ -724,6 +733,10 @@
         <div>
           <label class="input-label">{{ t('admin.proxies.status') }}</label>
           <Select v-model="editForm.status" :options="editStatusOptions" />
+        </div>
+        <div>
+          <label class="input-label">{{ t('admin.proxies.proxyGroup') }}</label>
+          <input v-model="editForm.proxy_group" type="text" class="input" :placeholder="t('admin.proxies.proxyGroupPlaceholder')" />
         </div>
         <div>
           <label class="input-label">{{ t('admin.proxies.expiresAt') }}</label>
@@ -996,6 +1009,7 @@ const { copyToClipboard } = useClipboard()
 const columns = computed<Column[]>(() => [
   { key: 'select', label: '', sortable: false },
   { key: 'name', label: t('admin.proxies.columns.name'), sortable: true },
+  { key: 'proxy_group', label: t('admin.proxies.columns.proxyGroup'), sortable: false },
   { key: 'protocol', label: t('admin.proxies.columns.protocol'), sortable: true },
   { key: 'address', label: t('admin.proxies.columns.address'), sortable: false },
   { key: 'auth', label: t('admin.proxies.columns.auth'), sortable: false },
@@ -1130,6 +1144,7 @@ const createForm = reactive({
   password: '',
   expires_at: '' as string,
   fallback_mode: 'none' as 'none' | 'proxy' | 'direct',
+  proxy_group: '',
   backup_proxy_id: null as number | null,
   expiry_warn_days: 7 as number,
 })
@@ -1144,6 +1159,7 @@ const editForm = reactive({
   status: 'active' as 'active' | 'inactive' | 'expired',
   expires_at: '' as string,
   fallback_mode: 'none' as 'none' | 'proxy' | 'direct',
+  proxy_group: '',
   backup_proxy_id: null as number | null,
   expiry_warn_days: 7 as number,
 })
@@ -1259,6 +1275,7 @@ const closeCreateModal = () => {
   createForm.password = ''
   createForm.expires_at = ''
   createForm.fallback_mode = 'none'
+  createForm.proxy_group = ''
   createForm.backup_proxy_id = null
   createForm.expiry_warn_days = 7
   createPasswordVisible.value = false
@@ -1390,6 +1407,7 @@ const handleCreateProxy = async () => {
       fallback_mode: createForm.fallback_mode,
       backup_proxy_id: createForm.fallback_mode === 'proxy' ? createForm.backup_proxy_id : null,
       expiry_warn_days: createForm.expiry_warn_days,
+      proxy_group: createForm.proxy_group.trim() || null,
     })
     appStore.showSuccess(t('admin.proxies.proxyCreated'))
     closeCreateModal()
@@ -1415,6 +1433,7 @@ const handleEdit = (proxy: Proxy) => {
   editForm.fallback_mode = proxy.fallback_mode || 'none'
   editForm.backup_proxy_id = proxy.backup_proxy_id ?? null
   editForm.expiry_warn_days = proxy.expiry_warn_days ?? 7
+  editForm.proxy_group = proxy.proxy_group || ''
   editPasswordVisible.value = false
   editPasswordDirty.value = false
   showEditModal.value = true
@@ -1455,6 +1474,7 @@ const handleUpdateProxy = async () => {
       fallback_mode: editForm.fallback_mode,
       backup_proxy_id: editForm.fallback_mode === 'proxy' ? editForm.backup_proxy_id : null,
       expiry_warn_days: editForm.expiry_warn_days,
+      proxy_group: editForm.proxy_group.trim() || null,
     }
 
     // Only include password if user actually modified the field

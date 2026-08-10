@@ -58,6 +58,9 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	promptCacheKey string,
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
+	if err := resolveAccountProxyGroup(ctx, account, s.accountRepo); err != nil {
+		return nil, err
+	}
 	beginUpstreamResponseModelObservation(c)
 
 	restrictionResult := s.detectCodexClientRestriction(c, account, body)

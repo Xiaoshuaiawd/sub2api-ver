@@ -34,6 +34,9 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	promptCacheKey string,
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
+	if err := resolveAccountProxyGroup(ctx, account, s.accountRepo); err != nil {
+		return nil, err
+	}
 	beginUpstreamResponseModelObservation(c)
 
 	// 入口分流：APIKey 账号 + 上游不支持 Responses API → 走 CC 直转（与

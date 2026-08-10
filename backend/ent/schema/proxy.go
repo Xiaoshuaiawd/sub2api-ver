@@ -52,6 +52,11 @@ func (Proxy) Fields() []ent.Field {
 		field.String("status").
 			MaxLen(20).
 			Default("active"),
+		field.String("proxy_group").
+			MaxLen(100).
+			Optional().
+			Nillable().
+			Comment("Optional routing group name used to randomly select a proxy per request."),
 		field.Time("expires_at").
 			Optional().Nillable().
 			Comment("Proxy expiration time (NULL means never expires)."),
@@ -82,6 +87,7 @@ func (Proxy) Edges() []ent.Edge {
 func (Proxy) Indexes() []ent.Index {
 	return []ent.Index{
 		index.Fields("status"),
+		index.Fields("proxy_group", "status"),
 		index.Fields("deleted_at"),
 		index.Fields("expires_at"),
 		index.Fields("backup_proxy_id"),

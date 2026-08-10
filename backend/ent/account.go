@@ -39,6 +39,8 @@ type Account struct {
 	Extra map[string]interface{} `json:"extra,omitempty"`
 	// ProxyID holds the value of the "proxy_id" field.
 	ProxyID *int64 `json:"proxy_id,omitempty"`
+	// Optional proxy routing group; one member is selected per request.
+	ProxyGroup *string `json:"proxy_group,omitempty"`
 	// Original proxy id replaced by expiry-fallback; for manual revert. NULL = not in fallback.
 	ProxyFallbackOriginID *int64 `json:"proxy_fallback_origin_id,omitempty"`
 	// Concurrency holds the value of the "concurrency" field.
@@ -177,7 +179,7 @@ func (*Account) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullFloat64)
 		case account.FieldID, account.FieldProxyID, account.FieldProxyFallbackOriginID, account.FieldConcurrency, account.FieldLoadFactor, account.FieldPriority, account.FieldParentAccountID:
 			values[i] = new(sql.NullInt64)
-		case account.FieldName, account.FieldNotes, account.FieldPlatform, account.FieldType, account.FieldStatus, account.FieldErrorMessage, account.FieldTempUnschedulableReason, account.FieldSessionWindowStatus, account.FieldQuotaDimension:
+		case account.FieldName, account.FieldNotes, account.FieldPlatform, account.FieldType, account.FieldProxyGroup, account.FieldStatus, account.FieldErrorMessage, account.FieldTempUnschedulableReason, account.FieldSessionWindowStatus, account.FieldQuotaDimension:
 			values[i] = new(sql.NullString)
 		case account.FieldCreatedAt, account.FieldUpdatedAt, account.FieldDeletedAt, account.FieldLastUsedAt, account.FieldExpiresAt, account.FieldRateLimitedAt, account.FieldRateLimitResetAt, account.FieldOverloadUntil, account.FieldTempUnschedulableUntil, account.FieldSessionWindowStart, account.FieldSessionWindowEnd:
 			values[i] = new(sql.NullTime)
@@ -268,6 +270,13 @@ func (_m *Account) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.ProxyID = new(int64)
 				*_m.ProxyID = value.Int64
+			}
+		case account.FieldProxyGroup:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field proxy_group", values[i])
+			} else if value.Valid {
+				_m.ProxyGroup = new(string)
+				*_m.ProxyGroup = value.String
 			}
 		case account.FieldProxyFallbackOriginID:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -509,6 +518,11 @@ func (_m *Account) String() string {
 	if v := _m.ProxyID; v != nil {
 		builder.WriteString("proxy_id=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.ProxyGroup; v != nil {
+		builder.WriteString("proxy_group=")
+		builder.WriteString(*v)
 	}
 	builder.WriteString(", ")
 	if v := _m.ProxyFallbackOriginID; v != nil {

@@ -313,6 +313,11 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 
 	// 获取代理URL（自定义 base URL 模式下，proxy 通过 buildCustomRelayURL 作为查询参数传递）
 	proxyURL := ""
+	if account.ProxyGroup != nil && strings.TrimSpace(*account.ProxyGroup) != "" {
+		if err := s.resolveProxyGroupForRequest(ctx, account); err != nil {
+			return nil, err
+		}
+	}
 	if account.ProxyID != nil && account.Proxy != nil {
 		if !account.IsCustomBaseURLEnabled() || account.GetCustomBaseURL() == "" {
 			proxyURL = account.Proxy.URL()
@@ -873,6 +878,13 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		FirstTokenMs:                  firstTokenMs,
 		ClientDisconnect:              clientDisconnect,
 	}, nil
+}
+
+// resolveProxyGroupForRequest selects one member once before forwarding starts.
+// The selected member is kept only on this in-memory account instance, so retries
+// use a stable proxy while the next request selects independently.
+func (s *GatewayService) resolveProxyGroupForRequest(ctx context.Context, account *Account) error {
+	return resolveAccountProxyGroup(ctx, account, s.accountRepo)
 }
 
 // ResolveChannelMapping 委托渠道服务解析模型映射

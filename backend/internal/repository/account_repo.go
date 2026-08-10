@@ -128,6 +128,9 @@ func createAccountRecord(ctx context.Context, client *dbent.Client, account *ser
 	if account.ProxyID != nil {
 		builder.SetProxyID(*account.ProxyID)
 	}
+	if account.ProxyGroup != nil {
+		builder.SetProxyGroup(*account.ProxyGroup)
+	}
 	if account.LastUsedAt != nil {
 		builder.SetLastUsedAt(*account.LastUsedAt)
 	}
@@ -520,6 +523,11 @@ func (r *accountRepository) updateLockedAccount(
 		builder.SetProxyID(*account.ProxyID)
 	} else {
 		builder.ClearProxyID()
+	}
+	if account.ProxyGroup != nil {
+		builder.SetProxyGroup(*account.ProxyGroup)
+	} else {
+		builder.ClearProxyGroup()
 	}
 	if account.LastUsedAt != nil {
 		builder.SetLastUsedAt(*account.LastUsedAt)
@@ -3175,6 +3183,28 @@ func (r *accountRepository) loadProxies(ctx context.Context, proxyIDs []int64) (
 	return proxyMap, nil
 }
 
+// ListActiveProxyGroupMembers exposes proxy-group members to the gateway without
+// widening AccountRepository, which keeps existing scheduler test doubles intact.
+func (r *accountRepository) ListActiveProxyGroupMembers(ctx context.Context, group string) ([]service.Proxy, error) {
+	group = strings.TrimSpace(group)
+	if group == "" {
+		return []service.Proxy{}, nil
+	}
+	entities, err := r.client.Proxy.Query().
+		Where(dbproxy.ProxyGroupEQ(group)).
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	members := make([]service.Proxy, 0, len(entities))
+	for i := range entities {
+		if proxy := proxyEntityToService(entities[i]); proxy != nil {
+			members = append(members, *proxy)
+		}
+	}
+	return members, nil
+}
+
 func (r *accountRepository) loadAccountGroups(ctx context.Context, accountIDs []int64) (map[int64][]*service.Group, map[int64][]int64, map[int64][]service.AccountGroup, error) {
 	groupsByAccount := make(map[int64][]*service.Group)
 	groupIDsByAccount := make(map[int64][]int64)
@@ -3336,6 +3366,7 @@ func accountEntityToService(m *dbent.Account) *service.Account {
 		Credentials:             copyJSONMap(m.Credentials),
 		Extra:                   copyJSONMap(m.Extra),
 		ProxyID:                 m.ProxyID,
+		ProxyGroup:              m.ProxyGroup,
 		ProxyFallbackOriginID:   m.ProxyFallbackOriginID,
 		Concurrency:             m.Concurrency,
 		Priority:                m.Priority,

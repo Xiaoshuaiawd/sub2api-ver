@@ -150,6 +150,9 @@ func mustCreateProxy(t *testing.T, client *dbent.Client, p *service.Proxy) *serv
 	if p.Password != "" {
 		create.SetPassword(p.Password)
 	}
+	if p.ProxyGroup != "" {
+		create.SetProxyGroup(p.ProxyGroup)
+	}
 	if !p.CreatedAt.IsZero() {
 		create.SetCreatedAt(p.CreatedAt)
 	}

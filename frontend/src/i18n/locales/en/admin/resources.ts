@@ -75,6 +75,8 @@ export default {
       dataExportFailed: 'Failed to export data',
       copyProxyUrl: 'Copy Proxy URL',
       urlCopied: 'Proxy URL copied',
+      proxyGroup: 'Proxy group',
+      proxyGroupPlaceholder: 'e.g. residential-us',
       searchProxies: 'Search proxies...',
       allProtocols: 'All Protocols',
       allStatus: 'All Status',
@@ -85,6 +87,7 @@ export default {
         socks5h: 'SOCKS5H (Remote DNS)'
       },
       columns: {
+        proxyGroup: 'Proxy group',
         name: 'Name',
         protocol: 'Protocol',
         address: 'Address',

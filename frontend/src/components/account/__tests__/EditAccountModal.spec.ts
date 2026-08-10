@@ -290,12 +290,12 @@ function buildOpenAISetupTokenAccount() {
   } as any
 }
 
-function mountModal(account = buildAccount()) {
+function mountModal(account = buildAccount(), proxies: any[] = []) {
   return mount(EditAccountModal, {
     props: {
       show: true,
       account,
-      proxies: [],
+      proxies,
       groups: []
     },
     global: {
@@ -314,6 +314,27 @@ function mountModal(account = buildAccount()) {
 describe('EditAccountModal', () => {
   beforeEach(() => {
     authIsSimpleMode.value = true
+  })
+
+  it('submits a proxy group instead of a fixed proxy', async () => {
+    const account = buildAccount()
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(
+      { ...account, proxy_id: 9, proxy_group: 'residential' },
+      [{ id: 9, name: 'US residential', proxy_group: 'residential' }]
+    )
+
+    const mode = wrapper.get('[data-testid="proxy-routing-mode"]')
+    await mode.setValue('group')
+    await wrapper.get('[data-testid="proxy-group-select"]').setValue('residential')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    const payload = updateAccountMock.mock.calls[0]?.[1]
+    expect(payload.proxy_group).toBe('residential')
+    expect(payload.proxy_id).toBe(0)
   })
 
   it('reopening the same account rehydrates the OpenAI whitelist from props', async () => {
