@@ -726,6 +726,39 @@ func TestBulkUpdateAccounts_PropagatesProxyToShadow(t *testing.T) {
 	require.Equal(t, newProxy, *storedShadow.ProxyID)
 }
 
+func TestBulkUpdateAccounts_PropagatesProxyGroupToShadow(t *testing.T) {
+	ctx := context.Background()
+	repo := newSparkShadowRepoStub()
+	svc := &adminServiceImpl{accountRepo: repo}
+
+	oldProxy := int64(7)
+	parent := &Account{
+		Name:        "bulk-group-parent",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		ProxyID:     &oldProxy,
+		Credentials: map[string]any{"chatgpt_account_id": "org-bulk-group"},
+	}
+	require.NoError(t, repo.Create(ctx, parent))
+
+	shadow, err := svc.CreateShadow(ctx, parent.ID, ShadowOptions{Name: "bulk-group-shadow"})
+	require.NoError(t, err)
+
+	proxyGroup := "residential-us"
+	_, err = svc.BulkUpdateAccounts(ctx, &BulkUpdateAccountsInput{
+		AccountIDs: []int64{parent.ID},
+		ProxyGroup: &proxyGroup,
+	})
+	require.NoError(t, err)
+
+	storedShadow, ok := repo.accounts[shadow.ID]
+	require.True(t, ok)
+	require.Nil(t, storedShadow.ProxyID)
+	require.NotNil(t, storedShadow.ProxyGroup)
+	require.Equal(t, proxyGroup, *storedShadow.ProxyGroup)
+}
+
 // ── 外审 P1/P2 加固:专用测试桩 ───────────────────────────────────────────
 
 // raceCreateRepoStub 模拟并发竞态:对影子的 Create 撞一母一影唯一索引(返回错误),

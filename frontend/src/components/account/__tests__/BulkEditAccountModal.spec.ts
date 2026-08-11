@@ -162,6 +162,33 @@ describe('BulkEditAccountModal', () => {
     })
   })
 
+  it('批量编辑可将账号切换为代理分组路由', async () => {
+    const wrapper = mountModal({
+      proxies: [
+        {
+          id: 7,
+          name: 'US Residential',
+          protocol: 'http',
+          host: 'proxy.example.com',
+          port: 8080,
+          status: 'active',
+          proxy_group: 'residential-us'
+        }
+      ]
+    })
+
+    await wrapper.get('#bulk-edit-proxy-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-proxy-routing-mode').setValue('group')
+    await wrapper.get('#bulk-edit-proxy-group-select').setValue('residential-us')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      proxy_group: 'residential-us',
+      proxy_id: 0
+    })
+  })
+
   it('全部目标为 Grok OAuth 时，官方主机 base_url 作为手动端点切换正常提交', async () => {
     const wrapper = mountModal({
       selectedPlatforms: ['grok'],

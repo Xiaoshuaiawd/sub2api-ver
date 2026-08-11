@@ -624,11 +624,36 @@
           />
         </div>
         <div id="bulk-edit-proxy-body" :class="!enableProxy && 'pointer-events-none opacity-50'">
+          <select
+            v-model="proxyRoutingMode"
+            id="bulk-edit-proxy-routing-mode"
+            class="input mb-3"
+            aria-labelledby="bulk-edit-proxy-label"
+            @change="applyProxyRoutingMode"
+          >
+            <option value="direct">{{ t('admin.accounts.proxyRoutingDirect') }}</option>
+            <option value="fixed">{{ t('admin.accounts.proxyRoutingFixed') }}</option>
+            <option value="group">{{ t('admin.accounts.proxyRoutingGroup') }}</option>
+          </select>
           <ProxySelector
+            v-if="proxyRoutingMode === 'fixed'"
             v-model="proxyId"
             :proxies="proxies"
             aria-labelledby="bulk-edit-proxy-label"
           />
+          <select
+            v-else-if="proxyRoutingMode === 'group'"
+            v-model="proxyGroup"
+            id="bulk-edit-proxy-group-select"
+            class="input"
+            aria-labelledby="bulk-edit-proxy-label"
+          >
+            <option value="">{{ t('admin.accounts.proxyRoutingSelectGroup') }}</option>
+            <option v-for="group in proxyGroupOptions" :key="group" :value="group">{{ group }}</option>
+          </select>
+          <p v-if="proxyRoutingMode === 'group'" class="input-hint">
+            {{ t('admin.accounts.proxyRoutingGroupHint') }}
+          </p>
         </div>
       </div>
 
@@ -1501,6 +1526,8 @@ const interceptWarmupRequests = ref(false)
 const headerOverrideEnabled = ref(false)
 const headerOverrideRows = ref<HeaderOverrideRow[]>([])
 const proxyId = ref<number | null>(null)
+const proxyRoutingMode = ref<'direct' | 'fixed' | 'group'>('direct')
+const proxyGroup = ref('')
 const concurrency = ref(1)
 const loadFactor = ref<number | null>(null)
 const priority = ref(1)
@@ -1543,6 +1570,22 @@ const statusOptions = computed(() => [
   { value: 'active', label: t('common.active') },
   { value: 'inactive', label: t('common.inactive') }
 ])
+const proxyGroupOptions = computed(() => [...new Set(
+  props.proxies
+    .map(proxy => proxy.proxy_group?.trim() || '')
+    .filter(Boolean)
+)].sort((left, right) => left.localeCompare(right)))
+
+const applyProxyRoutingMode = () => {
+  if (proxyRoutingMode.value === 'direct') {
+    proxyId.value = null
+    proxyGroup.value = ''
+  } else if (proxyRoutingMode.value === 'fixed') {
+    proxyGroup.value = ''
+  } else {
+    proxyId.value = null
+  }
+}
 const upstreamBillingAutoProbeOptions = computed(() => [
   { value: 'enabled', label: t('common.enabled') },
   { value: 'disabled', label: t('common.disabled') }
@@ -1673,8 +1716,15 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
   }
 
   if (enableProxy.value) {
-    // 后端期望 proxy_id: 0 表示清除代理，而不是 null
-    updates.proxy_id = proxyId.value === null ? 0 : proxyId.value
+    if (proxyRoutingMode.value === 'group') {
+      updates.proxy_group = proxyGroup.value
+      updates.proxy_id = 0
+    } else {
+      // 后端期望 proxy_id: 0 表示清除代理，而不是 null。
+      // 同时清空分组，避免固定代理/直连与分组路由共存。
+      updates.proxy_id = proxyRoutingMode.value === 'fixed' && proxyId.value !== null ? proxyId.value : 0
+      updates.proxy_group = ''
+    }
   }
 
   if (enableConcurrency.value) {
@@ -2061,6 +2111,8 @@ watch(
       headerOverrideEnabled.value = false
       headerOverrideRows.value = []
       proxyId.value = null
+      proxyRoutingMode.value = 'direct'
+      proxyGroup.value = ''
       concurrency.value = 1
       loadFactor.value = null
       priority.value = 1

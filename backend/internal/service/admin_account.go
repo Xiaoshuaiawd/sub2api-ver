@@ -926,7 +926,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 
 	// 预取所有目标账号，供凭据守卫/代理守卫/混合渠道检查共用，避免多次 DB 查询。
 	var cachedTargets []*Account
-	if len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck || hasLongContextBillingUpdate || input.ProbeEnabled != nil || input.RateMultiplier != nil {
+	if len(input.Credentials) > 0 || input.ProxyID != nil || input.ProxyGroup != nil || needMixedChannelCheck || hasLongContextBillingUpdate || input.ProbeEnabled != nil || input.RateMultiplier != nil {
 		loaded, err := s.accountRepo.GetByIDs(ctx, input.AccountIDs)
 		if err != nil {
 			return nil, err
@@ -976,7 +976,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	// 影子账号 proxy 恒继承母账号(与单账号 UpdateAccount 守卫对齐——外审第4轮 P1):批量携带 proxy
 	// 时目标不得含影子,否则影子会获得独立 proxy、破坏继承不变量(网关按所选影子自身 proxy 出站,
 	// 要等母账号下次改 proxy 才覆盖→漂移)。含影子即整体拒绝,提示从选择中剔除影子。
-	if input.ProxyID != nil {
+	if input.ProxyID != nil || input.ProxyGroup != nil {
 		for _, acc := range cachedTargets {
 			if acc != nil && acc.IsCredentialShadow() {
 				return nil, infraerrors.Newf(http.StatusBadRequest, "SPARK_SHADOW_PROXY_INHERITED",
@@ -1054,7 +1054,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 			repoUpdates.Extra[UpstreamBillingRateSyncEnabledExtraKey] = false
 		}
 	}
-	if updatesUpstreamBillingProbeIdentity(input.Credentials) || input.ProxyID != nil {
+	if updatesUpstreamBillingProbeIdentity(input.Credentials) || input.ProxyID != nil || input.ProxyGroup != nil {
 		if repoUpdates.Extra == nil {
 			repoUpdates.Extra = make(map[string]any)
 		}
@@ -1067,6 +1067,17 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	}
 	if input.ProxyID != nil {
 		repoUpdates.ProxyID = input.ProxyID
+	}
+	if input.ProxyGroup != nil {
+		normalizedProxyGroup := normalizeProxyGroup(input.ProxyGroup)
+		if normalizedProxyGroup == nil {
+			clearProxyGroup := ""
+			repoUpdates.ProxyGroup = &clearProxyGroup
+		} else {
+			repoUpdates.ProxyGroup = normalizedProxyGroup
+			clearProxyID := int64(0)
+			repoUpdates.ProxyID = &clearProxyID
+		}
 	}
 	if input.Concurrency != nil {
 		repoUpdates.Concurrency = input.Concurrency
@@ -1110,6 +1121,17 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 			}
 		}
 	}
+	if repoUpdates.ProxyGroup != nil {
+		var effectiveProxyGroup *string
+		if *repoUpdates.ProxyGroup != "" {
+			effectiveProxyGroup = repoUpdates.ProxyGroup
+		}
+		for _, accountID := range input.AccountIDs {
+			if err := s.propagateProxyGroupToShadows(ctx, accountID, effectiveProxyGroup); err != nil {
+				return nil, err
+			}
+		}
+	}
 
 	// Handle group bindings per account (requires individual operations).
 	for _, accountID := range input.AccountIDs {
@@ -1148,9 +1170,12 @@ func upstreamBillingProbeIdentity(account *Account) map[string]any {
 	if account == nil {
 		return nil
 	}
-	identity := map[string]any{"platform": account.Platform, "type": account.Type, "proxy_id": nil}
+	identity := map[string]any{"platform": account.Platform, "type": account.Type, "proxy_id": nil, "proxy_group": nil}
 	if account.ProxyID != nil {
 		identity["proxy_id"] = *account.ProxyID
+	}
+	if account.ProxyGroup != nil {
+		identity["proxy_group"] = *account.ProxyGroup
 	}
 	for _, key := range []string{"api_key", "base_url", credKeyHeaderOverrideEnabled, credKeyHeaderOverrides} {
 		if value, ok := account.Credentials[key]; ok {

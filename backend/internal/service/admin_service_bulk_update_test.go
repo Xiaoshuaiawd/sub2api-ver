@@ -18,6 +18,7 @@ type accountRepoStubForBulkUpdate struct {
 	accountRepoStub
 	bulkUpdateErr       error
 	bulkUpdateIDs       []int64
+	bulkUpdatePayload   AccountBulkUpdate
 	bindGroupErrByID    map[int64]error
 	bindGroupsCalls     []int64
 	bindGroupsByAccount map[int64][]int64
@@ -50,8 +51,9 @@ type accountRepoStubForBulkUpdate struct {
 	}
 }
 
-func (s *accountRepoStubForBulkUpdate) BulkUpdate(_ context.Context, ids []int64, _ AccountBulkUpdate) (int64, error) {
+func (s *accountRepoStubForBulkUpdate) BulkUpdate(_ context.Context, ids []int64, updates AccountBulkUpdate) (int64, error) {
 	s.bulkUpdateIDs = append([]int64{}, ids...)
+	s.bulkUpdatePayload = updates
 	if s.bulkUpdateErr != nil {
 		return 0, s.bulkUpdateErr
 	}
@@ -153,6 +155,41 @@ func TestAdminService_BulkUpdateAccounts_AllSuccessIDs(t *testing.T) {
 	require.ElementsMatch(t, []int64{1, 2, 3}, result.SuccessIDs)
 	require.Empty(t, result.FailedIDs)
 	require.Len(t, result.Results, 3)
+}
+
+func TestAdminServiceBulkUpdateAccountsSetsProxyGroupAndClearsFixedProxy(t *testing.T) {
+	proxyGroup := " residential-us "
+	account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive}
+	repo := &accountRepoStubForBulkUpdate{getByIDsAccounts: []*Account{account}}
+	svc := &adminServiceImpl{accountRepo: repo}
+
+	_, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+		AccountIDs: []int64{account.ID},
+		ProxyGroup: &proxyGroup,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, repo.bulkUpdatePayload.ProxyID)
+	require.Equal(t, int64(0), *repo.bulkUpdatePayload.ProxyID)
+	require.NotNil(t, repo.bulkUpdatePayload.ProxyGroup)
+	require.Equal(t, "residential-us", *repo.bulkUpdatePayload.ProxyGroup)
+}
+
+func TestAdminServiceBulkUpdateAccountsClearsProxyGroupForDirectRouting(t *testing.T) {
+	proxyGroup := ""
+	account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive}
+	repo := &accountRepoStubForBulkUpdate{getByIDsAccounts: []*Account{account}}
+	svc := &adminServiceImpl{accountRepo: repo}
+
+	_, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+		AccountIDs: []int64{account.ID},
+		ProxyGroup: &proxyGroup,
+	})
+
+	require.NoError(t, err)
+	require.Nil(t, repo.bulkUpdatePayload.ProxyID)
+	require.NotNil(t, repo.bulkUpdatePayload.ProxyGroup)
+	require.Equal(t, "", *repo.bulkUpdatePayload.ProxyGroup)
 }
 
 func TestAdminService_BulkUpdateAccounts_RejectsRateChangeForSyncedAccounts(t *testing.T) {

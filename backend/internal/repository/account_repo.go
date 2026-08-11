@@ -2825,6 +2825,16 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 			idx++
 		}
 	}
+	if updates.ProxyGroup != nil {
+		proxyGroup := strings.TrimSpace(*updates.ProxyGroup)
+		if proxyGroup == "" {
+			setClauses = append(setClauses, "proxy_group = NULL")
+		} else {
+			setClauses = append(setClauses, "proxy_group = $"+itoa(idx))
+			args = append(args, proxyGroup)
+			idx++
+		}
+	}
 	if updates.Concurrency != nil {
 		setClauses = append(setClauses, "concurrency = $"+itoa(idx))
 		args = append(args, *updates.Concurrency)
