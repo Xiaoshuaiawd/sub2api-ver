@@ -139,7 +139,7 @@ func TestGatewayServiceRecordUsage_ResponseModelSafeFallbacks(t *testing.T) {
 			source:        BillingModelSourceResponse,
 		},
 		{
-			name:          "default_channel_mapped_mode_ignores_response_model",
+			name:          "channel_mapped_mode_ignores_response_model",
 			responseModel: func(cheaper string) string { return cheaper },
 			source:        BillingModelSourceChannelMapped,
 		},
@@ -280,7 +280,7 @@ func TestOpenAIGatewayServiceRecordUsage_ResponseModelSafeFallbacks(t *testing.T
 			source:        BillingModelSourceResponse,
 		},
 		{
-			name:          "default_channel_mapped_mode_ignores_response_model",
+			name:          "channel_mapped_mode_ignores_response_model",
 			responseModel: func(cheaper string) string { return cheaper },
 			source:        BillingModelSourceChannelMapped,
 		},

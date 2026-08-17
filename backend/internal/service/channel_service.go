@@ -134,11 +134,15 @@ func (r ChannelMappingResult) ToUsageFields(reqModel, upstreamModel string) Chan
 	if r.Mapped {
 		channelMappedModel = r.MappedModel
 	}
+	billingModelSource := r.BillingModelSource
+	if billingModelSource == "" {
+		billingModelSource = BillingModelSourceRequested
+	}
 	return ChannelUsageFields{
 		ChannelID:          r.ChannelID,
 		OriginalModel:      reqModel,
 		ChannelMappedModel: channelMappedModel,
-		BillingModelSource: r.BillingModelSource,
+		BillingModelSource: billingModelSource,
 		ModelMappingChain:  r.BuildModelMappingChain(reqModel, upstreamModel),
 	}
 }
@@ -774,7 +778,7 @@ func (s *ChannelService) Create(ctx context.Context, input *CreateChannelInput) 
 	return created, nil
 }
 
-// GetByID 获取渠道详情。返回前统一把空 BillingModelSource 回填为 ChannelMapped，
+// GetByID 获取渠道详情。返回前统一把空 BillingModelSource 回填为 Requested，
 // 让所有 handler 无需重复处理历史空值。
 func (s *ChannelService) GetByID(ctx context.Context, id int64) (*Channel, error) {
 	ch, err := s.repo.GetByID(ctx, id)

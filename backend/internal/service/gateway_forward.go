@@ -935,7 +935,7 @@ func billingModelForRestriction(source, requestedModel, channelMappedModel strin
 	case BillingModelSourceChannelMapped:
 		return channelMappedModel
 	default:
-		return channelMappedModel
+		return requestedModel
 	}
 }
 
