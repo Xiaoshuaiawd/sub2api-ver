@@ -9,7 +9,7 @@ const path = require("node:path");
 const MAX_OPAQUE_LENGTH = 512;
 const SENSITIVE_KEY = /(token|secret|password|credential|authorization|cookie|api[_-]?key|refresh[_-]?token)/i;
 const OPAQUE_KEY = /(error_body|response_body|request_body|raw|stack)/i;
-const ALLOWED_TIME_RANGE = /^(?:[1-9]|[12][0-9]|30)(?:m|h|d)$/;
+const ALLOWED_TIME_RANGE = /^(?:5m|30m|1h|6h|24h|7d|30d)$/;
 const PLAN_VERSION = 1;
 const PLAN_TTL_MS = 10 * 60 * 1000;
 
@@ -42,11 +42,23 @@ function parseArgs(argv) {
 }
 
 function positiveInt(value, name) {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
+  const text = typeof value === "string"
+    ? value.trim()
+    : typeof value === "number" && Number.isSafeInteger(value)
+      ? String(value)
+      : "";
+  const parsed = Number(text);
+  if (!/^[1-9]\d*$/.test(text) || !Number.isSafeInteger(parsed)) {
     throw new CliError(`${name} must be a positive integer`);
   }
   return parsed;
+}
+
+function requiredString(value, name) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new CliError(`${name} must be provided`);
+  }
+  return value.trim();
 }
 
 function boundedInt(value, fallback, maximum, name) {
@@ -71,7 +83,7 @@ function commonWindow(flags) {
     throw new CliError("use either --time-range or --start-time/--end-time");
   }
   if (!flags["start-time"] && !flags["end-time"] && !ALLOWED_TIME_RANGE.test(range)) {
-    throw new CliError("--time-range must be 1-30 followed by m, h, or d");
+    throw new CliError("--time-range supported values: 5m, 30m, 1h, 6h, 24h, 7d, 30d");
   }
   if (flags["start-time"] || flags["end-time"]) {
     return [
@@ -104,6 +116,9 @@ function buildReadRequest(command, positional, flags) {
     ["platform", flags.platform],
     ["group_id", optionalGroupId(flags)],
   ];
+  if (command === "system-logs" && flags["group-id"] !== undefined) {
+    throw new CliError("--group-id is not supported by system-logs");
+  }
   const routes = {
     snapshot: [
       "/api/v1/admin/ops/dashboard/snapshot-v2",
@@ -126,6 +141,7 @@ function buildReadRequest(command, positional, flags) {
     alerts: [
       "/api/v1/admin/ops/alert-events",
       [
+        ...commonWindow(flags),
         ["limit", boundedInt(flags.limit, 20, 100, "limit")],
         ["status", flags.status],
         ["severity", flags.severity],
@@ -163,7 +179,8 @@ function buildReadRequest(command, positional, flags) {
     "system-logs": [
       "/api/v1/admin/ops/system-logs",
       [
-        ...scoped(),
+        ...commonWindow(flags),
+        ["platform", flags.platform],
         ["page_size", boundedInt(flags["page-size"], 100, 200, "page-size")],
         ["level", flags.level],
         ["component", flags.component],
@@ -303,24 +320,24 @@ function requireRule(rules, ruleId) {
 
 function silenceFlags(flags, now) {
   const ruleId = positiveInt(flags["rule-id"], "rule-id");
-  const untilRaw = String(flags.until || "").trim();
+  const platform = requiredString(flags.platform, "platform");
+  const untilRaw = typeof flags.until === "string" ? flags.until.trim() : "";
   const until = new Date(untilRaw);
   if (!untilRaw || Number.isNaN(until.getTime())) {
     throw new CliError("until must be an RFC3339 timestamp");
   }
   if (until.getTime() <= now.getTime()) throw new CliError("until must be in the future");
-  const reason = String(flags.reason || "").trim();
-  if (!reason) throw new CliError("reason is required");
+  const reason = requiredString(flags.reason, "reason");
   const body = {
     rule_id: ruleId,
     until: until.toISOString().replace(".000Z", "Z"),
     reason,
+    platform,
   };
-  if (flags.platform) body.platform = String(flags.platform).trim();
   if (flags["group-id"] !== undefined) {
     body.group_id = positiveInt(flags["group-id"], "group-id");
   }
-  if (flags.region) body.region = String(flags.region).trim();
+  if (flags.region !== undefined) body.region = requiredString(flags.region, "region");
   return { ruleId, body };
 }
 
@@ -602,13 +619,18 @@ async function createMutationPlan({
   };
 }
 
-function readVerifiedPlan(planFile, stateDir, env) {
+function resolvePlanLocation(planFile, stateDir, env) {
   const root = resolveStateRoot(stateDir, env);
   const plansDir = path.resolve(root, "plans");
   const resolvedPlan = path.resolve(String(planFile || ""));
   if (!resolvedPlan.startsWith(`${plansDir}${path.sep}`)) {
     throw new CliError("plan file must be inside the Sub2API Ops plans directory", 2);
   }
+  return { root, resolvedPlan };
+}
+
+function readVerifiedPlan(planFile, stateDir, env) {
+  const { root, resolvedPlan } = resolvePlanLocation(planFile, stateDir, env);
   let plan;
   try {
     plan = JSON.parse(fs.readFileSync(resolvedPlan, "utf8"));
@@ -629,54 +651,71 @@ async function executeMutationPlan({
   now = () => new Date(),
   env = process.env,
 }) {
-  const loaded = readVerifiedPlan(planFile, stateDir, env);
-  const { key, plan } = loaded;
-  if (plan.version !== PLAN_VERSION) throw new CliError("plan version is unsupported", 2);
-  const spec = ACTION_SPECS[plan.action];
-  if (!spec) throw new CliError("plan action is not allow-listed", 2);
-  if (plan.consumed_at) throw new CliError("plan has already been consumed", 2);
-  const currentTime = now();
-  if (currentTime.getTime() > new Date(plan.expires_at).getTime()) {
-    throw new CliError("plan has expired", 2);
-  }
-  if (!confirmationToken || !safeEqual(sha256(confirmationToken), plan.token_digest)) {
-    throw new CliError("confirmation token is invalid", 2);
+  const { resolvedPlan } = resolvePlanLocation(planFile, stateDir, env);
+  const lockFile = `${resolvedPlan}.lock`;
+  let lock;
+  try {
+    lock = fs.openSync(lockFile, "wx", 0o600);
+  } catch (error) {
+    if (error.code === "EEXIST") {
+      throw new CliError("plan execution is already in progress", 2);
+    }
+    throw error;
   }
 
-  const target = plan.precondition.target;
-  const canonicalRequest = spec.write(target);
-  const canonicalVerification = spec.read(target);
-  if (
-    stableStringify(plan.request) !== stableStringify(canonicalRequest)
-    || stableStringify(plan.verification) !== stableStringify(canonicalVerification)
-  ) {
-    throw new CliError("plan request does not match action catalog", 2);
-  }
-  const current = await apiRequest(api, plan.verification);
-  const currentObserved = spec.capture(current, target);
-  if (stableStringify(currentObserved) !== stableStringify(plan.precondition.observed)) {
-    throw new CliError("target state changed after the plan was created", 3);
-  }
+  try {
+    const loaded = readVerifiedPlan(resolvedPlan, stateDir, env);
+    const { key, plan } = loaded;
+    if (plan.version !== PLAN_VERSION) throw new CliError("plan version is unsupported", 2);
+    const spec = ACTION_SPECS[plan.action];
+    if (!spec) throw new CliError("plan action is not allow-listed", 2);
+    if (plan.consumed_at) throw new CliError("plan has already been consumed", 2);
+    const currentTime = now();
+    if (currentTime.getTime() >= new Date(plan.expires_at).getTime()) {
+      throw new CliError("plan has expired", 2);
+    }
+    if (!confirmationToken || !safeEqual(sha256(confirmationToken), plan.token_digest)) {
+      throw new CliError("confirmation token is invalid", 2);
+    }
 
-  plan.consumed_at = currentTime.toISOString();
-  plan.signature = signPlan(plan, key);
-  atomicWritePlan(loaded.planFile, plan);
+    const target = plan.precondition.target;
+    const canonicalRequest = spec.write(target);
+    const canonicalVerification = spec.read(target);
+    if (
+      stableStringify(plan.request) !== stableStringify(canonicalRequest)
+      || stableStringify(plan.verification) !== stableStringify(canonicalVerification)
+    ) {
+      throw new CliError("plan request does not match action catalog", 2);
+    }
+    const current = await apiRequest(api, plan.verification);
+    const currentObserved = spec.capture(current, target);
+    if (stableStringify(currentObserved) !== stableStringify(plan.precondition.observed)) {
+      throw new CliError("target state changed after the plan was created", 3);
+    }
 
-  const writeResult = await apiRequest(api, plan.request);
-  const after = await apiRequest(api, plan.verification);
-  if (!spec.verify(after, writeResult, target)) {
-    throw new CliError(`verification failed for ${plan.action}`);
+    plan.consumed_at = currentTime.toISOString();
+    plan.signature = signPlan(plan, key);
+    atomicWritePlan(loaded.planFile, plan);
+
+    const writeResult = await apiRequest(api, plan.request);
+    const after = await apiRequest(api, plan.verification);
+    if (!spec.verify(after, writeResult, target)) {
+      throw new CliError(`verification failed for ${plan.action}`);
+    }
+    return {
+      plan_id: plan.id,
+      action: plan.action,
+      write_result: redactValue(writeResult),
+      verification: {
+        ok: true,
+        limited: Boolean(spec.limitedVerification),
+        observed: redactValue(spec.capture(after, target)),
+      },
+    };
+  } finally {
+    fs.closeSync(lock);
+    fs.unlinkSync(lockFile);
   }
-  return {
-    plan_id: plan.id,
-    action: plan.action,
-    write_result: redactValue(writeResult),
-    verification: {
-      ok: true,
-      limited: Boolean(spec.limitedVerification),
-      observed: redactValue(spec.capture(after, target)),
-    },
-  };
 }
 
 async function runReadCommand(args, api) {

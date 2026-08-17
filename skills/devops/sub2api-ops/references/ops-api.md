@@ -33,7 +33,7 @@ node scripts/sub2api-ops.js alerts --status firing --severity P1 --limit 20
 node scripts/sub2api-ops.js alert-event 42
 ```
 
-`alerts` accepts `--status`, `--severity`, `--platform`, `--group-id`, and `--limit`. The CLI caps the limit at 100.
+`alerts` accepts the common time filters plus `--status`, `--severity`, `--platform`, `--group-id`, and `--limit`. The CLI defaults to `1h` and caps the limit at 100.
 
 ### Errors and Requests
 
@@ -56,7 +56,7 @@ node scripts/sub2api-ops.js ingress-rejections --time-range 1h
 node scripts/sub2api-ops.js auth-cache-health
 ```
 
-System-log filters include `--level`, `--component`, `--request-id`, `--account-id`, `--query`, and the common platform/group/window filters. The CLI caps system-log and ingress page sizes at 200.
+System-log filters include `--level`, `--component`, `--request-id`, `--account-id`, `--query`, `--platform`, and the common window filters. The backend does not support group filtering for system logs. The CLI caps system-log and ingress page sizes at 200.
 
 ## Time Filters
 
@@ -69,7 +69,7 @@ node scripts/sub2api-ops.js snapshot \
   --end-time 2026-08-18T01:00:00Z
 ```
 
-Named ranges are an integer from 1 through 30 followed by `m`, `h`, or `d`. The default is `1h`. The backend additionally rejects explicit windows larger than 30 days.
+Named ranges are `5m`, `30m`, `1h`, `6h`, `24h`, `7d`, or `30d`. The default is `1h`. The backend additionally rejects explicit windows larger than 30 days.
 
 ## Mutation Plans
 
@@ -96,7 +96,7 @@ node scripts/sub2api-ops.js plan silence-alert \
   --platform openai
 ```
 
-Required flags are `--rule-id`, future RFC3339 `--until`, and non-empty `--reason`. Optional scope flags are `--platform`, `--group-id`, and `--region`.
+Required flags are `--rule-id`, `--platform`, future RFC3339 `--until`, and non-empty `--reason`. Optional scope flags are `--group-id` and `--region`.
 
 The backend currently has no read endpoint for alert silences. Successful execution therefore returns `verification.limited: true` after validating the creation response and re-reading the parent rule.
 
