@@ -879,6 +879,49 @@ const (
 	ImageConcurrencyOverflowModeWait   = "wait"
 )
 
+const (
+	DefaultOpenAIPromptCacheIdentityTTLSeconds = 1800
+	MinOpenAIPromptCacheIdentityTTLSeconds     = 300
+	MaxOpenAIPromptCacheIdentityTTLSeconds     = 86400
+	DefaultOpenAIPromptCacheShardCount         = 4
+)
+
+// GatewayOpenAIPromptCacheConfig controls Redis-backed prompt-cache routing
+// identities. Accessors deliberately provide safe defaults for tests and
+// tools that construct Config values without going through Viper.
+type GatewayOpenAIPromptCacheConfig struct {
+	IdentityTTLSeconds         int   `mapstructure:"identity_ttl_seconds"`
+	ShardCount                 int   `mapstructure:"shard_count"`
+	ExplicitBreakpointsEnabled *bool `mapstructure:"explicit_breakpoints_enabled"`
+}
+
+func (c GatewayOpenAIPromptCacheConfig) IdentityTTLSecondsValue() int {
+	if c.IdentityTTLSeconds < MinOpenAIPromptCacheIdentityTTLSeconds || c.IdentityTTLSeconds > MaxOpenAIPromptCacheIdentityTTLSeconds {
+		return DefaultOpenAIPromptCacheIdentityTTLSeconds
+	}
+	return c.IdentityTTLSeconds
+}
+
+func (c GatewayOpenAIPromptCacheConfig) IdentityTTL() time.Duration {
+	return time.Duration(c.IdentityTTLSecondsValue()) * time.Second
+}
+
+func (c GatewayOpenAIPromptCacheConfig) ShardCountValue() int {
+	switch c.ShardCount {
+	case 1, 4, 8, 16:
+		return c.ShardCount
+	default:
+		return DefaultOpenAIPromptCacheShardCount
+	}
+}
+
+func (c GatewayOpenAIPromptCacheConfig) ExplicitBreakpointsEnabledValue() bool {
+	if c.ExplicitBreakpointsEnabled == nil {
+		return true
+	}
+	return *c.ExplicitBreakpointsEnabled
+}
+
 // GatewayConfig API网关相关配置
 type GatewayConfig struct {
 	// 等待上游响应头的超时时间（秒），0表示无超时
@@ -934,6 +977,8 @@ type GatewayConfig struct {
 	// OpenAICompactModel: /responses/compact 上游使用的模型。
 	// compact 端点支持模型滞后于普通 /responses 时，可用该配置降级规避上游错误。
 	OpenAICompactModel string `mapstructure:"openai_compact_model"`
+	// OpenAIPromptCache controls automatic upstream prompt-cache routing.
+	OpenAIPromptCache GatewayOpenAIPromptCacheConfig `mapstructure:"openai_prompt_cache"`
 	// OpenAIWS: OpenAI Responses WebSocket 配置（默认开启，可按需回滚到 HTTP）
 	OpenAIWS GatewayOpenAIWSConfig `mapstructure:"openai_ws"`
 	// Live: ChatGPT Frameless Live 会话配置。
@@ -2294,6 +2339,9 @@ func setDefaults() {
 	viper.SetDefault("gateway.codex_image_generation_bridge_enabled", false)
 	viper.SetDefault("gateway.openai_passthrough_allow_timeout_headers", false)
 	viper.SetDefault("gateway.openai_compact_model", "gpt-5.4")
+	viper.SetDefault("gateway.openai_prompt_cache.identity_ttl_seconds", DefaultOpenAIPromptCacheIdentityTTLSeconds)
+	viper.SetDefault("gateway.openai_prompt_cache.shard_count", DefaultOpenAIPromptCacheShardCount)
+	viper.SetDefault("gateway.openai_prompt_cache.explicit_breakpoints_enabled", true)
 	viper.SetDefault("gateway.live.max_session_duration_seconds", 3600)
 	// OpenAI Responses WebSocket（默认开启；可通过 force_http 紧急回滚）
 	viper.SetDefault("gateway.openai_ws.enabled", true)

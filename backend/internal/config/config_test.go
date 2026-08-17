@@ -216,6 +216,42 @@ func TestLoadRejectsInvalidForwardedClientIPHeader(t *testing.T) {
 	require.ErrorContains(t, err, "security.forwarded_client_ip_headers")
 }
 
+func TestOpenAIPromptCacheConfigDefaults(t *testing.T) {
+	cfg := GatewayOpenAIPromptCacheConfig{}
+
+	require.Equal(t, 1800, cfg.IdentityTTLSecondsValue())
+	require.Equal(t, 30*time.Minute, cfg.IdentityTTL())
+	require.Equal(t, 4, cfg.ShardCountValue())
+	require.True(t, cfg.ExplicitBreakpointsEnabledValue())
+}
+
+func TestLoadOpenAIPromptCacheConfig(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	viper.Set("gateway.openai_prompt_cache.identity_ttl_seconds", 3600)
+	viper.Set("gateway.openai_prompt_cache.shard_count", 8)
+	viper.Set("gateway.openai_prompt_cache.explicit_breakpoints_enabled", false)
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, 3600, cfg.Gateway.OpenAIPromptCache.IdentityTTLSecondsValue())
+	require.Equal(t, time.Hour, cfg.Gateway.OpenAIPromptCache.IdentityTTL())
+	require.Equal(t, 8, cfg.Gateway.OpenAIPromptCache.ShardCountValue())
+	require.False(t, cfg.Gateway.OpenAIPromptCache.ExplicitBreakpointsEnabledValue())
+}
+
+func TestOpenAIPromptCacheConfigInvalidValuesFallBack(t *testing.T) {
+	disabled := false
+	cfg := GatewayOpenAIPromptCacheConfig{
+		IdentityTTLSeconds:         60,
+		ShardCount:                 3,
+		ExplicitBreakpointsEnabled: &disabled,
+	}
+
+	require.Equal(t, 1800, cfg.IdentityTTLSecondsValue())
+	require.Equal(t, 4, cfg.ShardCountValue())
+	require.False(t, cfg.ExplicitBreakpointsEnabledValue())
+}
+
 func TestLoadExplicitEmptyTrustedProxiesEnablesConfiguredMode(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	viper.Set("server.trusted_proxies", []string{})
