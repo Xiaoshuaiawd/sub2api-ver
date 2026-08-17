@@ -630,6 +630,7 @@ type ChatCompletionsRequest struct {
 	Model               string             `json:"model"`
 	Messages            []ChatMessage      `json:"messages"`
 	Instructions        string             `json:"instructions,omitempty"` // OpenAI Responses API compat
+	PreviousResponseID  string             `json:"previous_response_id,omitempty"`
 	MaxTokens           *int               `json:"max_tokens,omitempty"`
 	MaxCompletionTokens *int               `json:"max_completion_tokens,omitempty"`
 	Temperature         *float64           `json:"temperature,omitempty"`

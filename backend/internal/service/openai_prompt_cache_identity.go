@@ -335,57 +335,22 @@ func (s *OpenAIGatewayService) BindStagedOpenAIAutoPromptCacheResponseAlias(ctx 
 }
 
 func resolveOpenAIAutoPromptCacheStableSource(c *gin.Context, body []byte) (string, string) {
-	if c != nil {
-		for _, header := range append(append([]string(nil), explicitOpenAIHeaderSessionNames...), claudeCodeSessionHeader) {
-			if value := sanitizeSessionID(c.GetHeader(header)); value != "" {
-				lowerHeader := strings.ToLower(strings.TrimSpace(header))
-				return "header", "header:" + lowerHeader + ":" + value
-			}
-		}
-		if metadata := strings.TrimSpace(c.GetHeader("x-codex-turn-metadata")); metadata != "" && gjson.Valid(metadata) {
-			for _, field := range []string{"session_id", "thread_id"} {
-				if value := sanitizeSessionID(gjson.Get(metadata, field).String()); value != "" {
-					return "header_metadata", "header:x-codex-turn-metadata." + field + ":" + value
-				}
-			}
-		}
+	source, value := resolveOpenAIStableSessionSignal(c, body, true)
+	if source == "" || value == "" {
+		return "", ""
 	}
-
-	conversation := gjson.GetBytes(body, "conversation")
-	if conversation.Exists() {
-		value := ""
-		if conversation.Type == gjson.String {
-			value = sanitizeSessionID(conversation.String())
-		} else {
-			value = sanitizeSessionID(conversation.Get("id").String())
-		}
-		if value != "" {
-			return "conversation", "body:conversation:" + value
-		}
+	sourceKind := "body_metadata"
+	switch {
+	case strings.HasPrefix(source, "header:x-codex-turn-metadata."):
+		sourceKind = "header_metadata"
+	case strings.HasPrefix(source, "header:"):
+		sourceKind = "header"
+	case source == "body:conversation":
+		sourceKind = "conversation"
+	case strings.HasPrefix(source, "body:metadata.user_id."):
+		sourceKind = "metadata_user"
 	}
-
-	for _, field := range []string{
-		"session_id",
-		"conversation_id",
-		"metadata.session_id",
-		"metadata.conversation_id",
-		"client_metadata.session_id",
-		"client_metadata.thread_id",
-	} {
-		if value := sanitizeSessionID(gjson.GetBytes(body, field).String()); value != "" {
-			return "body_metadata", "body:" + field + ":" + value
-		}
-	}
-
-	metadataUserID := strings.TrimSpace(gjson.GetBytes(body, "metadata.user_id").String())
-	if metadataUserID != "" && gjson.Valid(metadataUserID) {
-		for _, field := range []string{"session_id", "conversation_id", "thread_id"} {
-			if value := sanitizeSessionID(gjson.Get(metadataUserID, field).String()); value != "" {
-				return "metadata_user", "body:metadata.user_id." + field + ":" + value
-			}
-		}
-	}
-	return "", ""
+	return sourceKind, source + ":" + value
 }
 
 func resolveOpenAIAutoPromptCacheContentSource(body []byte) string {

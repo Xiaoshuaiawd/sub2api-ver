@@ -60,15 +60,8 @@ func (s *OpenAIGatewayService) ExtractSessionID(c *gin.Context, body []byte) str
 }
 
 func explicitOpenAISessionID(c *gin.Context, body []byte) string {
-	if c == nil {
-		return ""
-	}
-
-	sessionID := explicitOpenAIHeaderSessionID(c)
-	if sessionID == "" && len(body) > 0 {
-		sessionID = strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String())
-	}
-	return sessionID
+	_, value := resolveOpenAIStableSessionSignal(c, body, false)
+	return value
 }
 
 // explicitOpenAIRequestSessionID extends the common OpenAI session signals
@@ -82,21 +75,83 @@ func explicitOpenAISessionID(c *gin.Context, body []byte) string {
 // so HTTP OpenAI paths that delete previous_response_id before upstream are
 // unchanged.
 func explicitOpenAIRequestSessionID(c *gin.Context, body []byte) string {
+	_, value := resolveOpenAIStableSessionSignal(c, body, true)
+	return value
+}
+
+func resolveOpenAIStableSessionSignal(c *gin.Context, body []byte, includeGrok bool) (string, string) {
 	if c == nil {
-		return ""
+		return "", ""
 	}
 
-	sessionID := explicitOpenAIHeaderSessionID(c)
-	if sessionID == "" && isGrokRequestContext(c) {
-		sessionID = strings.TrimSpace(c.GetHeader(grokConversationIDHeader))
+	for _, header := range append(append([]string(nil), explicitOpenAIHeaderSessionNames...), claudeCodeSessionHeader) {
+		if value := sanitizeSessionID(c.GetHeader(header)); value != "" {
+			return "header:" + strings.ToLower(strings.TrimSpace(header)), value
+		}
 	}
-	if sessionID == "" && len(body) > 0 {
-		sessionID = strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String())
+	if metadata := strings.TrimSpace(c.GetHeader("x-codex-turn-metadata")); metadata != "" && gjson.Valid(metadata) {
+		for _, field := range []string{"session_id", "conversation_id", "thread_id"} {
+			if value := sanitizeSessionID(gjson.Get(metadata, field).String()); value != "" {
+				return "header:x-codex-turn-metadata." + field, value
+			}
+		}
 	}
-	if sessionID == "" && isGrokRequestContext(c) && len(body) > 0 {
-		sessionID = grokPreviousResponseSessionSeed(body)
+	if includeGrok && isGrokRequestContext(c) {
+		if value := sanitizeSessionID(c.GetHeader(grokConversationIDHeader)); value != "" {
+			return "header:" + strings.ToLower(grokConversationIDHeader), value
+		}
 	}
-	return sessionID
+	if len(body) == 0 {
+		return "", ""
+	}
+	if value := sanitizeSessionID(gjson.GetBytes(body, "prompt_cache_key").String()); value != "" {
+		return "body:prompt_cache_key", value
+	}
+
+	conversation := gjson.GetBytes(body, "conversation")
+	if conversation.Exists() {
+		value := ""
+		if conversation.Type == gjson.String {
+			value = sanitizeSessionID(conversation.String())
+		} else {
+			value = sanitizeSessionID(conversation.Get("id").String())
+		}
+		if value != "" {
+			return "body:conversation", value
+		}
+	}
+
+	for _, field := range []string{
+		"session_id",
+		"conversation_id",
+		"thread_id",
+		"metadata.session_id",
+		"metadata.conversation_id",
+		"metadata.thread_id",
+		"client_metadata.session_id",
+		"client_metadata.conversation_id",
+		"client_metadata.thread_id",
+	} {
+		if value := sanitizeSessionID(gjson.GetBytes(body, field).String()); value != "" {
+			return "body:" + field, value
+		}
+	}
+
+	metadataUserID := strings.TrimSpace(gjson.GetBytes(body, "metadata.user_id").String())
+	if metadataUserID != "" && gjson.Valid(metadataUserID) {
+		for _, field := range []string{"session_id", "conversation_id", "thread_id"} {
+			if value := sanitizeSessionID(gjson.Get(metadataUserID, field).String()); value != "" {
+				return "body:metadata.user_id." + field, value
+			}
+		}
+	}
+
+	if includeGrok && isGrokRequestContext(c) {
+		if value := grokPreviousResponseSessionSeed(body); value != "" {
+			return "body:previous_response_id", value
+		}
+	}
+	return "", ""
 }
 
 // grokPreviousResponseSessionSeed returns a stable sticky seed from a Responses
