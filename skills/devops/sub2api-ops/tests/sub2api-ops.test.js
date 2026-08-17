@@ -410,3 +410,25 @@ test("unknown mutation actions fail before authentication setup", async () => {
     (error) => error.exitCode === 1 && /unknown mutation action/.test(error.message),
   );
 });
+
+test("SKILL.md has Hermes-compatible frontmatter and required safety language", () => {
+  const skillPath = path.resolve(__dirname, "../SKILL.md");
+  const content = fs.readFileSync(skillPath, "utf8");
+  assert.ok(content.startsWith("---\n"));
+  const closing = content.indexOf("\n---\n", 4);
+  assert.ok(closing > 4);
+  const frontmatter = content.slice(4, closing);
+  assert.match(frontmatter, /^name: sub2api-ops$/m);
+  assert.match(frontmatter, /^description: Use when /m);
+  assert.match(frontmatter, /^version: 1\.0\.0$/m);
+  assert.match(frontmatter, /^author: Sub2API$/m);
+  assert.match(frontmatter, /^license: MIT$/m);
+  assert.match(frontmatter, /^platforms: \[linux, macos, windows\]$/m);
+  assert.match(frontmatter, /metadata:\n  hermes:/);
+  assert.ok(content.length <= 100_000);
+  assert.match(
+    content,
+    /Never execute a mutation before explicit administrator confirmation/,
+  );
+  assert.match(content, /## Forbidden Operations/);
+});
