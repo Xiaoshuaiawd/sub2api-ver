@@ -84,6 +84,11 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	reasoningEffort := extractOpenAIReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel)
 	// 国产模型默认 effort 补充：需要 mappedModel 判定，推迟到 billingModel 算出之后。
 	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, body, billingModel)
+	reasoningEffortValue := ""
+	if reasoningEffort != nil {
+		reasoningEffortValue = *reasoningEffort
+	}
+	s.resolveJuiceValueForRequest(c, originalModel, reasoningEffortValue)
 
 	// 3. Rewrite model in body (no protocol conversion)
 	upstreamBody := body
@@ -271,8 +276,21 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	clientOutputStarted := false
 	pendingLines := make([]string, 0, 8)
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
+	// 模型映射透明化：上游 chunk 回显的模型名必须还原为客户端请求的模型。
+	needModelReplace := originalModel != upstreamModel
+	// Juice 值修正：命中时缓冲全部 SSE 行，流结束后整体变换回放。
+	juiceResolved := GetJuiceResolvedValue(c)
+	juiceActive := juiceResolved.OK
+	var juiceLines []string
 
 	writeLine := func(line string) {
+		if juiceActive {
+			juiceLines = append(juiceLines, line)
+			return
+		}
+		if needModelReplace && upstreamModel != "" && strings.Contains(line, upstreamModel) {
+			line = s.replaceModelInSSELine(line, upstreamModel, originalModel)
+		}
 		if clientDisconnected {
 			return
 		}
@@ -364,6 +382,33 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		}
 	}
 
+	// Juice 值修正：流结束后整体变换缓冲的 SSE 行并回放给客户端。
+	// 无声拒绝时直接 failover，不写任何内容。
+	if juiceActive && len(juiceLines) > 0 && !clientDisconnected {
+		if refusalDetector.IsSilentRefusal() {
+			return nil, newOpenAISilentRefusalFailoverError(c, account, requestID)
+		}
+		writeStreamHeaders()
+		for _, line := range TransformJuiceSSELines(juiceLines, juiceResolved.Value, TransformChatStreamChunks) {
+			if needModelReplace && upstreamModel != "" && strings.Contains(line, upstreamModel) {
+				line = s.replaceModelInSSELine(line, upstreamModel, originalModel)
+			}
+			if _, werr := c.Writer.WriteString(line + "\n"); werr != nil {
+				clientDisconnected = true
+				logger.L().Debug("openai chat_completions raw: client disconnected during juice flush",
+					zap.Error(werr),
+					zap.String("request_id", requestID),
+				)
+				break
+			}
+		}
+		juiceLines = nil
+		if !clientDisconnected {
+			c.Writer.Flush()
+			clientOutputStarted = true
+		}
+	}
+
 	return &OpenAIForwardResult{
 		RequestID:                     requestID,
 		Usage:                         usage,
@@ -451,6 +496,15 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 	if requiresBillableGrokChatUsage(account, billingModel, upstreamModel, responseModel) && !hasBillableGrokChatUsage(usage) {
 		upstreamRequestID := firstNonEmpty(requestID, resp.Header.Get("xai-request-id"))
 		return nil, newGrokMissingUsageFailoverError(c, account, upstreamRequestID)
+	}
+
+	// 模型映射透明化：上游响应回显的模型名还原为客户端请求的模型。
+	if originalModel != upstreamModel {
+		respBody = s.replaceModelInResponseBody(respBody, upstreamModel, originalModel)
+	}
+	// Juice 值修正。
+	if juice := GetJuiceResolvedValue(c); juice.OK {
+		respBody = TransformChatCompletionsBody(respBody, juice.Value)
 	}
 
 	if s.responseHeaderFilter != nil {

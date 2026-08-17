@@ -54,6 +54,14 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		firstOutputTimeout = s.openAIFirstOutputTimeout(reasoningEffort)
 	}
 	guardFirstOutput := firstOutputTimeout > 0
+	// Juice 值修正：命中时缓冲整条流的 SSE 行，流结束后整体变换回放。
+	// 缓冲期间无需首输出守卫/暂存（未写客户端，failover 依然干净）。
+	juiceResolved := GetJuiceResolvedValue(c)
+	juiceActive := juiceResolved.OK
+	if juiceActive {
+		guardFirstOutput = false
+	}
+	var juiceBufferedLines []string
 	var attemptResponseHeaders http.Header
 	if guardFirstOutput {
 		if s.responseHeaderFilter != nil {
@@ -265,6 +273,17 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		clientDisconnected = true
 		logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming, continuing to drain upstream for billing")
 	}
+	emitSSELine := func(line string) bool {
+		if juiceActive {
+			juiceBufferedLines = append(juiceBufferedLines, line)
+			return true
+		}
+		if _, err := writePendingString(line); err != nil {
+			handlePendingWriteError(err)
+			return false
+		}
+		return true
+	}
 	completeGuardedEvent := func(queueDrained bool) {
 		completedProgressEvent := eventStartsClientOutput
 		completedVisibleEvent := eventStartsVisibleOutput
@@ -353,6 +372,31 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		if guardFirstOutput && eventInProgress {
 			// EOF dispatches the final SSE event even without a trailing blank line.
 			completeGuardedEvent(true)
+		}
+		// Juice 值修正：流结束后整体变换缓冲的 SSE 行并回放给客户端。
+		// 仅在无早期错误且未观察到失败事件时回放；failover 时丢弃缓冲。
+		if juiceActive && len(juiceBufferedLines) > 0 && streamEarlyErr == nil && !sawFailedEvent {
+			transformed := TransformJuiceSSELines(juiceBufferedLines, juiceResolved.Value, TransformResponsesStreamChunks)
+			juiceBufferedLines = nil
+			for _, line := range transformed {
+				if _, err := writePendingString(line); err != nil {
+					handlePendingWriteError(err)
+					break
+				}
+				if _, err := writePendingString("\n"); err != nil {
+					handlePendingWriteError(err)
+					break
+				}
+			}
+			if !clientDisconnected {
+				if err := flushBuffered(); err != nil {
+					clientDisconnected = true
+					logger.LegacyPrintf("service.openai_gateway", "Client disconnected during juice flush, returning collected usage")
+				} else {
+					clientOutputStarted = true
+					lastDownstreamWriteAt = time.Now()
+				}
+			}
 		}
 		if sawTerminalEvent && !sawFailedEvent {
 			s.clearOpenAIProxyStreamDisconnect(account)
@@ -587,11 +631,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					shouldFlush = true
 				}
 				eventShouldFlush = eventShouldFlush || shouldFlush
-				if _, err := writePendingString(line); err != nil {
-					handlePendingWriteError(err)
-				} else if _, err := writePendingString("\n"); err != nil {
-					handlePendingWriteError(err)
-				} else {
+				if emitSSELine(line) && emitSSELine("\n") {
 					eventInProgress = true
 				}
 			}
@@ -626,11 +666,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			eventShouldFlush = false
 		}
 		if !clientDisconnected {
-			if _, err := writePendingString(line); err != nil {
-				handlePendingWriteError(err)
-			} else if _, err := writePendingString("\n"); err != nil {
-				handlePendingWriteError(err)
-			} else {
+			if emitSSELine(line) && emitSSELine("\n") {
 				eventInProgress = line != ""
 				if shouldFlush {
 					if err := flushBuffered(); err != nil {
@@ -1276,6 +1312,9 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	if err != nil {
 		return nil, fmt.Errorf("restore OpenAI namespace response: %w", err)
 	}
+	if juice := GetJuiceResolvedValue(c); juice.OK {
+		body = TransformResponsesBody(body, juice.Value)
+	}
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	// Codex 协议要求 /responses/compact JSON 响应携带 x-codex-turn-state
 	// （codex-api/src/endpoint/compact.rs 从响应头捕获），显式回传。
@@ -1385,6 +1424,14 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 		}
 	}
 	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
+		if juice := GetJuiceResolvedValue(c); juice.OK {
+			if ok || !bodyHasSSEFraming(body) {
+				body = TransformResponsesBody(body, juice.Value)
+			} else {
+				lines := strings.Split(string(body), "\n")
+				body = []byte(strings.Join(TransformJuiceSSELines(lines, juice.Value, TransformResponsesStreamChunks), "\n"))
+			}
+		}
 		c.Data(resp.StatusCode, contentType, body)
 	}
 

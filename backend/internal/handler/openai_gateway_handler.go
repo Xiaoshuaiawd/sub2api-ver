@@ -333,6 +333,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	if cappedBody, changed := applyOpenAIReasoningEffortPolicyForRequest(c, apiKey, body); changed {
 		body = cappedBody
 	}
+	service.SetJuiceContext(c, service.BuildJuiceContext(body))
 
 	reqStream, ok := parseOpenAICompatibleStream(body)
 	if !ok {

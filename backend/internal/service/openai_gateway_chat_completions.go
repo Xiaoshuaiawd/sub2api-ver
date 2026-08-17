@@ -116,6 +116,13 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	billingModel := resolveOpenAIForwardModel(account, originalModel, defaultMappedModel)
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
 
+	reasoningEffort := extractOpenAIReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel)
+	reasoningEffortValue := ""
+	if reasoningEffort != nil {
+		reasoningEffortValue = *reasoningEffort
+	}
+	s.resolveJuiceValueForRequest(c, originalModel, reasoningEffortValue)
+
 	promptCacheKey = strings.TrimSpace(promptCacheKey)
 	compatPromptCacheInjected := false
 	if promptCacheKey == "" && account.Type == AccountTypeOAuth && shouldAutoInjectPromptCacheKeyForCompat(upstreamModel) {
@@ -493,8 +500,17 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 	// text/event-stream，会经 WriteFilteredHeaders 透传进来；而 c.JSON 走 Gin 的
 	// writeContentType 仅在头不存在时才设置，无法覆盖。这里显式 Set 强制改回 JSON，
 	// 否则下游"看头判流式"的中间层（如 new-api）会把本应聚合的 JSON 当成 SSE 处理。
+	chatRespWritten := false
 	c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
-	c.JSON(http.StatusOK, chatResp)
+	if juice := GetJuiceResolvedValue(c); juice.OK {
+		if chatBody, marshalErr := json.Marshal(chatResp); marshalErr == nil {
+			c.Data(http.StatusOK, "application/json; charset=utf-8", TransformChatCompletionsBody(chatBody, juice.Value))
+			chatRespWritten = true
+		}
+	}
+	if !chatRespWritten {
+		c.JSON(http.StatusOK, chatResp)
+	}
 
 	result := &OpenAIForwardResult{
 		RequestID:                     requestID,
@@ -545,6 +561,10 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	clientDisconnected := false
 	clientOutputStarted := false
 	pendingSSE := make([]string, 0, 4)
+	// Juice 值修正：命中时缓冲全部 chunk，流结束后整体变换回放。
+	juiceResolved := GetJuiceResolvedValue(c)
+	juiceActive := juiceResolved.OK
+	var juiceChunks []string
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	var streamFailoverErr *UpstreamFailoverError
 	var streamNonFailoverErr error
@@ -709,6 +729,10 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 					)
 					continue
 				}
+				if juiceActive {
+					juiceChunks = append(juiceChunks, sse)
+					continue
+				}
 				if !clientOutputStarted && !refusalDetector.ShouldReleaseClientOutput() {
 					pendingSSE = append(pendingSSE, sse)
 					continue
@@ -754,6 +778,24 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		}
 		if streamNonFailoverErr != nil {
 			return resultWithUsage(), streamNonFailoverErr
+		}
+		// Juice 值修正：流结束后整体变换缓冲的 chunk 并回放给客户端。
+		if juiceActive && len(juiceChunks) > 0 && !clientDisconnected {
+			writeStreamHeaders()
+			for _, sse := range TransformChatStreamChunks(juiceChunks, juiceResolved.Value) {
+				if _, err := fmt.Fprint(c.Writer, sse); err != nil {
+					clientDisconnected = true
+					logger.L().Info("openai chat_completions stream: client disconnected during juice flush",
+						zap.String("request_id", requestID),
+					)
+					break
+				}
+			}
+			juiceChunks = nil
+			if !clientDisconnected {
+				c.Writer.Flush()
+				clientOutputStarted = true
+			}
 		}
 		if finalChunks := apicompat.FinalizeResponsesChatStream(state); len(finalChunks) > 0 && !clientDisconnected {
 			for _, chunk := range finalChunks {

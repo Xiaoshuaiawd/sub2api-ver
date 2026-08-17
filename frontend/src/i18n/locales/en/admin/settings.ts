@@ -12,6 +12,20 @@ export default {
         email: 'Email',
         backup: 'Backup',
         payment: 'Payment',
+        juice: 'Juice Fixer',
+      },
+      juiceFixer: {
+        title: 'Juice Value Fixer',
+        description: 'When a request mentions the "Juice" value, rewrite the Juice number in the response to a configured value. Matches by model and reasoning effort.',
+        enabled: 'Enable Juice value fixing',
+        model: 'Model',
+        modelPlaceholder: 'e.g. gpt-5.6-sol',
+        reasoningEffort: 'Reasoning effort',
+        reasoningEffortPlaceholder: 'empty = any effort',
+        value: 'Value',
+        addRule: 'Add rule',
+        removeRule: 'Remove rule',
+        saveSuccess: 'Juice fixer settings saved',
       },
       features: {
         channelMonitor: {
