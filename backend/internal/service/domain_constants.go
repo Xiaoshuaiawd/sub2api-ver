@@ -555,6 +555,15 @@ const (
 	SettingKeyRectifierSettings = "rectifier_settings"
 
 	// =========================
+	// Juice Fixer (Juice 值修正)
+	// =========================
+
+	// SettingKeyJuiceFixerSetting stores JSON config for the Juice value fixer:
+	// the enabled switch plus the (model, reasoning_effort) -> value rules used to
+	// rewrite "Juice" numbers in relay responses. Default disabled.
+	SettingKeyJuiceFixerSetting = "juice_fixer_setting"
+
+	// =========================
 	// Beta Policy Settings
 	// =========================
 

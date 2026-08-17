@@ -8663,8 +8663,13 @@
           <BackupSettings />
         </div>
 
+        <!-- Tab: Juice Fixer -->
+        <div v-show="activeTab === 'juice'" class="space-y-6">
+          <JuiceFixerSection />
+        </div>
+
         <!-- Save Button -->
-        <div v-show="activeTab !== 'backup'" class="flex justify-end">
+        <div v-show="activeTab !== 'backup' && activeTab !== 'juice'" class="flex justify-end">
           <button
             type="submit"
             :disabled="saving || loadFailed"
@@ -8785,6 +8790,7 @@ import Toggle from "@/components/common/Toggle.vue";
 import ProxySelector from "@/components/common/ProxySelector.vue";
 import ImageUpload from "@/components/common/ImageUpload.vue";
 import BackupSettings from "@/views/admin/BackupView.vue";
+import JuiceFixerSection from "@/views/admin/settings/JuiceFixerSection.vue";
 import EmailTemplateEditor from "@/views/admin/settings/EmailTemplateEditor.vue";
 import OpenAIFastPolicyUserSelector from "@/views/admin/settings/OpenAIFastPolicyUserSelector.vue";
 import { useClipboard } from "@/composables/useClipboard";
@@ -8845,7 +8851,8 @@ type SettingsTab =
   | "gateway"
   | "payment"
   | "email"
-  | "backup";
+  | "backup"
+  | "juice";
 const activeTab = ref<SettingsTab>("general");
 const settingsTabs = [
   { key: "general" as SettingsTab, icon: "home" as const },
@@ -8857,6 +8864,7 @@ const settingsTabs = [
   { key: "payment" as SettingsTab, icon: "creditCard" as const },
   { key: "email" as SettingsTab, icon: "mail" as const },
   { key: "backup" as SettingsTab, icon: "database" as const },
+  { key: "juice" as SettingsTab, icon: "bolt" as const },
 ];
 
 const settingsTabKeyboardActions = {

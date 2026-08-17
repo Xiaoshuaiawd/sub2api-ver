@@ -782,6 +782,9 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	// codex_cli_only 加固策略缓存：设置更新后强制下次重载（涉及 4 个键 + JSON 解析，直接置过期）。
 	s.codexRestrictionPolicySF.Forget("codex_restriction_policy")
 	s.codexRestrictionPolicyCache.Store(&cachedCodexRestrictionPolicy{expiresAt: 0})
+	// Juice 值修正配置缓存：非 SystemSettings 字段（独立 JSON 键），只需失效让下次读取重载。
+	juiceFixerSettingSF.Forget("juice_fixer_setting")
+	juiceFixerSettingCache.Store(&cachedJuiceFixerSetting{expiresAt: 0})
 	if s.onUpdate != nil {
 		s.onUpdate() // Invalidate cache after settings update
 	}

@@ -12,6 +12,20 @@ export default {
         email: '邮件设置',
         backup: '数据备份',
         payment: '支付设置',
+        juice: 'Juice 修正',
+      },
+      juiceFixer: {
+        title: 'Juice 值修正',
+        description: '当请求提及 "Juice" 值时，把响应中的 Juice 数值替换为配置值。按模型与 reasoning effort 匹配。',
+        enabled: '启用 Juice 值修正',
+        model: '模型',
+        modelPlaceholder: '如 gpt-5.6-sol',
+        reasoningEffort: 'Reasoning effort',
+        reasoningEffortPlaceholder: '留空 = 任意 effort',
+        value: '数值',
+        addRule: '添加规则',
+        removeRule: '删除规则',
+        saveSuccess: 'Juice 修正配置已保存',
       },
       features: {
         channelMonitor: {
