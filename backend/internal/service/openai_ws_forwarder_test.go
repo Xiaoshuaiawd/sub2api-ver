@@ -186,6 +186,55 @@ func TestOpenAIWSDial5xxRecordsModelTransient(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+func TestOpenAIWSDial401MarksAPIKeyAccountError(t *testing.T) {
+	repo := &rateLimitAccountRepoStub{}
+	svc := &OpenAIGatewayService{}
+	svc.rateLimitService = NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	account := &Account{ID: 5204, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	dialErr := &openAIWSDialError{
+		StatusCode:      http.StatusUnauthorized,
+		ResponseHeaders: http.Header{"X-Request-Id": []string{"req-ws-401"}},
+		ResponseBody:    []byte(`{"error":{"message":"Incorrect API key provided"}}`),
+	}
+
+	svc.handleOpenAIWSDialTransientFailure(context.Background(), account, "gpt-5.5", dialErr)
+
+	require.Equal(t, 1, repo.setErrorCalls)
+	require.Equal(t, account.ID, repo.lastErrorID)
+	require.Contains(t, repo.lastErrorMsg, "Incorrect API key provided")
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+}
+
+func TestOpenAIWSDial401TemporarilyUnschedulesRefreshableOAuthAccount(t *testing.T) {
+	repo := &rateLimitAccountRepoStub{}
+	invalidator := &tokenCacheInvalidatorRecorder{}
+	rateLimitService := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	rateLimitService.SetTokenCacheInvalidator(invalidator)
+	svc := &OpenAIGatewayService{rateLimitService: rateLimitService}
+	account := &Account{
+		ID:       5205,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"refresh_token": "rt-5205",
+		},
+	}
+	dialErr := &openAIWSDialError{
+		StatusCode:   http.StatusUnauthorized,
+		ResponseBody: []byte(`{"error":{"message":"Access token expired"}}`),
+	}
+
+	svc.handleOpenAIWSDialTransientFailure(context.Background(), account, "gpt-5.5", dialErr)
+
+	require.Equal(t, 0, repo.setErrorCalls)
+	require.Equal(t, 1, repo.tempCalls)
+	require.Equal(t, account.ID, repo.lastTempID)
+	require.Contains(t, repo.lastTempReason, "Access token expired")
+	require.Len(t, invalidator.accounts, 1)
+	require.Equal(t, account.ID, invalidator.accounts[0].ID)
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+}
+
 // TestIsOpenAIWSTokenEvent_DisjointWithTerminal 守护「token 事件集合与终止事件集合互斥」的不变量。
 // firstTokenMs 的计算依赖于 isTokenEvent && !isTerminalEvent；
 // 若两者再次出现交集，则 issue #2651 描述的 latency 误报会重现。

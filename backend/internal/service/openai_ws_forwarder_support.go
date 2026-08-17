@@ -290,7 +290,12 @@ func (s *OpenAIGatewayService) handleOpenAIWSErrorEventTransientFailure(ctx cont
 
 func (s *OpenAIGatewayService) handleOpenAIWSDialTransientFailure(ctx context.Context, account *Account, canonicalModel string, err error) {
 	var dialErr *openAIWSDialError
-	if !errors.As(err, &dialErr) || dialErr == nil || !shouldCooldownOpenAITransientUpstreamError(dialErr.StatusCode, dialErr.ResponseBody) {
+	if !errors.As(err, &dialErr) || dialErr == nil {
+		return
+	}
+	// WS 握手在 HTTP 101 升级前返回的 401 与普通 HTTP 上游 401 语义相同，
+	// 必须进入统一账号错误策略，否则只会记录 ws_error 而不停止调度失效账号。
+	if dialErr.StatusCode != http.StatusUnauthorized && !shouldCooldownOpenAITransientUpstreamError(dialErr.StatusCode, dialErr.ResponseBody) {
 		return
 	}
 	s.handleOpenAIAccountUpstreamError(ctx, account, dialErr.StatusCode, dialErr.ResponseHeaders, dialErr.ResponseBody, canonicalModel)
