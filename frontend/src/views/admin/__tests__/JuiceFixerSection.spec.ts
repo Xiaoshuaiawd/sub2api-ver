@@ -77,7 +77,7 @@ describe("JuiceFixerSection", () => {
     expect((enabledInput.element as HTMLInputElement).checked).toBe(true);
   });
 
-  it("starts with a single empty rule when config has none", async () => {
+  it("shows an empty state when config has no rules", async () => {
     getJuiceFixerConfig.mockResolvedValue({ enabled: false, rules: [] });
 
     const wrapper = mountSection();
@@ -86,7 +86,8 @@ describe("JuiceFixerSection", () => {
     const inputs = wrapper.findAll(
       'input[placeholder="admin.settings.juiceFixer.modelPlaceholder"]',
     );
-    expect(inputs).toHaveLength(1);
+    expect(inputs).toHaveLength(0);
+    expect(wrapper.text()).toContain("admin.settings.juiceFixer.emptyRules");
   });
 
   it("saves the configured payload", async () => {
@@ -143,7 +144,30 @@ describe("JuiceFixerSection", () => {
     expect(inputs).toHaveLength(1);
   });
 
-  it("keeps at least one rule when removing", async () => {
+  it("omits a completely blank draft rule when saving", async () => {
+    getJuiceFixerConfig.mockResolvedValue({ enabled: false, rules: [] });
+    updateJuiceFixerConfig.mockResolvedValue({ enabled: false, rules: [] });
+
+    const wrapper = mountSection();
+    await flushPromises();
+    const addButton = wrapper.findAll("button").find((btn) =>
+      btn.text().includes("admin.settings.juiceFixer.addRule"),
+    );
+    await addButton!.trigger("click");
+
+    const saveButton = wrapper.findAll("button").find((btn) =>
+      btn.text().includes("common.save"),
+    );
+    await saveButton!.trigger("click");
+    await flushPromises();
+
+    expect(updateJuiceFixerConfig).toHaveBeenCalledWith({
+      enabled: false,
+      rules: [],
+    });
+  });
+
+  it("removes the final rule and saves an empty rules list", async () => {
     getJuiceFixerConfig.mockResolvedValue({
       enabled: false,
       rules: [{ model: "gpt-5.6-sol", reasoning_effort: "", value: 8 }],
@@ -151,10 +175,26 @@ describe("JuiceFixerSection", () => {
 
     const wrapper = mountSection();
     await flushPromises();
+    updateJuiceFixerConfig.mockResolvedValue({ enabled: false, rules: [] });
 
     const removeButton = wrapper.find(
       'button[title="admin.settings.juiceFixer.removeRule"]',
     );
-    expect((removeButton.element as HTMLButtonElement).disabled).toBe(true);
+    expect((removeButton.element as HTMLButtonElement).disabled).toBe(false);
+    await removeButton.trigger("click");
+
+    expect(
+      wrapper.findAll('input[placeholder="admin.settings.juiceFixer.modelPlaceholder"]'),
+    ).toHaveLength(0);
+    const saveButton = wrapper.findAll("button").find((btn) =>
+      btn.text().includes("common.save"),
+    );
+    await saveButton!.trigger("click");
+    await flushPromises();
+
+    expect(updateJuiceFixerConfig).toHaveBeenCalledWith({
+      enabled: false,
+      rules: [],
+    });
   });
 });

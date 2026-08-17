@@ -92,10 +92,21 @@ func FindJuiceFixerValue(setting *JuiceFixerSetting, model, reasoningEffort stri
 	}
 	model = strings.TrimSpace(model)
 	reasoningEffort = strings.TrimSpace(reasoningEffort)
+	var fallback *int
 	for _, rule := range setting.Rules {
-		if rule.Model == model && rule.ReasoningEffort == reasoningEffort {
+		if rule.Model != model {
+			continue
+		}
+		if rule.ReasoningEffort == reasoningEffort {
 			return rule.Value, true
 		}
+		if strings.TrimSpace(rule.ReasoningEffort) == "" {
+			value := rule.Value
+			fallback = &value
+		}
+	}
+	if fallback != nil {
+		return *fallback, true
 	}
 	return 0, false
 }

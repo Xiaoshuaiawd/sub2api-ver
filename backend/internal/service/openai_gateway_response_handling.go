@@ -54,14 +54,13 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		firstOutputTimeout = s.openAIFirstOutputTimeout(reasoningEffort)
 	}
 	guardFirstOutput := firstOutputTimeout > 0
-	// Juice 值修正：命中时缓冲整条流的 SSE 行，流结束后整体变换回放。
-	// 缓冲期间无需首输出守卫/暂存（未写客户端，failover 依然干净）。
 	juiceResolved := GetJuiceResolvedValue(c)
 	juiceActive := juiceResolved.OK
+	var juiceTransformer *JuiceSSETransformer
+	var juiceEventLines []string
 	if juiceActive {
-		guardFirstOutput = false
+		juiceTransformer = NewJuiceSSETransformer(JuiceStreamKindResponses, juiceResolved.Value)
 	}
-	var juiceBufferedLines []string
 	var attemptResponseHeaders http.Header
 	if guardFirstOutput {
 		if s.responseHeaderFilter != nil {
@@ -275,7 +274,25 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	}
 	emitSSELine := func(line string) bool {
 		if juiceActive {
-			juiceBufferedLines = append(juiceBufferedLines, line)
+			if line == "\n" {
+				return true
+			}
+			juiceEventLines = append(juiceEventLines, line)
+			if line != "" {
+				return true
+			}
+			transformedLines := juiceTransformer.TransformEvent(juiceEventLines)
+			if len(transformedLines) == 0 {
+				juiceEventLines = nil
+				return false
+			}
+			for _, transformedLine := range transformedLines {
+				if _, err := writePendingString(transformedLine + "\n"); err != nil {
+					handlePendingWriteError(err)
+					return false
+				}
+			}
+			juiceEventLines = nil
 			return true
 		}
 		if _, err := writePendingString(line); err != nil {
@@ -369,26 +386,26 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		lastDownstreamWriteAt = time.Now()
 	}
 	finalizeStream := func() (*openaiStreamingResult, error) {
-		if guardFirstOutput && eventInProgress {
+		if guardFirstOutput && eventInProgress && !juiceActive {
 			// EOF dispatches the final SSE event even without a trailing blank line.
 			completeGuardedEvent(true)
 		}
-		// Juice 值修正：流结束后整体变换缓冲的 SSE 行并回放给客户端。
-		// 仅在无早期错误且未观察到失败事件时回放；failover 时丢弃缓冲。
-		if juiceActive && len(juiceBufferedLines) > 0 && streamEarlyErr == nil && !sawFailedEvent {
-			transformed := TransformJuiceSSELines(juiceBufferedLines, juiceResolved.Value, TransformResponsesStreamChunks)
-			juiceBufferedLines = nil
-			for _, line := range transformed {
-				if _, err := writePendingString(line); err != nil {
-					handlePendingWriteError(err)
-					break
-				}
-				if _, err := writePendingString("\n"); err != nil {
-					handlePendingWriteError(err)
-					break
-				}
+		if juiceActive && streamEarlyErr == nil && !sawFailedEvent {
+			var finalLines []string
+			if len(juiceEventLines) > 0 {
+				finalLines = append(finalLines, juiceTransformer.TransformEvent(juiceEventLines)...)
+				juiceEventLines = nil
 			}
-			if !clientDisconnected {
+			finalLines = append(finalLines, juiceTransformer.Flush()...)
+			wroteFinalLines := false
+			for _, line := range finalLines {
+				if _, err := writePendingString(line + "\n"); err != nil {
+					handlePendingWriteError(err)
+					break
+				}
+				wroteFinalLines = true
+			}
+			if wroteFinalLines && !clientDisconnected {
 				if err := flushBuffered(); err != nil {
 					clientDisconnected = true
 					logger.LegacyPrintf("service.openai_gateway", "Client disconnected during juice flush, returning collected usage")
@@ -649,7 +666,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		// A blank line dispatches a guarded event from the attempt-local stage.
 		if guardFirstOutput && line == "" {
 			if !clientDisconnected {
-				if _, err := writePendingString("\n"); err != nil {
+				if juiceActive {
+					if !emitSSELine("") {
+						eventInProgress = false
+						return
+					}
+				} else if _, err := writePendingString("\n"); err != nil {
 					handlePendingWriteError(err)
 				}
 			}
@@ -666,7 +688,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			eventShouldFlush = false
 		}
 		if !clientDisconnected {
-			if emitSSELine(line) && emitSSELine("\n") {
+			emitted := emitSSELine(line)
+			if juiceActive && line == "" && !emitted {
+				eventInProgress = false
+				return
+			}
+			if emitted && emitSSELine("\n") {
 				eventInProgress = line != ""
 				if shouldFlush {
 					if err := flushBuffered(); err != nil {

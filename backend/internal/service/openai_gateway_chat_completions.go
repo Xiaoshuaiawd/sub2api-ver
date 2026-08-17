@@ -561,10 +561,12 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	clientDisconnected := false
 	clientOutputStarted := false
 	pendingSSE := make([]string, 0, 4)
-	// Juice 值修正：命中时缓冲全部 chunk，流结束后整体变换回放。
 	juiceResolved := GetJuiceResolvedValue(c)
 	juiceActive := juiceResolved.OK
-	var juiceChunks []string
+	var juiceTransformer *JuiceSSETransformer
+	if juiceActive {
+		juiceTransformer = NewJuiceSSETransformer(JuiceStreamKindChat, juiceResolved.Value)
+	}
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	var streamFailoverErr *UpstreamFailoverError
 	var streamNonFailoverErr error
@@ -610,6 +612,39 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			out.SearchCount = searchCount
 		}
 		return out
+	}
+	writeSSE := func(sse string) {
+		if clientDisconnected || sse == "" {
+			return
+		}
+		if !clientOutputStarted && !refusalDetector.ShouldReleaseClientOutput() {
+			pendingSSE = append(pendingSSE, sse)
+			return
+		}
+		if !clientOutputStarted {
+			writeStreamHeaders()
+			for _, pending := range pendingSSE {
+				if _, err := fmt.Fprint(c.Writer, pending); err != nil {
+					clientDisconnected = true
+					return
+				}
+			}
+			pendingSSE = pendingSSE[:0]
+			clientOutputStarted = true
+		}
+		if _, err := fmt.Fprint(c.Writer, sse); err != nil {
+			clientDisconnected = true
+		}
+	}
+	transformSSE := func(sse string) []string {
+		if !juiceActive {
+			return []string{sse}
+		}
+		lines := juiceTransformer.TransformEvent(juiceSSEStringToLines(sse))
+		if len(lines) == 0 {
+			return nil
+		}
+		return []string{juiceSSELinesToString(lines)}
 	}
 
 	processDataLine := func(payload string) bool {
@@ -729,37 +764,11 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 					)
 					continue
 				}
-				if juiceActive {
-					juiceChunks = append(juiceChunks, sse)
-					continue
-				}
-				if !clientOutputStarted && !refusalDetector.ShouldReleaseClientOutput() {
-					pendingSSE = append(pendingSSE, sse)
-					continue
-				}
-				if !clientOutputStarted {
-					writeStreamHeaders()
-					for _, pending := range pendingSSE {
-						if _, err := fmt.Fprint(c.Writer, pending); err != nil {
-							clientDisconnected = true
-							logger.L().Info("openai chat_completions stream: client disconnected while flushing pending chunks",
-								zap.String("request_id", requestID),
-							)
-							break
-						}
-					}
-					pendingSSE = pendingSSE[:0]
-					clientOutputStarted = !clientDisconnected
+				for _, transformedSSE := range transformSSE(sse) {
+					writeSSE(transformedSSE)
 					if clientDisconnected {
 						break
 					}
-				}
-				if _, err := fmt.Fprint(c.Writer, sse); err != nil {
-					clientDisconnected = true
-					logger.L().Info("openai chat_completions stream: client disconnected, continuing to drain upstream for billing",
-						zap.String("request_id", requestID),
-					)
-					break
 				}
 			}
 		}
@@ -779,23 +788,8 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		if streamNonFailoverErr != nil {
 			return resultWithUsage(), streamNonFailoverErr
 		}
-		// Juice 值修正：流结束后整体变换缓冲的 chunk 并回放给客户端。
-		if juiceActive && len(juiceChunks) > 0 && !clientDisconnected {
-			writeStreamHeaders()
-			for _, sse := range TransformChatStreamChunks(juiceChunks, juiceResolved.Value) {
-				if _, err := fmt.Fprint(c.Writer, sse); err != nil {
-					clientDisconnected = true
-					logger.L().Info("openai chat_completions stream: client disconnected during juice flush",
-						zap.String("request_id", requestID),
-					)
-					break
-				}
-			}
-			juiceChunks = nil
-			if !clientDisconnected {
-				c.Writer.Flush()
-				clientOutputStarted = true
-			}
+		if juiceActive && !clientDisconnected {
+			writeSSE(juiceSSELinesToString(juiceTransformer.Flush()))
 		}
 		if finalChunks := apicompat.FinalizeResponsesChatStream(state); len(finalChunks) > 0 && !clientDisconnected {
 			for _, chunk := range finalChunks {

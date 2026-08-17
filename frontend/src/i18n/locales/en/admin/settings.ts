@@ -25,6 +25,7 @@ export default {
         value: 'Value',
         addRule: 'Add rule',
         removeRule: 'Remove rule',
+        emptyRules: 'No rules configured. Add a rule to enable Juice value matching.',
         saveSuccess: 'Juice fixer settings saved',
       },
       features: {

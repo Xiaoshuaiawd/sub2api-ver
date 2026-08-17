@@ -70,6 +70,8 @@ func BuildJuiceContext(body []byte) JuiceContext {
 		for _, item := range input.Array() {
 			latestUser += "\n" + messageTextContent(item)
 		}
+	} else if input.Exists() && input.Type == gjson.String {
+		latestUser += "\n" + input.String()
 	}
 	return JuiceContext{
 		Triggered: juiceTriggerPattern.MatchString(normalizeJuiceText(latestUser)) ||
@@ -236,6 +238,169 @@ func (t *JuiceStreamTransformer) Flush() string {
 	return out
 }
 
+// JuiceStreamKind identifies the JSON text field carried by an SSE stream.
+type JuiceStreamKind int
+
+const (
+	JuiceStreamKindChat JuiceStreamKind = iota
+	JuiceStreamKindResponses
+)
+
+// JuiceSSETransformer incrementally rewrites a stream while retaining at most
+// one text event plus JuiceStreamTransformer's bounded text suffix. Keeping the
+// latest text event allows numeric-only answers to be resolved at the next
+// event/EOF without buffering the full response.
+type JuiceSSETransformer struct {
+	kind        JuiceStreamKind
+	text        *JuiceStreamTransformer
+	heldEvent   []string
+	heldPath    string
+	heldPayload int
+}
+
+func NewJuiceSSETransformer(kind JuiceStreamKind, value int) *JuiceSSETransformer {
+	return &JuiceSSETransformer{kind: kind, text: NewJuiceStreamTransformer(value)}
+}
+
+// PendingTextRunes exposes the bounded text state for regression tests and
+// operational assertions.
+func (t *JuiceSSETransformer) PendingTextRunes() int {
+	if t == nil || t.text == nil {
+		return 0
+	}
+	return len([]rune(t.text.pending))
+}
+
+// TransformEvent consumes one complete SSE event represented as scanner lines
+// (including its trailing blank line when present) and returns zero or more
+// lines ready for immediate downstream delivery.
+func (t *JuiceSSETransformer) TransformEvent(event []string) []string {
+	if t == nil || len(event) == 0 {
+		return append([]string(nil), event...)
+	}
+	current := append([]string(nil), event...)
+	payloadIndex, payload, ok := juiceSSEPayload(current)
+	if !ok || strings.TrimSpace(payload) == "[DONE]" {
+		return append(t.flushHeld(), current...)
+	}
+
+	path, text, isText := t.streamText(payload)
+	if !isText {
+		out := t.flushHeld()
+		if t.kind == JuiceStreamKindResponses {
+			payload = transformResponsesStreamTerminalPayload(payload, t.text.value)
+			current[payloadIndex] = "data: " + payload
+		}
+		return append(out, current...)
+	}
+
+	output := t.text.Transform(text)
+	patched := patchJuiceStreamText(payload, path, output)
+	current[payloadIndex] = "data: " + patched
+	out := append([]string(nil), t.heldEvent...)
+	if output != "" && t.PendingTextRunes() == 0 {
+		t.heldEvent = nil
+		t.heldPath = ""
+		t.heldPayload = 0
+		return append(out, current...)
+	}
+	t.heldEvent = current
+	t.heldPath = path
+	t.heldPayload = payloadIndex
+	return out
+}
+
+// Flush emits the single delayed text event, applying any unresolved numeric
+// suffix at stream end.
+func (t *JuiceSSETransformer) Flush() []string {
+	if t == nil {
+		return nil
+	}
+	return t.flushHeld()
+}
+
+func (t *JuiceSSETransformer) flushHeld() []string {
+	if len(t.heldEvent) == 0 {
+		return nil
+	}
+	flush := t.text.Flush()
+	if flush != "" && t.heldPayload >= 0 && t.heldPayload < len(t.heldEvent) {
+		_, payload, ok := juiceSSEPayload(t.heldEvent)
+		if ok {
+			existing := gjson.Get(payload, t.heldPath).String()
+			payload = patchJuiceStreamText(payload, t.heldPath, existing+flush)
+			t.heldEvent[t.heldPayload] = "data: " + payload
+		}
+	}
+	out := t.heldEvent
+	t.heldEvent = nil
+	t.heldPath = ""
+	t.heldPayload = 0
+	return out
+}
+
+func (t *JuiceSSETransformer) streamText(payload string) (string, string, bool) {
+	switch t.kind {
+	case JuiceStreamKindChat:
+		for i, choice := range gjson.Get(payload, "choices").Array() {
+			content := choice.Get("delta.content")
+			if content.Exists() && content.Type == gjson.String {
+				return fmt.Sprintf("choices.%d.delta.content", i), content.String(), true
+			}
+		}
+	case JuiceStreamKindResponses:
+		if strings.TrimSpace(gjson.Get(payload, "type").String()) == "response.output_text.delta" {
+			delta := gjson.Get(payload, "delta")
+			if delta.Exists() && delta.Type == gjson.String {
+				return "delta", delta.String(), true
+			}
+		}
+	}
+	return "", "", false
+}
+
+func juiceSSEPayload(event []string) (int, string, bool) {
+	for i, line := range event {
+		if payload, ok := extractOpenAISSEDataLine(line); ok {
+			return i, payload, true
+		}
+	}
+	return -1, "", false
+}
+
+func patchJuiceStreamText(payload, path, output string) string {
+	patched, err := sjson.Set(payload, path, output)
+	if err != nil {
+		return payload
+	}
+	return patched
+}
+
+func transformResponsesStreamTerminalPayload(payload string, value int) string {
+	response := gjson.Get(payload, "response")
+	if response.Exists() && response.IsObject() {
+		transformed := TransformResponsesBody([]byte(response.Raw), value)
+		if patched, err := sjson.SetRaw(payload, "response", string(transformed)); err == nil {
+			payload = patched
+		}
+	}
+	return string(TransformResponsesBody([]byte(payload), value))
+}
+
+func juiceSSEStringToLines(sse string) []string {
+	if sse == "" {
+		return nil
+	}
+	return strings.Split(strings.TrimSuffix(sse, "\n"), "\n")
+}
+
+func juiceSSELinesToString(lines []string) string {
+	if len(lines) == 0 {
+		return ""
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
 // TransformChatStreamChunks 变换 Chat Completions 流式 chunk（JSON 字符串数组）。
 // 每个 chunk 的 choices[].delta.content 都会经过流式变换器，跨 chunk 拆分的
 // Juice 数字会被拼接后整体替换；被吞掉的 chunk 会删除 content 字段。
@@ -295,6 +460,7 @@ func TransformResponsesStreamChunks(chunks []string, value int) []string {
 	for i, chunk := range chunks {
 		transformed[i] = chunk
 		if strings.TrimSpace(gjson.Get(chunk, "type").String()) != "response.output_text.delta" {
+			transformed[i] = transformResponsesStreamTerminalPayload(chunk, value)
 			continue
 		}
 		delta := gjson.Get(chunk, "delta")

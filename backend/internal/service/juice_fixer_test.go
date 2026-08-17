@@ -1,6 +1,7 @@
 package service
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -32,6 +33,11 @@ func TestBuildJuiceContextTriggers(t *testing.T) {
 		{
 			name: "responses input contains juice",
 			body: `{"model":"gpt-5.6","input":[{"role":"user","content":"what is the juice number?"}]}`,
+			want: true,
+		},
+		{
+			name: "responses string input contains juice",
+			body: `{"model":"gpt-5.6","input":"what is the juice number?"}`,
 			want: true,
 		},
 		{
@@ -153,6 +159,50 @@ func TestTransformResponsesStreamChunks(t *testing.T) {
 	assert.Contains(t, transformed[2], `"delta":"Juice: 8"`)
 	assert.Contains(t, transformed[3], `"type":"response.completed"`)
 	assert.Contains(t, transformed[3], `"total_tokens":4`)
+}
+
+func TestTransformResponsesStreamChunksRewritesTerminalResponse(t *testing.T) {
+	chunks := []string{
+		`{"type":"response.output_text.delta","delta":"Juice: 12."}`,
+		`{"type":"response.completed","response":{"output":[{"type":"message","content":[{"type":"output_text","text":"Juice: 12."}]}]}}`,
+	}
+
+	transformed := TransformResponsesStreamChunks(chunks, 8)
+	require.Len(t, transformed, len(chunks))
+	assert.Contains(t, transformed[0], `"delta":"Juice: 8."`)
+	assert.Contains(t, transformed[1], `"text":"Juice: 8."`)
+	assert.NotContains(t, transformed[1], `"text":"Juice: 12."`)
+}
+
+func TestJuiceSSETransformerEmitsSafePrefixWithBoundedPendingState(t *testing.T) {
+	transformer := NewJuiceSSETransformer(JuiceStreamKindChat, 8)
+	first := []string{
+		`data: {"choices":[{"index":0,"delta":{"content":"` + strings.Repeat("a", 300) + `"}}]}`,
+		"",
+	}
+	second := []string{
+		`data: {"choices":[{"index":0,"delta":{"content":"more text"}}]}`,
+		"",
+	}
+
+	require.Empty(t, transformer.TransformEvent(first))
+	out := transformer.TransformEvent(second)
+	require.NotEmpty(t, out, "safe text must be emitted without waiting for EOF")
+	require.LessOrEqual(t, transformer.PendingTextRunes(), 256)
+}
+
+func TestJuiceSSETransformerPreservesCrossChunkTextWithoutEmptyFrames(t *testing.T) {
+	transformer := NewJuiceSSETransformer(JuiceStreamKindResponses, 8)
+	first := []string{`data: {"type":"response.output_text.delta","delta":"Juice: 1"}`, ""}
+	second := []string{`data: {"type":"response.output_text.delta","delta":"2."}`, ""}
+
+	require.Empty(t, transformer.TransformEvent(first))
+	out := transformer.TransformEvent(second)
+	require.NotEmpty(t, out)
+	joined := strings.Join(out, "\n")
+	require.Contains(t, joined, `"delta":""`)
+	require.Contains(t, joined, `"delta":"Juice: 8."`)
+	require.NotContains(t, joined, `"delta":"Juice: 1"`)
 }
 
 func TestTransformChatCompletionsBody(t *testing.T) {

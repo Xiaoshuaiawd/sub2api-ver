@@ -25,6 +25,7 @@ export default {
         value: '数值',
         addRule: '添加规则',
         removeRule: '删除规则',
+        emptyRules: '暂无规则。添加规则后即可按模型匹配 Juice 值。',
         saveSuccess: 'Juice 修正配置已保存',
       },
       features: {

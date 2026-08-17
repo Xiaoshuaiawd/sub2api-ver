@@ -278,16 +278,15 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	// 模型映射透明化：上游 chunk 回显的模型名必须还原为客户端请求的模型。
 	needModelReplace := originalModel != upstreamModel
-	// Juice 值修正：命中时缓冲全部 SSE 行，流结束后整体变换回放。
 	juiceResolved := GetJuiceResolvedValue(c)
 	juiceActive := juiceResolved.OK
-	var juiceLines []string
+	var juiceTransformer *JuiceSSETransformer
+	var juiceEventLines []string
+	if juiceActive {
+		juiceTransformer = NewJuiceSSETransformer(JuiceStreamKindChat, juiceResolved.Value)
+	}
 
 	writeLine := func(line string) {
-		if juiceActive {
-			juiceLines = append(juiceLines, line)
-			return
-		}
 		if needModelReplace && upstreamModel != "" && strings.Contains(line, upstreamModel) {
 			line = s.replaceModelInSSELine(line, upstreamModel, originalModel)
 		}
@@ -321,6 +320,14 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			)
 		}
 	}
+	writeJuiceLines := func(lines []string) {
+		for _, line := range lines {
+			writeLine(line)
+			if clientDisconnected {
+				return
+			}
+		}
+	}
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -340,7 +347,15 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			}
 		}
 
-		writeLine(line)
+		if juiceActive {
+			juiceEventLines = append(juiceEventLines, line)
+			if line == "" {
+				writeJuiceLines(juiceTransformer.TransformEvent(juiceEventLines))
+				juiceEventLines = nil
+			}
+		} else {
+			writeLine(line)
+		}
 		if line == "" {
 			if !clientDisconnected && clientOutputStarted {
 				c.Writer.Flush()
@@ -382,30 +397,16 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		}
 	}
 
-	// Juice 值修正：流结束后整体变换缓冲的 SSE 行并回放给客户端。
-	// 无声拒绝时直接 failover，不写任何内容。
-	if juiceActive && len(juiceLines) > 0 && !clientDisconnected {
+	if juiceActive && !clientDisconnected {
 		if refusalDetector.IsSilentRefusal() {
 			return nil, newOpenAISilentRefusalFailoverError(c, account, requestID)
 		}
-		writeStreamHeaders()
-		for _, line := range TransformJuiceSSELines(juiceLines, juiceResolved.Value, TransformChatStreamChunks) {
-			if needModelReplace && upstreamModel != "" && strings.Contains(line, upstreamModel) {
-				line = s.replaceModelInSSELine(line, upstreamModel, originalModel)
-			}
-			if _, werr := c.Writer.WriteString(line + "\n"); werr != nil {
-				clientDisconnected = true
-				logger.L().Debug("openai chat_completions raw: client disconnected during juice flush",
-					zap.Error(werr),
-					zap.String("request_id", requestID),
-				)
-				break
-			}
+		if len(juiceEventLines) > 0 {
+			writeJuiceLines(juiceTransformer.TransformEvent(juiceEventLines))
 		}
-		juiceLines = nil
+		writeJuiceLines(juiceTransformer.Flush())
 		if !clientDisconnected {
 			c.Writer.Flush()
-			clientOutputStarted = true
 		}
 	}
 

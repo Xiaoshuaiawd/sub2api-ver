@@ -22,6 +22,12 @@
       </div>
       <template v-else>
         <div class="space-y-2">
+          <p
+            v-if="form.rules.length === 0"
+            class="rounded-lg border border-dashed border-gray-300 px-4 py-6 text-center text-sm text-gray-500 dark:border-dark-600 dark:text-gray-400"
+          >
+            {{ t('admin.settings.juiceFixer.emptyRules') }}
+          </p>
           <div
             v-for="(rule, index) in form.rules"
             :key="rule.id"
@@ -61,7 +67,6 @@
             <button
               type="button"
               class="btn btn-secondary btn-sm mt-5"
-              :disabled="form.rules.length <= 1"
               :title="t('admin.settings.juiceFixer.removeRule')"
               @click="removeRule(index)"
             >
@@ -122,18 +127,23 @@ function addRule(): void {
 }
 
 function removeRule(index: number): void {
-  if (form.value.rules.length <= 1) return;
   form.value.rules.splice(index, 1);
 }
 
 function toPayload(): { enabled: boolean; rules: JuiceFixerRule[] } {
   return {
     enabled: form.value.enabled,
-    rules: form.value.rules.map((rule) => ({
-      model: rule.model,
-      reasoning_effort: rule.reasoning_effort,
-      value: Number.isFinite(rule.value) ? rule.value : 0,
-    })),
+    rules: form.value.rules
+      .filter((rule) =>
+        rule.model !== "" ||
+        rule.reasoning_effort !== "" ||
+        (Number.isFinite(rule.value) && rule.value !== 0)
+      )
+      .map((rule) => ({
+        model: rule.model,
+        reasoning_effort: rule.reasoning_effort,
+        value: Number.isFinite(rule.value) ? rule.value : 0,
+      })),
   };
 }
 
@@ -148,9 +158,6 @@ async function load(): Promise<void> {
         id: createRuleId(),
       })),
     };
-    if (form.value.rules.length === 0) {
-      addRule();
-    }
   } catch (error) {
     appStore.showError(extractApiErrorMessage(error, t("common.error")));
   } finally {
@@ -169,9 +176,6 @@ async function save(): Promise<void> {
         id: createRuleId(),
       })),
     };
-    if (form.value.rules.length === 0) {
-      addRule();
-    }
     appStore.showSuccess(t("admin.settings.juiceFixer.saveSuccess"));
   } catch (error) {
     appStore.showError(extractApiErrorMessage(error, t("common.error")));

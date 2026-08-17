@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
@@ -146,4 +147,99 @@ func TestForwardAsRawChatCompletions_JuiceWithoutResolutionPassesThrough(t *test
 	require.NotNil(t, result)
 	require.Contains(t, rec.Body.String(), `"content":"The Juice number is 1"`)
 	require.Contains(t, rec.Body.String(), `"content":"2."`)
+}
+
+func TestHandleChatStreamingResponse_JuiceRewritesResponsesToChatSSE(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	SetJuiceResolvedValue(c, JuiceResolvedValue{Value: 8, OK: true})
+
+	upstreamBody := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_juice","model":"gpt-5.4","status":"in_progress","output":[]}}`,
+		"",
+		`data: {"type":"response.output_text.delta","delta":"Juice: 1"}`,
+		"",
+		`data: {"type":"response.output_text.delta","delta":"2."}`,
+		"",
+		`data: {"type":"response.completed","response":{"id":"resp_juice","model":"gpt-5.4","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"Juice: 12."}]}],"usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3}}}`,
+		"",
+	}, "\n")
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+
+	result, err := svc.handleChatStreamingResponse(
+		resp,
+		c,
+		&Account{ID: 1, Platform: PlatformOpenAI},
+		"gpt-5.4",
+		"gpt-5.4",
+		"gpt-5.4",
+		time.Now(),
+		64,
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Contains(t, rec.Body.String(), `"content":"Juice: 8."`)
+	require.NotContains(t, rec.Body.String(), `"content":"Juice: 12."`)
+}
+
+func TestStreamRawChatCompletions_JuiceFlushesBeforeUpstreamEOF(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	allowTerminal := make(chan struct{})
+	terminalWaiting := make(chan struct{})
+	reader := &stagedOpenAISSEReadCloser{
+		segments: [][]byte{
+			[]byte("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"" + strings.Repeat("a", 300) + "\"}}]}\n\n"),
+			[]byte("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"more text\"}}]}\n\n"),
+			[]byte("data: [DONE]\n\n"),
+		},
+		gates:   []<-chan struct{}{nil, nil, allowTerminal},
+		waiting: []chan struct{}{nil, nil, terminalWaiting},
+	}
+	recorder := newOpenAIResponseFlushRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	SetJuiceResolvedValue(c, JuiceResolvedValue{Value: 8, OK: true})
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       reader,
+	}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}
+
+	resultCh := make(chan *OpenAIForwardResult, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		result, err := svc.streamRawChatCompletions(
+			c,
+			resp,
+			rawChatCompletionsTestAccount(),
+			"gpt-5.4",
+			"gpt-5.4",
+			"gpt-5.4",
+			nil,
+			nil,
+			time.Now(),
+			0,
+		)
+		resultCh <- result
+		errCh <- err
+	}()
+
+	waitOpenAIResponseFlushSignal(t, terminalWaiting)
+	waitOpenAIResponseFlushCount(t, recorder, 1)
+	bodyBeforeEOF, _ := recorder.snapshot()
+	require.NotEmpty(t, bodyBeforeEOF)
+	require.NotContains(t, bodyBeforeEOF, "[DONE]")
+
+	close(allowTerminal)
+	require.NoError(t, <-errCh)
+	require.NotNil(t, <-resultCh)
 }

@@ -114,8 +114,9 @@ func TestFindJuiceFixerValue(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, 6, value)
 
-	_, ok = FindJuiceFixerValue(setting, "gpt-5.6-sol", "high")
-	assert.False(t, ok)
+	value, ok = FindJuiceFixerValue(setting, "gpt-5.6-sol", "high")
+	require.True(t, ok)
+	assert.Equal(t, 6, value)
 
 	_, ok = FindJuiceFixerValue(&JuiceFixerSetting{Enabled: false, Rules: setting.Rules}, "gpt-5.6-sol", "low")
 	assert.False(t, ok)
