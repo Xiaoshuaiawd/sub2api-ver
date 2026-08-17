@@ -4,6 +4,7 @@ package repository
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -32,29 +33,39 @@ func newTestUUIDv7(t *testing.T) string {
 	return value.String()
 }
 
+func testOpenAIPromptCachePrefixSource(fill string, shardCount, shardIndex int) service.OpenAIPromptCacheIdentitySource {
+	return service.OpenAIPromptCacheIdentitySource{
+		Kind:       service.OpenAIPromptCacheIdentitySourcePrefix,
+		Hash:       strings.Repeat(fill, 64),
+		ShardCount: shardCount,
+		ShardIndex: shardIndex,
+	}
+}
+
 func TestOpenAIPromptCacheIdentityResolveUsesFixedTTLWithoutRefresh(t *testing.T) {
 	store, mr := newOpenAIPromptCacheIdentityTestStore(t)
 	ctx := context.Background()
 	firstCandidate := newTestUUIDv7(t)
+	source := testOpenAIPromptCachePrefixSource("a", 4, 2)
 
-	first, err := store.ResolveOpenAIPromptCacheIdentity(ctx, 11, "gpt-5.6", "session:alpha", firstCandidate, 5*time.Minute)
+	first, err := store.ResolveOpenAIPromptCacheIdentity(ctx, 11, "gpt-5.6", source, firstCandidate, 30*time.Minute)
 	require.NoError(t, err)
 	require.Equal(t, firstCandidate, first.Value)
 	require.False(t, first.Hit)
-	require.Equal(t, 5*time.Minute, first.RemainingTTL)
+	require.Equal(t, 30*time.Minute, first.RemainingTTL)
 
-	mr.FastForward(2 * time.Minute)
-	second, err := store.ResolveOpenAIPromptCacheIdentity(ctx, 11, "gpt-5.6", "session:alpha", newTestUUIDv7(t), 5*time.Minute)
+	mr.FastForward(12 * time.Minute)
+	second, err := store.ResolveOpenAIPromptCacheIdentity(ctx, 11, "gpt-5.6", source, newTestUUIDv7(t), 30*time.Minute)
 	require.NoError(t, err)
 	require.Equal(t, firstCandidate, second.Value)
 	require.True(t, second.Hit)
-	require.Equal(t, 3*time.Minute, second.RemainingTTL)
+	require.Equal(t, 18*time.Minute, second.RemainingTTL)
 
-	mr.FastForward(2 * time.Minute)
-	third, err := store.ResolveOpenAIPromptCacheIdentity(ctx, 11, "gpt-5.6", "session:alpha", newTestUUIDv7(t), 5*time.Minute)
+	mr.FastForward(12 * time.Minute)
+	third, err := store.ResolveOpenAIPromptCacheIdentity(ctx, 11, "gpt-5.6", source, newTestUUIDv7(t), 30*time.Minute)
 	require.NoError(t, err)
 	require.Equal(t, firstCandidate, third.Value)
-	require.Equal(t, time.Minute, third.RemainingTTL, "cache hit must not refresh the original five-minute lifetime")
+	require.Equal(t, 6*time.Minute, third.RemainingTTL, "cache hit must not refresh the original thirty-minute lifetime")
 }
 
 func TestOpenAIPromptCacheIdentityResolveReplacesValueAfterExpiry(t *testing.T) {
@@ -62,34 +73,66 @@ func TestOpenAIPromptCacheIdentityResolveReplacesValueAfterExpiry(t *testing.T) 
 	ctx := context.Background()
 	firstCandidate := newTestUUIDv7(t)
 	secondCandidate := newTestUUIDv7(t)
+	source := testOpenAIPromptCachePrefixSource("b", 4, 1)
 
-	_, err := store.ResolveOpenAIPromptCacheIdentity(ctx, 12, "gpt-5.6", "session:beta", firstCandidate, 5*time.Minute)
+	_, err := store.ResolveOpenAIPromptCacheIdentity(ctx, 12, "gpt-5.6", source, firstCandidate, 30*time.Minute)
 	require.NoError(t, err)
-	mr.FastForward(5 * time.Minute)
+	mr.FastForward(30 * time.Minute)
 
-	replaced, err := store.ResolveOpenAIPromptCacheIdentity(ctx, 12, "gpt-5.6", "session:beta", secondCandidate, 5*time.Minute)
+	replaced, err := store.ResolveOpenAIPromptCacheIdentity(ctx, 12, "gpt-5.6", source, secondCandidate, 30*time.Minute)
 	require.NoError(t, err)
 	require.Equal(t, secondCandidate, replaced.Value)
 	require.False(t, replaced.Hit)
-	require.Equal(t, 5*time.Minute, replaced.RemainingTTL)
+	require.Equal(t, 30*time.Minute, replaced.RemainingTTL)
 }
 
 func TestOpenAIPromptCacheIdentityResolveIsolatesTenantModelAndSource(t *testing.T) {
 	store, _ := newOpenAIPromptCacheIdentityTestStore(t)
 	ctx := context.Background()
+	baseSource := testOpenAIPromptCachePrefixSource("c", 4, 0)
 
-	base, err := store.ResolveOpenAIPromptCacheIdentity(ctx, 21, "gpt-5.6", "session:shared", newTestUUIDv7(t), 5*time.Minute)
+	base, err := store.ResolveOpenAIPromptCacheIdentity(ctx, 21, "gpt-5.6", baseSource, newTestUUIDv7(t), 30*time.Minute)
 	require.NoError(t, err)
-	otherTenant, err := store.ResolveOpenAIPromptCacheIdentity(ctx, 22, "gpt-5.6", "session:shared", newTestUUIDv7(t), 5*time.Minute)
+	otherTenant, err := store.ResolveOpenAIPromptCacheIdentity(ctx, 22, "gpt-5.6", baseSource, newTestUUIDv7(t), 30*time.Minute)
 	require.NoError(t, err)
-	otherModel, err := store.ResolveOpenAIPromptCacheIdentity(ctx, 21, "gpt-5.5", "session:shared", newTestUUIDv7(t), 5*time.Minute)
+	otherModel, err := store.ResolveOpenAIPromptCacheIdentity(ctx, 21, "gpt-5.5", baseSource, newTestUUIDv7(t), 30*time.Minute)
 	require.NoError(t, err)
-	otherSource, err := store.ResolveOpenAIPromptCacheIdentity(ctx, 21, "gpt-5.6", "session:other", newTestUUIDv7(t), 5*time.Minute)
+	otherSource, err := store.ResolveOpenAIPromptCacheIdentity(ctx, 21, "gpt-5.6", testOpenAIPromptCachePrefixSource("d", 4, 0), newTestUUIDv7(t), 30*time.Minute)
+	require.NoError(t, err)
+	otherShard, err := store.ResolveOpenAIPromptCacheIdentity(ctx, 21, "gpt-5.6", testOpenAIPromptCachePrefixSource("c", 4, 1), newTestUUIDv7(t), 30*time.Minute)
+	require.NoError(t, err)
+	otherGeneration, err := store.ResolveOpenAIPromptCacheIdentity(ctx, 21, "gpt-5.6", testOpenAIPromptCachePrefixSource("c", 8, 0), newTestUUIDv7(t), 30*time.Minute)
 	require.NoError(t, err)
 
 	require.NotEqual(t, base.Value, otherTenant.Value)
 	require.NotEqual(t, base.Value, otherModel.Value)
 	require.NotEqual(t, base.Value, otherSource.Value)
+	require.NotEqual(t, base.Value, otherShard.Value)
+	require.NotEqual(t, base.Value, otherGeneration.Value)
+}
+
+func TestOpenAIPromptCacheIdentityV2KeyContainsOnlySafeComponents(t *testing.T) {
+	source := testOpenAIPromptCachePrefixSource("e", 4, 2)
+
+	key, err := openAIPromptCacheIdentityKey(7, "gpt-5.6-sol", source)
+
+	require.NoError(t, err)
+	require.Contains(t, key, "openai:prompt_cache_identity:v2:7:")
+	require.Contains(t, key, ":n4:s2:")
+	require.Contains(t, key, strings.Repeat("e", 64))
+	require.NotContains(t, key, "gpt-5.6-sol")
+}
+
+func TestOpenAIPromptCacheIdentityV2SessionFallbackKey(t *testing.T) {
+	source := service.OpenAIPromptCacheIdentitySource{
+		Kind: service.OpenAIPromptCacheIdentitySourceSession,
+		Hash: strings.Repeat("f", 64),
+	}
+
+	key, err := openAIPromptCacheIdentityKey(8, "gpt-5.6-sol", source)
+
+	require.NoError(t, err)
+	require.Contains(t, key, ":session:"+strings.Repeat("f", 64))
 }
 
 func TestOpenAIPromptCacheIdentityResponseAliasKeepsRemainingTTL(t *testing.T) {
@@ -100,6 +143,9 @@ func TestOpenAIPromptCacheIdentityResponseAliasKeepsRemainingTTL(t *testing.T) {
 	bound, err := store.SetOpenAIPromptCacheResponseAlias(ctx, 31, "gpt-5.6", "resp_alpha", value, 2*time.Minute)
 	require.NoError(t, err)
 	require.True(t, bound)
+	keys := mr.Keys()
+	require.Len(t, keys, 1)
+	require.Contains(t, keys[0], "openai:prompt_cache_response_alias:v2:")
 
 	mr.FastForward(30 * time.Second)
 	alias, err := store.GetOpenAIPromptCacheResponseAlias(ctx, 31, "gpt-5.6", "resp_alpha")
@@ -118,6 +164,7 @@ func TestOpenAIPromptCacheIdentityConcurrentResolveReturnsOneUUID(t *testing.T) 
 	store, _ := newOpenAIPromptCacheIdentityTestStore(t)
 	ctx := context.Background()
 	const workers = 24
+	source := testOpenAIPromptCachePrefixSource("a", 4, 3)
 	values := make(chan string, workers)
 	errs := make(chan error, workers)
 	var wg sync.WaitGroup
@@ -131,7 +178,7 @@ func TestOpenAIPromptCacheIdentityConcurrentResolveReturnsOneUUID(t *testing.T) 
 				errs <- candidateErr
 				return
 			}
-			record, resolveErr := store.ResolveOpenAIPromptCacheIdentity(ctx, 41, "gpt-5.6", "session:concurrent", candidate.String(), 5*time.Minute)
+			record, resolveErr := store.ResolveOpenAIPromptCacheIdentity(ctx, 41, "gpt-5.6", source, candidate.String(), 30*time.Minute)
 			if resolveErr != nil {
 				errs <- resolveErr
 				return

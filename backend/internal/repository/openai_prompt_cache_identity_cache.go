@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	openAIPromptCacheIdentityPrefix      = "openai:prompt_cache_identity:v1:"
-	openAIPromptCacheResponseAliasPrefix = "openai:prompt_cache_response_alias:v1:"
+	openAIPromptCacheIdentityPrefix      = "openai:prompt_cache_identity:v2:"
+	openAIPromptCacheResponseAliasPrefix = "openai:prompt_cache_response_alias:v2:"
 )
 
 var openAIPromptCacheIdentityResolveScript = redis.NewScript(`
@@ -50,14 +50,61 @@ func hashOpenAIPromptCacheKeyComponent(value string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func openAIPromptCacheIdentityKey(apiKeyID int64, modelIdentity, sourceIdentity string) string {
-	return fmt.Sprintf(
-		"%s%d:%s:%s",
-		openAIPromptCacheIdentityPrefix,
-		apiKeyID,
-		hashOpenAIPromptCacheKeyComponent(modelIdentity),
-		hashOpenAIPromptCacheKeyComponent(sourceIdentity),
-	)
+func openAIPromptCacheIdentityKey(apiKeyID int64, modelIdentity string, source service.OpenAIPromptCacheIdentitySource) (string, error) {
+	if apiKeyID <= 0 || strings.TrimSpace(modelIdentity) == "" {
+		return "", errors.New("invalid OpenAI prompt cache identity scope")
+	}
+	if err := validateOpenAIPromptCacheIdentitySource(source); err != nil {
+		return "", err
+	}
+	modelHash := hashOpenAIPromptCacheKeyComponent(modelIdentity)
+	switch source.Kind {
+	case service.OpenAIPromptCacheIdentitySourcePrefix:
+		return fmt.Sprintf(
+			"%s%d:%s:n%d:s%d:%s",
+			openAIPromptCacheIdentityPrefix,
+			apiKeyID,
+			modelHash,
+			source.ShardCount,
+			source.ShardIndex,
+			source.Hash,
+		), nil
+	case service.OpenAIPromptCacheIdentitySourceSession:
+		return fmt.Sprintf(
+			"%s%d:%s:session:%s",
+			openAIPromptCacheIdentityPrefix,
+			apiKeyID,
+			modelHash,
+			source.Hash,
+		), nil
+	default:
+		return "", fmt.Errorf("unsupported OpenAI prompt cache identity source kind %q", source.Kind)
+	}
+}
+
+func validateOpenAIPromptCacheIdentitySource(source service.OpenAIPromptCacheIdentitySource) error {
+	if source.Kind != service.OpenAIPromptCacheIdentitySourcePrefix && source.Kind != service.OpenAIPromptCacheIdentitySourceSession {
+		return fmt.Errorf("unsupported OpenAI prompt cache identity source kind %q", source.Kind)
+	}
+	if len(source.Hash) != sha256.Size*2 {
+		return errors.New("OpenAI prompt cache identity source hash must be SHA-256 hex")
+	}
+	if _, err := hex.DecodeString(source.Hash); err != nil {
+		return errors.New("OpenAI prompt cache identity source hash must be SHA-256 hex")
+	}
+	if source.Kind == service.OpenAIPromptCacheIdentitySourceSession {
+		if source.ShardCount != 0 || source.ShardIndex != 0 {
+			return errors.New("session prompt cache identity source cannot contain shard metadata")
+		}
+		return nil
+	}
+	if source.ShardCount != 1 && source.ShardCount != 4 && source.ShardCount != 8 && source.ShardCount != 16 {
+		return errors.New("unsupported OpenAI prompt cache identity shard count")
+	}
+	if source.ShardIndex < 0 || source.ShardIndex >= source.ShardCount {
+		return errors.New("invalid OpenAI prompt cache identity shard index")
+	}
+	return nil
 }
 
 func openAIPromptCacheResponseAliasKey(apiKeyID int64, modelIdentity, responseID string) string {
@@ -74,15 +121,19 @@ func (c *gatewayCache) ResolveOpenAIPromptCacheIdentity(
 	ctx context.Context,
 	apiKeyID int64,
 	modelIdentity string,
-	sourceIdentity string,
+	source service.OpenAIPromptCacheIdentitySource,
 	candidate string,
 	ttl time.Duration,
 ) (*service.OpenAIPromptCacheIdentityRecord, error) {
 	if c == nil || c.rdb == nil {
 		return nil, errors.New("gateway cache unavailable")
 	}
-	if apiKeyID <= 0 || strings.TrimSpace(modelIdentity) == "" || strings.TrimSpace(sourceIdentity) == "" || strings.TrimSpace(candidate) == "" {
+	if apiKeyID <= 0 || strings.TrimSpace(modelIdentity) == "" || strings.TrimSpace(candidate) == "" {
 		return nil, errors.New("invalid OpenAI prompt cache identity input")
+	}
+	key, err := openAIPromptCacheIdentityKey(apiKeyID, modelIdentity, source)
+	if err != nil {
+		return nil, err
 	}
 	if ttl <= 0 {
 		return nil, errors.New("invalid OpenAI prompt cache identity TTL")
@@ -91,7 +142,7 @@ func (c *gatewayCache) ResolveOpenAIPromptCacheIdentity(
 	result, err := openAIPromptCacheIdentityResolveScript.Run(
 		ctx,
 		c.rdb,
-		[]string{openAIPromptCacheIdentityKey(apiKeyID, modelIdentity, sourceIdentity)},
+		[]string{key},
 		strings.TrimSpace(candidate),
 		ttl.Milliseconds(),
 	).Slice()

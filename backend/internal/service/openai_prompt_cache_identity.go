@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"time"
 
@@ -12,8 +14,6 @@ import (
 	"github.com/tidwall/sjson"
 	"go.uber.org/zap"
 )
-
-const openAIAutoPromptCacheIdentityTTL = 5 * time.Minute
 
 const openAIAutoPromptCacheIdentityGinKey = "openai_auto_prompt_cache_identity"
 
@@ -44,6 +44,7 @@ type OpenAIPromptCacheIdentityDecision struct {
 type openAIAutoPromptCacheIdentity struct {
 	Value         string
 	ModelIdentity string
+	StoreSource   OpenAIPromptCacheIdentitySource
 	APIKeyID      int64
 	ExpiresAt     time.Time
 	Source        string
@@ -78,24 +79,6 @@ func (s *OpenAIGatewayService) ResolveAndStageOpenAIAutoPromptCacheIdentity(
 	if modelIdentity == "" {
 		setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{Reason: OpenAIPromptCacheIdentityReasonInvalidModel})
 		return ""
-	}
-	if staged := stagedOpenAIAutoPromptCacheIdentity(c); staged != nil &&
-		staged.APIKeyID == apiKeyID && staged.ModelIdentity == modelIdentity &&
-		validOpenAIAutoPromptCacheUUIDv7(staged.Value) {
-		now := time.Now()
-		if now.Before(staged.ExpiresAt) {
-			reason := OpenAIPromptCacheIdentityReasonRedisMiss
-			if staged.Hit {
-				reason = OpenAIPromptCacheIdentityReasonRedisHit
-			}
-			setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{
-				Reason:       reason,
-				Source:       staged.Source,
-				Hit:          staged.Hit,
-				RemainingTTL: staged.ExpiresAt.Sub(now),
-			})
-			return staged.Value
-		}
 	}
 	store, ok := s.cache.(OpenAIPromptCacheIdentityStore)
 	if !ok || store == nil {
@@ -176,6 +159,25 @@ func (s *OpenAIGatewayService) resolveAndStageOpenAIAutoPromptCacheIdentity(
 	sourceKind string,
 	sourceIdentity string,
 ) string {
+	storeSource := openAIPromptCacheIdentitySessionSource(sourceIdentity)
+	if staged := stagedOpenAIAutoPromptCacheIdentity(c); staged != nil &&
+		staged.APIKeyID == apiKeyID && staged.ModelIdentity == modelIdentity &&
+		staged.StoreSource == storeSource && validOpenAIAutoPromptCacheUUIDv7(staged.Value) {
+		now := time.Now()
+		if now.Before(staged.ExpiresAt) {
+			reason := OpenAIPromptCacheIdentityReasonRedisMiss
+			if staged.Hit {
+				reason = OpenAIPromptCacheIdentityReasonRedisHit
+			}
+			setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{
+				Reason:       reason,
+				Source:       staged.Source,
+				Hit:          staged.Hit,
+				RemainingTTL: staged.ExpiresAt.Sub(now),
+			})
+			return staged.Value
+		}
+	}
 	candidate, err := uuid.NewV7()
 	if err != nil {
 		setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{
@@ -190,9 +192,9 @@ func (s *OpenAIGatewayService) resolveAndStageOpenAIAutoPromptCacheIdentity(
 		ctx,
 		apiKeyID,
 		modelIdentity,
-		sourceIdentity,
+		storeSource,
 		candidate.String(),
-		openAIAutoPromptCacheIdentityTTL,
+		openAIPromptCacheIdentityTTL(s),
 	)
 	if err != nil {
 		setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{
@@ -219,6 +221,7 @@ func (s *OpenAIGatewayService) resolveAndStageOpenAIAutoPromptCacheIdentity(
 	stageOpenAIAutoPromptCacheIdentity(c, &openAIAutoPromptCacheIdentity{
 		Value:         value,
 		ModelIdentity: modelIdentity,
+		StoreSource:   storeSource,
 		APIKeyID:      apiKeyID,
 		ExpiresAt:     deadlineBase.Add(record.RemainingTTL),
 		Source:        sourceKind,
@@ -243,6 +246,21 @@ func (s *OpenAIGatewayService) resolveAndStageOpenAIAutoPromptCacheIdentity(
 		zap.String("identity_sha256", hashSensitiveValueForLog(value)),
 	)
 	return value
+}
+
+func openAIPromptCacheIdentityTTL(s *OpenAIGatewayService) time.Duration {
+	if s == nil || s.cfg == nil {
+		return 30 * time.Minute
+	}
+	return s.cfg.Gateway.OpenAIPromptCache.IdentityTTL()
+}
+
+func openAIPromptCacheIdentitySessionSource(sourceIdentity string) OpenAIPromptCacheIdentitySource {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(sourceIdentity)))
+	return OpenAIPromptCacheIdentitySource{
+		Kind: OpenAIPromptCacheIdentitySourceSession,
+		Hash: hex.EncodeToString(sum[:]),
+	}
 }
 
 // BindStagedOpenAIAutoPromptCacheResponseAlias binds a successful response ID
