@@ -36,10 +36,15 @@ const (
 // OpenAIPromptCacheIdentityDecision explains automatic identity handling
 // without retaining the prompt or any raw session identifier.
 type OpenAIPromptCacheIdentityDecision struct {
-	Reason       string
-	Source       string
-	Hit          bool
-	RemainingTTL time.Duration
+	Reason           string
+	Source           string
+	Hit              bool
+	RemainingTTL     time.Duration
+	PrefixSHA256     string
+	IdentitySHA256   string
+	ShardCount       int
+	ShardIndex       int
+	BreakpointReason string
 }
 
 type openAIAutoPromptCacheIdentity struct {
@@ -111,10 +116,11 @@ func (s *OpenAIGatewayService) ResolveAndStageOpenAIAutoPromptCacheIdentity(
 				Hit:           true,
 			})
 			setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{
-				Reason:       OpenAIPromptCacheIdentityReasonRedisHit,
-				Source:       "previous_response_alias",
-				Hit:          true,
-				RemainingTTL: alias.RemainingTTL,
+				Reason:         OpenAIPromptCacheIdentityReasonRedisHit,
+				Source:         "previous_response_alias",
+				Hit:            true,
+				RemainingTTL:   alias.RemainingTTL,
+				IdentitySHA256: hashOpenAIPromptCacheDecisionValue(alias.Value),
 			})
 			return strings.ToLower(strings.TrimSpace(alias.Value))
 		}
@@ -183,10 +189,14 @@ func (s *OpenAIGatewayService) resolveAndStageOpenAIAutoPromptCacheIdentity(
 				reason = OpenAIPromptCacheIdentityReasonRedisHit
 			}
 			setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{
-				Reason:       reason,
-				Source:       staged.Source,
-				Hit:          staged.Hit,
-				RemainingTTL: staged.ExpiresAt.Sub(now),
+				Reason:         reason,
+				Source:         staged.Source,
+				Hit:            staged.Hit,
+				RemainingTTL:   staged.ExpiresAt.Sub(now),
+				PrefixSHA256:   openAIPromptCacheDecisionPrefixHash(staged.StoreSource),
+				IdentitySHA256: hashOpenAIPromptCacheDecisionValue(staged.Value),
+				ShardCount:     staged.StoreSource.ShardCount,
+				ShardIndex:     staged.StoreSource.ShardIndex,
 			})
 			return staged.Value
 		}
@@ -246,10 +256,14 @@ func (s *OpenAIGatewayService) resolveAndStageOpenAIAutoPromptCacheIdentity(
 		reason = OpenAIPromptCacheIdentityReasonRedisHit
 	}
 	setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{
-		Reason:       reason,
-		Source:       sourceKind,
-		Hit:          record.Hit,
-		RemainingTTL: record.RemainingTTL,
+		Reason:         reason,
+		Source:         sourceKind,
+		Hit:            record.Hit,
+		RemainingTTL:   record.RemainingTTL,
+		PrefixSHA256:   openAIPromptCacheDecisionPrefixHash(storeSource),
+		IdentitySHA256: hashOpenAIPromptCacheDecisionValue(value),
+		ShardCount:     storeSource.ShardCount,
+		ShardIndex:     storeSource.ShardIndex,
 	})
 	logger.L().Debug("openai.auto_prompt_cache_identity_resolved",
 		zap.Int64("api_key_id", apiKeyID),
@@ -290,6 +304,22 @@ func openAIPromptCacheIdentitySessionSource(sourceIdentity string) OpenAIPromptC
 		Kind: OpenAIPromptCacheIdentitySourceSession,
 		Hash: hex.EncodeToString(sum[:]),
 	}
+}
+
+func openAIPromptCacheDecisionPrefixHash(source OpenAIPromptCacheIdentitySource) string {
+	if source.Kind == OpenAIPromptCacheIdentitySourcePrefix {
+		return source.Hash
+	}
+	return ""
+}
+
+func hashOpenAIPromptCacheDecisionValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
 }
 
 // BindStagedOpenAIAutoPromptCacheResponseAlias binds a successful response ID

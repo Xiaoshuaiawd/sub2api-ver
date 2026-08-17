@@ -378,6 +378,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		} else {
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(reqModel), true, nil)
 		}
+		recordOpenAIPromptCacheOutcome(reqLog, account, result)
 
 		userAgent := c.GetHeader("User-Agent")
 		clientIP := ip.GetClientIP(c)
@@ -394,6 +395,11 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 				zap.String("source", decision.Source),
 				zap.Bool("hit", decision.Hit),
 				zap.Int64("ttl_ms", decision.RemainingTTL.Milliseconds()),
+				zap.String("prefix_sha256", decision.PrefixSHA256),
+				zap.String("identity_sha256", decision.IdentitySHA256),
+				zap.Int("shard_count", decision.ShardCount),
+				zap.Int("shard_index", decision.ShardIndex),
+				zap.String("breakpoint_reason", decision.BreakpointReason),
 				zap.Bool("auto_identity_injected", autoIdentityInjected),
 			)
 		}

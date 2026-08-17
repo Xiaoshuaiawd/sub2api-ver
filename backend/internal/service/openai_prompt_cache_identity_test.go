@@ -310,6 +310,12 @@ func TestOpenAIAutoPromptCacheCreatesUUIDv7FromContent(t *testing.T) {
 	require.Equal(t, 4, store.resolveSource.ShardCount)
 	require.Len(t, store.resolveSource.Hash, 64)
 	require.Equal(t, 30*time.Minute, store.resolveTTL)
+	decision, ok := GetOpenAIPromptCacheIdentityDecision(c)
+	require.True(t, ok)
+	require.Len(t, decision.PrefixSHA256, 64)
+	require.Len(t, decision.IdentitySHA256, 64)
+	require.Equal(t, store.resolveSource.ShardCount, decision.ShardCount)
+	require.Equal(t, store.resolveSource.ShardIndex, decision.ShardIndex)
 }
 
 func TestOpenAIAutoPromptCacheFinalModelScopesIdentity(t *testing.T) {

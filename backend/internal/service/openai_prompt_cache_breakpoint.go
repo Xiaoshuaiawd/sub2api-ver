@@ -159,12 +159,26 @@ func stageOpenAIPromptCacheBreakpointInjection(c *gin.Context, decision openAIPr
 	}
 	if !decision.Injected {
 		c.Set(openAIPromptCacheBreakpointInjectionGinKey, nil)
+		setOpenAIPromptCacheBreakpointDecisionReason(c, decision.Reason)
 		return
 	}
 	c.Set(openAIPromptCacheBreakpointInjectionGinKey, &openAIPromptCacheBreakpointInjection{
 		InputIndex:   decision.InputIndex,
 		ContentIndex: decision.ContentIndex,
 	})
+	setOpenAIPromptCacheBreakpointDecisionReason(c, decision.Reason)
+}
+
+func setOpenAIPromptCacheBreakpointDecisionReason(c *gin.Context, reason string) {
+	if c == nil {
+		return
+	}
+	decision, ok := GetOpenAIPromptCacheIdentityDecision(c)
+	if !ok {
+		return
+	}
+	decision.BreakpointReason = strings.TrimSpace(reason)
+	setOpenAIPromptCacheIdentityDecision(c, decision)
 }
 
 func stagedOpenAIPromptCacheBreakpointInjection(c *gin.Context) *openAIPromptCacheBreakpointInjection {

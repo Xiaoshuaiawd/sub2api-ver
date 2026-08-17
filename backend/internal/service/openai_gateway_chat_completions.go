@@ -317,7 +317,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 			}
 			if changed && strings.Contains(reason, "prompt cache") {
 				_ = resp.Body.Close()
-				stageOpenAIPromptCacheBreakpointInjection(c, openAIPromptCacheBreakpointDecision{})
+				stageOpenAIPromptCacheBreakpointInjection(c, openAIPromptCacheBreakpointDecision{Reason: "rejected_retry"})
 				retryCtx, releaseRetryCtx := detachUpstreamContext(ctx)
 				retryReq, buildErr := s.buildUpstreamRequest(retryCtx, c, account, retryBody, token, true, promptCacheKey, false)
 				releaseRetryCtx()

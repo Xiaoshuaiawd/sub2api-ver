@@ -28,6 +28,12 @@ func TestInjectOpenAIPromptCacheBreakpoint(t *testing.T) {
 	require.Equal(t, "explicit", gjson.GetBytes(patched, "prompt_cache_options.mode").String())
 	require.False(t, gjson.GetBytes(patched, "input.0.content.0.prompt_cache_breakpoint").Exists())
 	require.Equal(t, "explicit", gjson.GetBytes(patched, "input.1.content.0.prompt_cache_breakpoint.mode").String())
+	c := newOpenAIPromptCacheIdentityTestContext(t, "")
+	setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{Reason: OpenAIPromptCacheIdentityReasonRedisHit})
+	stageOpenAIPromptCacheBreakpointInjection(c, decision)
+	identityDecision, ok := GetOpenAIPromptCacheIdentityDecision(c)
+	require.True(t, ok)
+	require.Equal(t, "injected", identityDecision.BreakpointReason)
 
 	tests := []struct {
 		name    string

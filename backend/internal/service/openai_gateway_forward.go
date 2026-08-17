@@ -950,7 +950,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				body = retryBody
 				requestView = newOpenAIRequestView(body)
 				reqBody = nil
-				stageOpenAIPromptCacheBreakpointInjection(c, openAIPromptCacheBreakpointDecision{})
+				stageOpenAIPromptCacheBreakpointInjection(c, openAIPromptCacheBreakpointDecision{Reason: "rejected_retry"})
 				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Retrying non-WSv2 request after %s (account: %s)", reason, account.Name)
 				continue
 			}
