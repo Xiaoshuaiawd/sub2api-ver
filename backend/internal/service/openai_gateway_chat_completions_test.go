@@ -89,6 +89,58 @@ func TestHandleChatStreamingResponse_ClassifiesHTTP2ReadError(t *testing.T) {
 	require.NotContains(t, message, "INTERNAL_ERROR")
 }
 
+func TestHandleChatStreamingResponseDerivesIncompleteStatusFromTerminalEvent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader(
+			`data: {"type":"response.incomplete","response":{"id":"resp_incomplete","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"partial"}]}]}}` + "\n\n",
+		)),
+	}
+
+	result, err := (&OpenAIGatewayService{cfg: &config.Config{}}).handleChatStreamingResponse(
+		resp, c, &Account{ID: 1, Platform: PlatformOpenAI}, "gpt-5.6", "gpt-5.6", "gpt-5.6", time.Now(), 0,
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "resp_incomplete", result.ResponseID)
+	require.Equal(t, "incomplete", result.ResponseStatus)
+	require.False(t, result.SucceededForPromptCacheAlias())
+}
+
+func TestReadOpenAICompatBufferedTerminalDerivesStatusFromTerminalEvent(t *testing.T) {
+	tests := []struct {
+		name      string
+		eventType string
+		want      string
+		wantAlias bool
+	}{
+		{name: "cancelled", eventType: "response.cancelled", want: "cancelled", wantAlias: false},
+		{name: "completed", eventType: "response.completed", want: "completed", wantAlias: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := &http.Response{Body: io.NopCloser(strings.NewReader(
+				`data: {"type":"` + tt.eventType + `","response":{"id":"resp_terminal","output":[]}}` + "\n\n",
+			))}
+			finalResponse, _, _, err := (&OpenAIGatewayService{cfg: &config.Config{}}).
+				readOpenAICompatBufferedTerminal(resp, "test buffered terminal", "request-id")
+
+			require.NoError(t, err)
+			require.NotNil(t, finalResponse)
+			require.Equal(t, tt.want, finalResponse.Status)
+			result := &OpenAIForwardResult{ResponseID: finalResponse.ID, ResponseStatus: finalResponse.Status}
+			require.Equal(t, tt.wantAlias, result.SucceededForPromptCacheAlias())
+		})
+	}
+}
+
 func TestNormalizeResponsesRequestServiceTier(t *testing.T) {
 	t.Parallel()
 
@@ -236,6 +288,84 @@ func TestForwardAsChatCompletions_APIKeyPropagatesPromptCacheKeyInResponsesBody(
 	require.Equal(t, "https://api.openai.com/v1/responses", upstream.lastReq.URL.String())
 	require.Equal(t, "Bearer sk-compatible", upstream.lastReq.Header.Get("Authorization"))
 	require.Equal(t, generateSessionUUID(isolateOpenAISessionID(99, "cache-key-123")), upstream.lastReq.Header.Get("session_id"))
+}
+
+func TestForwardAsChatCompletions_OAuthPropagatesAutomaticUUIDInResponsesBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{"model":"gpt-5.6","messages":[{"role":"user","content":"hello"}],"stream":false}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("api_key", &APIKey{ID: 99})
+	value := mustOpenAIPromptCacheUUIDv7(t)
+
+	upstream := &httpUpstreamRecorder{resp: openAIAutoPromptCacheCaptureResponse()}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	account := &Account{
+		ID: 3, Name: "openai-oauth", Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 1,
+		Credentials: map[string]any{"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-acc"},
+	}
+
+	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, value, "")
+
+	require.Error(t, err)
+	require.Nil(t, result)
+	require.Equal(t, value, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
+	require.Equal(t, generateSessionUUID(isolateOpenAISessionID(99, value)), upstream.lastReq.Header.Get("session_id"))
+}
+
+func TestForwardAsChatCompletions_APIKeyResponsesShapePropagatesAutomaticUUID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{"model":"gpt-5.6","input":[{"role":"user","content":"hello"}],"stream":false}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	value := mustOpenAIPromptCacheUUIDv7(t)
+
+	upstream := &httpUpstreamRecorder{resp: openAIAutoPromptCacheCaptureResponse()}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	account := &Account{
+		ID: 4, Name: "openai-api-key", Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1,
+		Credentials: map[string]any{"api_key": "sk-compatible"},
+		Extra:       map[string]any{"openai_responses_supported": true},
+	}
+
+	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, value, "")
+
+	require.Error(t, err)
+	require.Nil(t, result)
+	require.Equal(t, value, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
+	require.Equal(t, "hello", gjson.GetBytes(upstream.lastBody, "input.0.content").String())
+}
+
+func TestForwardAsChatCompletions_RawAPIKeyDoesNotLeakAutomaticUUID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}],"stream":false}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	value := mustOpenAIPromptCacheUUIDv7(t)
+
+	upstream := &httpUpstreamRecorder{resp: openAIAutoPromptCacheCaptureResponse()}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	account := &Account{
+		ID: 5, Name: "raw-openai-compatible", Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1,
+		Credentials: map[string]any{"api_key": "sk-compatible"},
+		Extra:       map[string]any{"openai_responses_supported": false},
+	}
+
+	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, value, "")
+
+	require.Error(t, err)
+	require.Nil(t, result)
+	require.False(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").Exists())
+	require.Contains(t, upstream.lastReq.URL.Path, "/v1/chat/completions")
 }
 
 func TestForwardAsChatCompletions_OAuthDoesNotInjectDefaultInstructions(t *testing.T) {
@@ -578,6 +708,8 @@ func TestForwardAsChatCompletions_StreamsUsageWithoutClientStreamOptions(t *test
 	require.Equal(t, 13, result.Usage.InputTokens)
 	require.Equal(t, 7, result.Usage.OutputTokens)
 	require.Equal(t, 5, result.Usage.CacheReadInputTokens)
+	require.Equal(t, "resp_1", result.ResponseID)
+	require.Equal(t, "completed", result.ResponseStatus)
 
 	responseBody := rec.Body.String()
 	require.Contains(t, responseBody, `"usage"`)
@@ -678,6 +810,8 @@ func TestForwardAsChatCompletions_BufferedTopLevelTerminalUsage(t *testing.T) {
 	require.Equal(t, 18, result.Usage.InputTokens)
 	require.Equal(t, 6, result.Usage.OutputTokens)
 	require.Equal(t, 3, result.Usage.CacheReadInputTokens)
+	require.Equal(t, "resp_top_buffered", result.ResponseID)
+	require.Equal(t, "completed", result.ResponseStatus)
 
 	responseBody := rec.Body.String()
 	require.Contains(t, responseBody, `"usage"`)

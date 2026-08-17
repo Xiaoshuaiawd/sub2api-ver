@@ -642,10 +642,28 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 
 func isOpenAICompatResponsesTerminalEvent(eventType string) bool {
 	switch strings.TrimSpace(eventType) {
-	case "response.completed", "response.done", "response.incomplete", "response.failed":
+	case "response.completed", "response.done", "response.incomplete", "response.failed", "response.cancelled", "response.canceled":
 		return true
 	default:
 		return false
+	}
+}
+
+func normalizeOpenAICompatTerminalResponseStatus(eventType, responseStatus string) string {
+	if status := strings.TrimSpace(responseStatus); status != "" {
+		return status
+	}
+	switch strings.TrimSpace(eventType) {
+	case "response.completed", "response.done":
+		return "completed"
+	case "response.incomplete":
+		return "incomplete"
+	case "response.failed":
+		return "failed"
+	case "response.cancelled", "response.canceled":
+		return "cancelled"
+	default:
+		return ""
 	}
 }
 
@@ -760,6 +778,7 @@ func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 					if err := json.Unmarshal([]byte(payload), &event); err == nil {
 						acc.ProcessEvent(&event)
 						if isOpenAICompatResponsesTerminalEvent(event.Type) && event.Response != nil {
+							event.Response.Status = normalizeOpenAICompatTerminalResponseStatus(event.Type, event.Response.Status)
 							if event.Usage != nil {
 								usage = copyOpenAIUsageFromResponsesUsage(event.Usage)
 								if event.Response.Usage == nil {
@@ -807,6 +826,7 @@ func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 			acc.ProcessEvent(&event)
 
 			if isOpenAICompatResponsesTerminalEvent(event.Type) && event.Response != nil {
+				event.Response.Status = normalizeOpenAICompatTerminalResponseStatus(event.Type, event.Response.Status)
 				if event.Usage != nil {
 					usage = copyOpenAIUsageFromResponsesUsage(event.Usage)
 					if event.Response.Usage == nil {

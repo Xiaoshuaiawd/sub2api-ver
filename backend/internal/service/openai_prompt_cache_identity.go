@@ -17,6 +17,30 @@ const openAIAutoPromptCacheIdentityTTL = 5 * time.Minute
 
 const openAIAutoPromptCacheIdentityGinKey = "openai_auto_prompt_cache_identity"
 
+const openAIPromptCacheIdentityDecisionGinKey = "openai_prompt_cache_identity_decision"
+
+const (
+	OpenAIPromptCacheIdentityReasonExplicit           = "explicit"
+	OpenAIPromptCacheIdentityReasonRedisHit           = "redis_hit"
+	OpenAIPromptCacheIdentityReasonRedisMiss          = "redis_miss"
+	OpenAIPromptCacheIdentityReasonNoSource           = "no_source"
+	OpenAIPromptCacheIdentityReasonStoreUnavailable   = "store_unavailable"
+	OpenAIPromptCacheIdentityReasonRedisError         = "redis_error"
+	OpenAIPromptCacheIdentityReasonInvalidCachedValue = "invalid_cached_value"
+	OpenAIPromptCacheIdentityReasonUUIDError          = "uuid_error"
+	OpenAIPromptCacheIdentityReasonUnsupportedPath    = "unsupported_path"
+	OpenAIPromptCacheIdentityReasonInvalidModel       = "invalid_model"
+)
+
+// OpenAIPromptCacheIdentityDecision explains automatic identity handling
+// without retaining the prompt or any raw session identifier.
+type OpenAIPromptCacheIdentityDecision struct {
+	Reason       string
+	Source       string
+	Hit          bool
+	RemainingTTL time.Duration
+}
+
 type openAIAutoPromptCacheIdentity struct {
 	Value         string
 	ModelIdentity string
@@ -27,8 +51,8 @@ type openAIAutoPromptCacheIdentity struct {
 }
 
 // ResolveAndStageOpenAIAutoPromptCacheIdentity resolves a fixed-lifetime
-// UUIDv7 for native Responses requests that do not provide prompt_cache_key.
-// Cache and UUID failures deliberately fail open.
+// UUIDv7 for requests that will be forwarded through OpenAI Responses and do
+// not provide prompt_cache_key. Cache and UUID failures deliberately fail open.
 func (s *OpenAIGatewayService) ResolveAndStageOpenAIAutoPromptCacheIdentity(
 	ctx context.Context,
 	c *gin.Context,
@@ -36,10 +60,15 @@ func (s *OpenAIGatewayService) ResolveAndStageOpenAIAutoPromptCacheIdentity(
 	model string,
 	body []byte,
 ) string {
-	if s == nil || c == nil || apiKeyID <= 0 || len(body) == 0 || isOpenAIResponsesCompactPath(c) {
+	if s == nil || c == nil || apiKeyID <= 0 || len(body) == 0 {
+		return ""
+	}
+	if isOpenAIResponsesCompactPath(c) {
+		setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{Reason: OpenAIPromptCacheIdentityReasonUnsupportedPath})
 		return ""
 	}
 	if strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String()) != "" {
+		setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{Reason: OpenAIPromptCacheIdentityReasonExplicit})
 		return ""
 	}
 	modelIdentity := strings.ToLower(strings.TrimSpace(model))
@@ -47,15 +76,30 @@ func (s *OpenAIGatewayService) ResolveAndStageOpenAIAutoPromptCacheIdentity(
 		modelIdentity = strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "model").String()))
 	}
 	if modelIdentity == "" {
+		setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{Reason: OpenAIPromptCacheIdentityReasonInvalidModel})
 		return ""
 	}
 	if staged := stagedOpenAIAutoPromptCacheIdentity(c); staged != nil &&
 		staged.APIKeyID == apiKeyID && staged.ModelIdentity == modelIdentity &&
-		validOpenAIAutoPromptCacheUUIDv7(staged.Value) && time.Now().Before(staged.ExpiresAt) {
-		return staged.Value
+		validOpenAIAutoPromptCacheUUIDv7(staged.Value) {
+		now := time.Now()
+		if now.Before(staged.ExpiresAt) {
+			reason := OpenAIPromptCacheIdentityReasonRedisMiss
+			if staged.Hit {
+				reason = OpenAIPromptCacheIdentityReasonRedisHit
+			}
+			setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{
+				Reason:       reason,
+				Source:       staged.Source,
+				Hit:          staged.Hit,
+				RemainingTTL: staged.ExpiresAt.Sub(now),
+			})
+			return staged.Value
+		}
 	}
 	store, ok := s.cache.(OpenAIPromptCacheIdentityStore)
 	if !ok || store == nil {
+		setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{Reason: OpenAIPromptCacheIdentityReasonStoreUnavailable})
 		return ""
 	}
 	if ctx == nil {
@@ -72,6 +116,10 @@ func (s *OpenAIGatewayService) ResolveAndStageOpenAIAutoPromptCacheIdentity(
 		aliasDeadlineBase := time.Now()
 		alias, err := store.GetOpenAIPromptCacheResponseAlias(ctx, apiKeyID, modelIdentity, previousResponseID)
 		if err != nil {
+			setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{
+				Reason: OpenAIPromptCacheIdentityReasonRedisError,
+				Source: "previous_response_alias",
+			})
 			logOpenAIAutoPromptCacheIdentityError("alias_lookup", apiKeyID, modelIdentity, err)
 			return ""
 		}
@@ -84,7 +132,19 @@ func (s *OpenAIGatewayService) ResolveAndStageOpenAIAutoPromptCacheIdentity(
 				Source:        "previous_response_alias",
 				Hit:           true,
 			})
+			setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{
+				Reason:       OpenAIPromptCacheIdentityReasonRedisHit,
+				Source:       "previous_response_alias",
+				Hit:          true,
+				RemainingTTL: alias.RemainingTTL,
+			})
 			return strings.ToLower(strings.TrimSpace(alias.Value))
+		}
+		if alias != nil {
+			setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{
+				Reason: OpenAIPromptCacheIdentityReasonInvalidCachedValue,
+				Source: "previous_response_alias",
+			})
 		}
 		// A valid response ID identifies the exact prefix continued by this turn.
 		// Prefer it over the current delta body so successive turns do not derive
@@ -103,6 +163,7 @@ func (s *OpenAIGatewayService) ResolveAndStageOpenAIAutoPromptCacheIdentity(
 	if sourceIdentity := resolveOpenAIAutoPromptCacheContentSource(body); sourceIdentity != "" {
 		return s.resolveAndStageOpenAIAutoPromptCacheIdentity(ctx, c, store, apiKeyID, modelIdentity, "content", sourceIdentity)
 	}
+	setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{Reason: OpenAIPromptCacheIdentityReasonNoSource})
 	return ""
 }
 
@@ -117,6 +178,10 @@ func (s *OpenAIGatewayService) resolveAndStageOpenAIAutoPromptCacheIdentity(
 ) string {
 	candidate, err := uuid.NewV7()
 	if err != nil {
+		setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{
+			Reason: OpenAIPromptCacheIdentityReasonUUIDError,
+			Source: sourceKind,
+		})
 		logOpenAIAutoPromptCacheIdentityError("uuid_v7", apiKeyID, modelIdentity, err)
 		return ""
 	}
@@ -130,10 +195,18 @@ func (s *OpenAIGatewayService) resolveAndStageOpenAIAutoPromptCacheIdentity(
 		openAIAutoPromptCacheIdentityTTL,
 	)
 	if err != nil {
+		setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{
+			Reason: OpenAIPromptCacheIdentityReasonRedisError,
+			Source: sourceKind,
+		})
 		logOpenAIAutoPromptCacheIdentityError("resolve", apiKeyID, modelIdentity, err)
 		return ""
 	}
 	if record == nil || record.RemainingTTL <= 0 || !validOpenAIAutoPromptCacheUUIDv7(record.Value) {
+		setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{
+			Reason: OpenAIPromptCacheIdentityReasonInvalidCachedValue,
+			Source: sourceKind,
+		})
 		logger.L().Warn("openai.auto_prompt_cache_identity_invalid",
 			zap.Int64("api_key_id", apiKeyID),
 			zap.String("model", modelIdentity),
@@ -150,6 +223,16 @@ func (s *OpenAIGatewayService) resolveAndStageOpenAIAutoPromptCacheIdentity(
 		ExpiresAt:     deadlineBase.Add(record.RemainingTTL),
 		Source:        sourceKind,
 		Hit:           record.Hit,
+	})
+	reason := OpenAIPromptCacheIdentityReasonRedisMiss
+	if record.Hit {
+		reason = OpenAIPromptCacheIdentityReasonRedisHit
+	}
+	setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{
+		Reason:       reason,
+		Source:       sourceKind,
+		Hit:          record.Hit,
+		RemainingTTL: record.RemainingTTL,
 	})
 	logger.L().Debug("openai.auto_prompt_cache_identity_resolved",
 		zap.Int64("api_key_id", apiKeyID),
@@ -283,6 +366,27 @@ func stagedOpenAIAutoPromptCacheIdentity(c *gin.Context) *openAIAutoPromptCacheI
 	}
 	identity, _ := value.(*openAIAutoPromptCacheIdentity)
 	return identity
+}
+
+func setOpenAIPromptCacheIdentityDecision(c *gin.Context, decision OpenAIPromptCacheIdentityDecision) {
+	if c == nil {
+		return
+	}
+	c.Set(openAIPromptCacheIdentityDecisionGinKey, decision)
+}
+
+// GetOpenAIPromptCacheIdentityDecision returns non-sensitive resolution state
+// for request-level diagnostics.
+func GetOpenAIPromptCacheIdentityDecision(c *gin.Context) (OpenAIPromptCacheIdentityDecision, bool) {
+	if c == nil {
+		return OpenAIPromptCacheIdentityDecision{}, false
+	}
+	value, exists := c.Get(openAIPromptCacheIdentityDecisionGinKey)
+	if !exists {
+		return OpenAIPromptCacheIdentityDecision{}, false
+	}
+	decision, ok := value.(OpenAIPromptCacheIdentityDecision)
+	return decision, ok
 }
 
 func validOpenAIAutoPromptCacheUUIDv7(value string) bool {

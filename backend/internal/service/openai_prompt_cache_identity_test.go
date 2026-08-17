@@ -147,6 +147,73 @@ func TestOpenAIAutoPromptCacheExplicitKeyBypassesStore(t *testing.T) {
 	require.Empty(t, resolved)
 	require.Zero(t, store.resolveCalls)
 	require.Nil(t, stagedOpenAIAutoPromptCacheIdentity(c))
+	decision, ok := GetOpenAIPromptCacheIdentityDecision(c)
+	require.True(t, ok)
+	require.Equal(t, OpenAIPromptCacheIdentityReasonExplicit, decision.Reason)
+}
+
+func TestOpenAIAutoPromptCacheDecisionRecordsRedisMiss(t *testing.T) {
+	store := &openAIPromptCacheIdentityStoreStub{}
+	svc := &OpenAIGatewayService{cache: store}
+	c := newOpenAIPromptCacheIdentityTestContext(t, "")
+
+	resolved := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(
+		context.Background(), c, 109, "gpt-5.6", []byte(`{"model":"gpt-5.6","input":"hello"}`),
+	)
+
+	require.NotEmpty(t, resolved)
+	decision, ok := GetOpenAIPromptCacheIdentityDecision(c)
+	require.True(t, ok)
+	require.Equal(t, OpenAIPromptCacheIdentityReasonRedisMiss, decision.Reason)
+	require.Equal(t, "content", decision.Source)
+	require.False(t, decision.Hit)
+	require.Greater(t, decision.RemainingTTL, time.Duration(0))
+}
+
+func TestOpenAIAutoPromptCacheDecisionRecordsNoSource(t *testing.T) {
+	store := &openAIPromptCacheIdentityStoreStub{}
+	svc := &OpenAIGatewayService{cache: store}
+	c := newOpenAIPromptCacheIdentityTestContext(t, "")
+
+	resolved := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(
+		context.Background(), c, 110, "gpt-5.6", []byte(`{"model":"gpt-5.6"}`),
+	)
+
+	require.Empty(t, resolved)
+	decision, ok := GetOpenAIPromptCacheIdentityDecision(c)
+	require.True(t, ok)
+	require.Equal(t, OpenAIPromptCacheIdentityReasonNoSource, decision.Reason)
+	require.Empty(t, decision.Source)
+}
+
+func TestOpenAIAutoPromptCacheDecisionRecordsUnavailableStore(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	c := newOpenAIPromptCacheIdentityTestContext(t, "")
+
+	resolved := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(
+		context.Background(), c, 112, "gpt-5.6", []byte(`{"model":"gpt-5.6","input":"hello"}`),
+	)
+
+	require.Empty(t, resolved)
+	decision, ok := GetOpenAIPromptCacheIdentityDecision(c)
+	require.True(t, ok)
+	require.Equal(t, OpenAIPromptCacheIdentityReasonStoreUnavailable, decision.Reason)
+}
+
+func TestOpenAIAutoPromptCacheDecisionRecordsRedisError(t *testing.T) {
+	store := &openAIPromptCacheIdentityStoreStub{resolveErr: errors.New("redis unavailable")}
+	svc := &OpenAIGatewayService{cache: store}
+	c := newOpenAIPromptCacheIdentityTestContext(t, "")
+
+	resolved := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(
+		context.Background(), c, 111, "gpt-5.6", []byte(`{"model":"gpt-5.6","input":"hello"}`),
+	)
+
+	require.Empty(t, resolved)
+	decision, ok := GetOpenAIPromptCacheIdentityDecision(c)
+	require.True(t, ok)
+	require.Equal(t, OpenAIPromptCacheIdentityReasonRedisError, decision.Reason)
+	require.Equal(t, "content", decision.Source)
 }
 
 func TestOpenAIAutoPromptCacheStableSourcePriority(t *testing.T) {
@@ -251,6 +318,26 @@ func TestOpenAIAutoPromptCacheReusesStagedIdentityWithinRequest(t *testing.T) {
 	require.NotEmpty(t, first)
 	require.Equal(t, first, second)
 	require.Equal(t, 1, store.resolveCalls)
+}
+
+func TestOpenAIAutoPromptCacheReusedStageRefreshesDecisionRemainingTTL(t *testing.T) {
+	store := &openAIPromptCacheIdentityStoreStub{}
+	svc := &OpenAIGatewayService{cache: store}
+	c := newOpenAIPromptCacheIdentityTestContext(t, "")
+	body := []byte(`{"model":"gpt-5.6","input":"hello"}`)
+
+	resolved := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(context.Background(), c, 103, "gpt-5.6", body)
+	require.NotEmpty(t, resolved)
+	staged := stagedOpenAIAutoPromptCacheIdentity(c)
+	require.NotNil(t, staged)
+	staged.ExpiresAt = time.Now().Add(30 * time.Second)
+
+	reused := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(context.Background(), c, 103, "gpt-5.6", body)
+	require.Equal(t, resolved, reused)
+	decision, ok := GetOpenAIPromptCacheIdentityDecision(c)
+	require.True(t, ok)
+	require.Greater(t, decision.RemainingTTL, time.Duration(0))
+	require.LessOrEqual(t, decision.RemainingTTL, 30*time.Second)
 }
 
 func TestOpenAIAutoPromptCacheIgnoresRotatingGenericIDs(t *testing.T) {

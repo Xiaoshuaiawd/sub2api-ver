@@ -153,6 +153,45 @@ func TestOpenAIAutoPromptCacheForwardBindsSuccessfulResponseAlias(t *testing.T) 
 	require.Equal(t, value, store.bindValue)
 }
 
+func TestOpenAIAutoPromptCacheChatToResponsesBindsSuccessfulResponseAlias(t *testing.T) {
+	value := mustOpenAIPromptCacheUUIDv7(t)
+	body := []byte(`{"model":"gpt-5.6","stream":false,"messages":[{"role":"user","content":"hello"}]}`)
+	c := newOpenAIAutoPromptCacheForwardContext(t, "/v1/chat/completions", body, value)
+	store := &openAIPromptCacheIdentityStoreStub{}
+	upstreamBody := strings.Join([]string{
+		`data: {"type":"response.completed","response":{"id":"resp_chat_auto_cache","object":"response","model":"gpt-5.6","status":"completed","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":4,"output_tokens":1,"total_tokens":5}}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+	svc := &OpenAIGatewayService{
+		cache:        store,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false, AllowInsecureHTTP: true}}},
+		httpUpstream: upstream,
+	}
+	account := &Account{
+		ID: 9, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1,
+		Credentials: map[string]any{"api_key": "sk-test", "base_url": "http://upstream.example"},
+		Extra:       map[string]any{openai_compat.ExtraKeyResponsesSupported: true},
+		Status:      StatusActive, Schedulable: true,
+	}
+
+	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, value, "")
+
+	require.NoError(t, err)
+	require.Equal(t, "resp_chat_auto_cache", result.ResponseID)
+	require.Equal(t, "completed", result.ResponseStatus)
+	require.Equal(t, value, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
+	require.Equal(t, 1, store.bindCalls)
+	require.Equal(t, "resp_chat_auto_cache", store.bindResponseID)
+	require.Equal(t, value, store.bindValue)
+}
+
 func TestOpenAIAutoPromptCacheForwardDoesNotBindFailedResponseAlias(t *testing.T) {
 	value := mustOpenAIPromptCacheUUIDv7(t)
 	body := []byte(`{"model":"gpt-5.6","stream":false,"input":"hello"}`)

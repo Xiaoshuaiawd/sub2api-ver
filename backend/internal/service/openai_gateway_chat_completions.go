@@ -356,6 +356,9 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 			s.updateCodexUsageSnapshot(ctx, account.ID, snapshot)
 		}
 	}
+	if handleErr == nil && result != nil && result.SucceededForPromptCacheAlias() {
+		s.BindStagedOpenAIAutoPromptCacheResponseAlias(ctx, c, result.ResponseID)
+	}
 
 	return result, handleErr
 }
@@ -514,6 +517,8 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 
 	result := &OpenAIForwardResult{
 		RequestID:                     requestID,
+		ResponseID:                    strings.TrimSpace(finalResponse.ID),
+		ResponseStatus:                strings.TrimSpace(finalResponse.Status),
 		Usage:                         usage,
 		Model:                         originalModel,
 		BillingModel:                  billingModel,
@@ -556,6 +561,8 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	state.IncludeUsage = true
 
 	var usage OpenAIUsage
+	responseID := ""
+	responseStatus := ""
 	var firstTokenMs *int
 	firstChunk := true
 	clientDisconnected := false
@@ -598,6 +605,8 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	resultWithUsage := func() *OpenAIForwardResult {
 		out := &OpenAIForwardResult{
 			RequestID:                     requestID,
+			ResponseID:                    responseID,
+			ResponseStatus:                responseStatus,
 			Usage:                         usage,
 			Model:                         originalModel,
 			BillingModel:                  billingModel,
@@ -667,6 +676,14 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		}
 		observer.ObserveOpenAI([]byte(payload), event.Type)
 		refusalDetector.ObservePayload([]byte(payload))
+		if event.Response != nil {
+			if id := strings.TrimSpace(event.Response.ID); id != "" {
+				responseID = id
+			}
+			if status := normalizeOpenAICompatTerminalResponseStatus(event.Type, event.Response.Status); status != "" {
+				responseStatus = status
+			}
+		}
 
 		isTerminalEvent := isOpenAICompatResponsesTerminalEvent(event.Type)
 		if isTerminalEvent {
