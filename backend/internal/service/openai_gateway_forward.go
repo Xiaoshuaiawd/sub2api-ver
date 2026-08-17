@@ -18,7 +18,13 @@ import (
 )
 
 // Forward forwards request to OpenAI API
-func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
+func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (result *OpenAIForwardResult, err error) {
+	defer func() {
+		if err == nil && result != nil && result.SucceededForPromptCacheAlias() {
+			s.BindStagedOpenAIAutoPromptCacheResponseAlias(ctx, c, result.ResponseID)
+		}
+	}()
+
 	beginUpstreamResponseModelObservation(c)
 	clearGrokResponsesClientToolMapping(c)
 	clearOpenAIResponsesNamespaceNames(c)
@@ -47,6 +53,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	if normalized {
 		body = normalizedBody
 	}
+	autoPromptCacheBody, _, autoPromptCacheErr := injectStagedOpenAIAutoPromptCacheIdentity(c, account, body)
+	if autoPromptCacheErr != nil {
+		return nil, fmt.Errorf("inject automatic prompt cache identity: %w", autoPromptCacheErr)
+	}
+	body = autoPromptCacheBody
 	// 在分流到 passthrough / Codex transform / 原生 ChatCompletions 之前统一修正
 	// 显式为 null 的工具 Schema type，否则 upstream 的 400 会被归一成可重试的 502，
 	// 同一份坏定义在账号池里反复重放。
@@ -964,6 +975,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		var usage *OpenAIUsage
 		var firstTokenMs *int
 		responseID := ""
+		responseStatus := ""
 		imageCount := 0
 		searchCount := 0
 		var imageOutputSizes []string
@@ -975,6 +987,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			usage = streamResult.usage
 			firstTokenMs = streamResult.firstTokenMs
 			responseID = strings.TrimSpace(streamResult.responseID)
+			responseStatus = streamResult.responseStatus
 			imageCount = streamResult.imageCount
 			imageOutputSizes = streamResult.imageOutputSizes
 			searchCount = streamResult.searchCount
@@ -985,6 +998,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			usage = nonStreamResult.usage
 			responseID = strings.TrimSpace(nonStreamResult.responseID)
+			responseStatus = nonStreamResult.responseStatus
 			imageCount = nonStreamResult.imageCount
 			imageOutputSizes = nonStreamResult.imageOutputSizes
 			searchCount = nonStreamResult.searchCount
@@ -1006,6 +1020,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		forwardResult := &OpenAIForwardResult{
 			RequestID:                     resp.Header.Get("x-request-id"),
 			ResponseID:                    responseID,
+			ResponseStatus:                responseStatus,
 			Usage:                         *usage,
 			Model:                         originalModel,
 			BillingModel:                  billingModel,

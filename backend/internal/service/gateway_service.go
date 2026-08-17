@@ -200,6 +200,26 @@ func openAIStreamEventTypeIsTerminal(eventType string) bool {
 	}
 }
 
+func openAIResponseStatusFromStreamEvent(data []byte, eventType string) string {
+	if status := strings.ToLower(strings.TrimSpace(gjson.GetBytes(data, "response.status").String())); status != "" {
+		return status
+	}
+	switch strings.TrimSpace(eventType) {
+	case "response.completed", "response.done":
+		return "completed"
+	case "response.failed":
+		return "failed"
+	case "response.incomplete":
+		return "incomplete"
+	case "response.cancelled":
+		return "cancelled"
+	case "response.canceled":
+		return "canceled"
+	default:
+		return ""
+	}
+}
+
 func anthropicStreamEventIsTerminal(eventName, data string) bool {
 	if strings.EqualFold(strings.TrimSpace(eventName), "message_stop") {
 		return true

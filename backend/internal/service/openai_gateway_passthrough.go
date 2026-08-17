@@ -271,6 +271,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	var usage *OpenAIUsage
 	var firstTokenMs *int
 	responseID := ""
+	responseStatus := ""
 	imageCount := 0
 	var imageOutputSizes []string
 	if reqStream {
@@ -281,6 +282,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		usage = result.usage
 		firstTokenMs = result.firstTokenMs
 		responseID = strings.TrimSpace(result.responseID)
+		responseStatus = result.responseStatus
 		imageCount = result.imageCount
 		imageOutputSizes = result.imageOutputSizes
 	} else {
@@ -290,6 +292,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 		usage = result.usage
 		responseID = strings.TrimSpace(result.responseID)
+		responseStatus = result.responseStatus
 		imageCount = result.imageCount
 		imageOutputSizes = result.imageOutputSizes
 	}
@@ -309,6 +312,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	forwardResult := &OpenAIForwardResult{
 		RequestID:                     resp.Header.Get("x-request-id"),
 		ResponseID:                    responseID,
+		ResponseStatus:                responseStatus,
 		Usage:                         *usage,
 		Model:                         reqModel,
 		UpstreamModel:                 upstreamPassthroughModel,
@@ -800,6 +804,7 @@ type openaiStreamingResultPassthrough struct {
 	usage            *OpenAIUsage
 	firstTokenMs     *int
 	responseID       string
+	responseStatus   string
 	imageCount       int
 	imageOutputSizes []string
 }
@@ -808,6 +813,7 @@ type openaiNonStreamingResultPassthrough struct {
 	*OpenAIUsage
 	usage            *OpenAIUsage
 	responseID       string
+	responseStatus   string
 	imageCount       int
 	imageOutputSizes []string
 }
@@ -1259,6 +1265,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	imageCounter := newOpenAIImageOutputCounter()
 	var firstTokenMs *int
 	responseID := ""
+	responseStatus := ""
 	clientDisconnected := false
 	sawDone := false
 	sawTerminalEvent := false
@@ -1307,6 +1314,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			usage:            usage,
 			firstTokenMs:     firstTokenMs,
 			responseID:       responseID,
+			responseStatus:   responseStatus,
 			imageCount:       imageCounter.Count(),
 			imageOutputSizes: imageCounter.Sizes(),
 		}
@@ -1394,6 +1402,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			}
 			if openAIStreamEventIsTerminal(trimmedData) {
 				sawTerminalEvent = true
+				responseStatus = openAIResponseStatusFromStreamEvent(dataBytes, eventType)
 			}
 			if responseID == "" {
 				responseID = extractOpenAIResponseIDFromJSONBytes(dataBytes)
@@ -1570,6 +1579,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 		OpenAIUsage:      usage,
 		usage:            usage,
 		responseID:       extractOpenAIResponseIDFromJSONBytes(body),
+		responseStatus:   strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "status").String())),
 		imageCount:       countOpenAIResponseImageOutputsFromJSONBytes(body),
 		imageOutputSizes: collectOpenAIResponseImageOutputSizesFromJSONBytes(body),
 	}, nil
@@ -1642,6 +1652,7 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 		OpenAIUsage:      usage,
 		usage:            usage,
 		responseID:       extractOpenAIResponseIDFromJSONBytes(body),
+		responseStatus:   strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "status").String())),
 		imageCount:       countOpenAIImageOutputsFromSSEBody(bodyText),
 		imageOutputSizes: collectOpenAIImageOutputSizesFromSSEBody(bodyText),
 	}, nil

@@ -233,8 +233,12 @@ type OpenAIUsage struct {
 type OpenAIForwardResult struct {
 	RequestID  string
 	ResponseID string
-	Usage      OpenAIUsage
-	Model      string // 原始模型（用于响应和日志显示）
+	// ResponseStatus is the normalized top-level Responses status when the
+	// upstream returned one. Empty preserves compatibility with providers that
+	// omit it and with streaming paths already gated by terminal events.
+	ResponseStatus string
+	Usage          OpenAIUsage
+	Model          string // 原始模型（用于响应和日志显示）
 	// BillingModel is the model used for cost calculation.
 	// When non-empty, CalculateCost uses this instead of Model.
 	// This is set by the Anthropic Messages conversion path where
@@ -300,6 +304,20 @@ func (r *OpenAIForwardResult) SucceededForScheduling() bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// SucceededForPromptCacheAlias is stricter than scheduling success: failed or
+// unfinished Responses objects must not extend a previous_response_id chain.
+func (r *OpenAIForwardResult) SucceededForPromptCacheAlias() bool {
+	if r == nil || !r.SucceededForScheduling() {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(r.ResponseStatus)) {
+	case "failed", "cancelled", "canceled", "incomplete", "error":
+		return false
+	default:
+		return true
 	}
 }
 
