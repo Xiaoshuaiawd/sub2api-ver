@@ -978,12 +978,19 @@ func TestResolveChannelMapping_DefaultBillingModelSource(t *testing.T) {
 		Status:             StatusActive,
 		GroupIDs:           []int64{10},
 		BillingModelSource: "", // empty
+		ModelMapping: map[string]map[string]string{
+			"anthropic": {
+				"model-a": "model-b",
+			},
+		},
 	}
 	repo := makeStandardRepo(ch, map[int64]string{10: "anthropic"})
 	svc := newTestChannelService(repo)
 
-	result := svc.ResolveChannelMapping(context.Background(), 10, "claude-opus-4")
-	require.Equal(t, BillingModelSourceChannelMapped, result.BillingModelSource)
+	result := svc.ResolveChannelMapping(context.Background(), 10, "model-a")
+	require.True(t, result.Mapped)
+	require.Equal(t, "model-b", result.MappedModel)
+	require.Equal(t, BillingModelSourceRequested, result.BillingModelSource)
 }
 
 func TestResolveChannelMapping_UpstreamBillingModelSource(t *testing.T) {
@@ -1522,11 +1529,11 @@ func TestCreate_DefaultBillingModelSource(t *testing.T) {
 
 	result, err := svc.Create(context.Background(), &CreateChannelInput{
 		Name:               "new-channel",
-		BillingModelSource: "", // empty, should default to "channel_mapped"
+		BillingModelSource: "", // empty, should default to "requested"
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.Equal(t, BillingModelSourceChannelMapped, result.BillingModelSource)
+	require.Equal(t, BillingModelSourceRequested, result.BillingModelSource)
 }
 
 func TestCreate_InvalidatesCache(t *testing.T) {
@@ -2357,6 +2364,16 @@ func TestToUsageFields_NoMapping(t *testing.T) {
 	require.Equal(t, "claude-opus-4", fields.ChannelMappedModel)
 	require.Equal(t, BillingModelSourceRequested, fields.BillingModelSource)
 	require.Empty(t, fields.ModelMappingChain)
+}
+
+func TestToUsageFields_NoChannelDefaultsToRequestedBilling(t *testing.T) {
+	fields := (ChannelMappingResult{}).ToUsageFields("model-a", "model-b")
+
+	require.Zero(t, fields.ChannelID)
+	require.Equal(t, "model-a", fields.OriginalModel)
+	require.Equal(t, "model-a", fields.ChannelMappedModel)
+	require.Equal(t, BillingModelSourceRequested, fields.BillingModelSource)
+	require.Equal(t, "model-a→model-b", fields.ModelMappingChain)
 }
 
 func TestToUsageFields_WithChannelMapping(t *testing.T) {

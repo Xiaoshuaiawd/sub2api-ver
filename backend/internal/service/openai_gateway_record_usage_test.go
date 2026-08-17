@@ -1637,6 +1637,42 @@ func TestOpenAIGatewayServiceRecordUsage_BillsMappedRequestsUsingRequestedModel(
 	require.Equal(t, expectedCost.ActualCost, userRepo.lastAmount)
 }
 
+func TestOpenAIGatewayServiceRecordUsage_AccountMappingDefaultsToRequestedModel(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	userRepo := &openAIRecordUsageUserRepoStub{}
+	subRepo := &openAIRecordUsageSubRepoStub{}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, subRepo, nil)
+	usage := OpenAIUsage{InputTokens: 20, OutputTokens: 10}
+	tokens := UsageTokens{InputTokens: 20, OutputTokens: 10}
+
+	requestedCost, err := svc.billingService.CalculateCost("gpt-5.4", tokens, 1.1)
+	require.NoError(t, err)
+	mappedCost, err := svc.billingService.CalculateCost("gpt-5.4-mini", tokens, 1.1)
+	require.NoError(t, err)
+	require.NotEqual(t, requestedCost.ActualCost, mappedCost.ActualCost, "fixture models must have different prices")
+
+	fields := (ChannelMappingResult{}).ToUsageFields("gpt-5.4", "gpt-5.4-mini")
+	err = svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID:     "resp_account_mapping_requested_billing",
+			Model:         "gpt-5.4",
+			BillingModel:  "gpt-5.4-mini",
+			UpstreamModel: "gpt-5.4-mini",
+			Usage:         usage,
+			Duration:      time.Second,
+		},
+		APIKey:             &APIKey{ID: 10},
+		User:               &User{ID: 20},
+		Account:            &Account{ID: 30},
+		ChannelUsageFields: fields,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.InDelta(t, requestedCost.ActualCost, usageRepo.lastLog.ActualCost, 1e-12)
+	require.InDelta(t, requestedCost.ActualCost, userRepo.lastAmount, 1e-12)
+}
+
 func TestOpenAIGatewayServiceRecordUsage_ChannelMappedDoesNotOverrideBillingModelWhenUnmapped(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	userRepo := &openAIRecordUsageUserRepoStub{}

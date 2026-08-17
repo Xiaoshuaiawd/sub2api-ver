@@ -755,7 +755,7 @@ const form = reactive({
   description: '',
   status: 'active',
   restrict_models: false,
-  billing_model_source: 'channel_mapped' as string,
+  billing_model_source: 'requested' as string,
   platforms: [] as PlatformSection[],
   apply_pricing_to_account_stats: false,
 })
@@ -1344,7 +1344,7 @@ function resetForm() {
   form.description = ''
   form.status = 'active'
   form.restrict_models = false
-  form.billing_model_source = 'channel_mapped'
+  form.billing_model_source = 'requested'
   form.platforms = []
   form.apply_pricing_to_account_stats = false
   activeTab.value = 'basic'
@@ -1366,7 +1366,7 @@ async function openEditDialog(channel: Channel) {
   form.description = channel.description || ''
   form.status = channel.status
   form.restrict_models = channel.restrict_models || false
-  form.billing_model_source = channel.billing_model_source || 'channel_mapped'
+  form.billing_model_source = channel.billing_model_source || 'requested'
   form.apply_pricing_to_account_stats = channel.apply_pricing_to_account_stats || false
   // Must load groups first so apiToForm can map groupID → platform
   await Promise.all([loadGroups(), loadAllChannelsForConflict()])
