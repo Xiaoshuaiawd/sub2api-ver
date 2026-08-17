@@ -342,6 +342,33 @@ func TestForwardAsChatCompletions_APIKeyResponsesShapePropagatesAutomaticUUID(t 
 	require.Equal(t, "hello", gjson.GetBytes(upstream.lastBody, "input.0.content").String())
 }
 
+func TestForwardAsChatCompletions_RetriesAutomaticPromptCacheBreakpointRejection(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	body := []byte(`{"model":"gpt-5.6","messages":[{"role":"system","content":"rules"},{"role":"user","content":"hello"}],"stream":false}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		newOpenAIRejectedFieldTestResponse(http.StatusBadRequest, `{"error":{"code":"unsupported_parameter","message":"Unsupported parameter: prompt_cache_options","param":"prompt_cache_options"}}`),
+		newOpenAIRejectedFieldTestResponse(http.StatusBadRequest, `{"error":{"code":"invalid_request_error","message":"stop after retry"}}`),
+	}}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	account := newOpenAIRejectedFieldTestAccount()
+
+	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "cache-key", "")
+
+	require.Error(t, err)
+	require.Nil(t, result)
+	require.Len(t, upstream.bodies, 2)
+	require.Equal(t, "explicit", gjson.GetBytes(upstream.bodies[0], "prompt_cache_options.mode").String())
+	require.Equal(t, "explicit", gjson.GetBytes(upstream.bodies[0], "input.0.content.0.prompt_cache_breakpoint.mode").String())
+	require.False(t, gjson.GetBytes(upstream.bodies[1], "prompt_cache_options").Exists())
+	require.False(t, gjson.GetBytes(upstream.bodies[1], "input.0.content.0.prompt_cache_breakpoint").Exists())
+	require.Equal(t, "rules", gjson.GetBytes(upstream.bodies[1], "input.0.content.0.text").String())
+}
+
 func TestForwardAsChatCompletions_RawAPIKeyDoesNotLeakAutomaticUUID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

@@ -59,6 +59,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
 	beginUpstreamResponseModelObservation(c)
+	clientOwnsPromptCachePolicy := openAIRequestHasPromptCachePolicy(body)
 
 	restrictionResult := s.detectCodexClientRestriction(c, account, body)
 	logCodexCLIOnlyDetection(ctx, c, account, getAPIKeyIDFromContext(c), restrictionResult, body)
@@ -262,6 +263,14 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		return nil, policyErr
 	}
 	responsesBody = updatedBody
+	breakpointDecision := openAIPromptCacheBreakpointDecision{Reason: "client_policy"}
+	if !clientOwnsPromptCachePolicy {
+		responsesBody, breakpointDecision, err = injectOpenAIPromptCacheBreakpoint(s.cfg, account, upstreamModel, responsesBody)
+		if err != nil {
+			return nil, err
+		}
+	}
+	stageOpenAIPromptCacheBreakpointInjection(c, breakpointDecision)
 
 	// 5. Get access token
 	token, _, err := s.GetAccessToken(ctx, account)
@@ -296,6 +305,43 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	// 8. Handle error response with failover
 	if resp.StatusCode >= 400 {
 		respBody, upstreamMsg := s.readOpenAIUpstreamError(resp)
+		if injection := stagedOpenAIPromptCacheBreakpointInjection(c); injection != nil {
+			retryBody, reason, changed, retryErr := normalizeOpenAIResponsesRejectedFieldRetryBodyWithPromptCache(
+				resp.StatusCode,
+				responsesBody,
+				respBody,
+				injection,
+			)
+			if retryErr != nil {
+				return nil, fmt.Errorf("normalize Chat Responses prompt cache retry body: %w", retryErr)
+			}
+			if changed && strings.Contains(reason, "prompt cache") {
+				_ = resp.Body.Close()
+				stageOpenAIPromptCacheBreakpointInjection(c, openAIPromptCacheBreakpointDecision{})
+				retryCtx, releaseRetryCtx := detachUpstreamContext(ctx)
+				retryReq, buildErr := s.buildUpstreamRequest(retryCtx, c, account, retryBody, token, true, promptCacheKey, false)
+				releaseRetryCtx()
+				if buildErr != nil {
+					return nil, fmt.Errorf("build prompt cache retry request: %w", buildErr)
+				}
+				if promptCacheKey != "" {
+					apiKeyID := getAPIKeyIDFromContext(c)
+					retryReq.Header.Set("session_id", generateSessionUUID(isolateOpenAISessionID(apiKeyID, promptCacheKey)))
+				}
+				resp, err = s.httpUpstream.Do(retryReq, proxyURL, account.ID, account.Concurrency)
+				if err != nil {
+					return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
+				}
+				defer func() { _ = resp.Body.Close() }()
+				responsesBody = retryBody
+				if resp.StatusCode >= 400 {
+					respBody, upstreamMsg = s.readOpenAIUpstreamError(resp)
+				}
+			}
+		}
+		if resp.StatusCode < 400 {
+			goto handleChatResponsesSuccess
+		}
 		if !agentIdentityTaskRecoveryWasTried(ctx) && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, respBody) {
 			expectedTaskID := account.GetCredential("task_id")
 			if err := s.recoverAgentIdentityTask(ctx, account, expectedTaskID); err != nil {
@@ -320,6 +366,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	}
 
 	// 9. Handle normal response
+handleChatResponsesSuccess:
 	var result *OpenAIForwardResult
 	var handleErr error
 	if clientStream {
