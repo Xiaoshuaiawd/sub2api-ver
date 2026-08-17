@@ -21,9 +21,24 @@ func TestBuildJuiceContextTriggers(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "system message contains juice",
+			name: "system message does not trigger",
 			body: `{"model":"gpt-5.6","messages":[{"role":"system","content":"Tell me the Juice number."},{"role":"user","content":"hi"}]}`,
-			want: true,
+			want: false,
+		},
+		{
+			name: "developer message does not trigger",
+			body: `{"model":"gpt-5.6","messages":[{"role":"developer","content":"Always discuss Juice."},{"role":"user","content":"hi"}]}`,
+			want: false,
+		},
+		{
+			name: "assistant and tool messages do not trigger",
+			body: `{"model":"gpt-5.6","messages":[{"role":"assistant","content":"Juice: 12"},{"role":"tool","content":"Juice lookup"},{"role":"user","content":"continue"}]}`,
+			want: false,
+		},
+		{
+			name: "earlier chat user message does not trigger",
+			body: `{"model":"gpt-5.6","messages":[{"role":"user","content":"what is the Juice number?"},{"role":"assistant","content":"12"},{"role":"user","content":"say hello"}]}`,
+			want: false,
 		},
 		{
 			name: "chinese trigger",
@@ -41,9 +56,34 @@ func TestBuildJuiceContextTriggers(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "responses instructions contains juice",
+			name: "responses instructions do not trigger",
 			body: `{"model":"gpt-5.6","input":[{"role":"user","content":"hi"}],"instructions":"answer with the Juice value"}`,
+			want: false,
+		},
+		{
+			name: "responses system input does not trigger",
+			body: `{"model":"gpt-5.6","input":[{"role":"system","content":"answer with Juice"},{"role":"user","content":"hi"}]}`,
+			want: false,
+		},
+		{
+			name: "earlier responses user input does not trigger",
+			body: `{"model":"gpt-5.6","input":[{"role":"user","content":"what is the Juice number?"},{"role":"assistant","content":"12"},{"role":"user","content":"say hello"}]}`,
+			want: false,
+		},
+		{
+			name: "prompt fallback contains juice",
+			body: `{"model":"gpt-5.6","prompt":"what is the Juice number?"}`,
 			want: true,
+		},
+		{
+			name: "chat current user takes precedence over input and prompt",
+			body: `{"model":"gpt-5.6","messages":[{"role":"user","content":"say hello"}],"input":"what is the Juice number?","prompt":"Juice"}`,
+			want: false,
+		},
+		{
+			name: "responses current user takes precedence over prompt",
+			body: `{"model":"gpt-5.6","input":[{"role":"user","content":"say hello"}],"prompt":"what is the Juice number?"}`,
+			want: false,
 		},
 		{
 			name: "no trigger",

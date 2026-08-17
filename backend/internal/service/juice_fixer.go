@@ -37,45 +37,47 @@ type JuiceResolvedValue struct {
 	OK    bool
 }
 
-// BuildJuiceContext 从请求体判断是否触发 Juice 语义。
-// 扫描 Chat Completions 的 messages、Responses 的 input/instructions/prompt。
+// BuildJuiceContext 从请求体的当前用户输入判断是否触发 Juice 语义。
+// system/developer/instructions、assistant/tool 与历史用户消息均不参与触发。
 func BuildJuiceContext(body []byte) JuiceContext {
 	if len(body) == 0 {
 		return JuiceContext{}
 	}
-	var latestUser, systemText string
+	var currentUser string
+	currentUserFound := false
 	if messages := gjson.GetBytes(body, "messages"); messages.IsArray() {
 		for _, message := range messages.Array() {
-			text := messageTextContent(message)
-			switch strings.ToLower(strings.TrimSpace(message.Get("role").String())) {
-			case "system", "developer":
-				systemText += "\n" + text
-			case "user":
-				latestUser = text
+			if strings.EqualFold(strings.TrimSpace(message.Get("role").String()), "user") {
+				currentUser = messageTextContent(message)
+				currentUserFound = true
 			}
 		}
 	}
-	if prompt := gjson.GetBytes(body, "prompt"); prompt.Exists() {
-		switch prompt.Type {
-		case gjson.String:
-			latestUser += "\n" + prompt.String()
-		case gjson.JSON:
-			latestUser += "\n" + prompt.Raw
+	if !currentUserFound {
+		if input := gjson.GetBytes(body, "input"); input.IsArray() {
+			for _, item := range input.Array() {
+				if strings.EqualFold(strings.TrimSpace(item.Get("role").String()), "user") {
+					currentUser = messageTextContent(item)
+					currentUserFound = true
+				}
+			}
+		} else if input.Exists() && input.Type == gjson.String {
+			currentUser = input.String()
+			currentUserFound = true
 		}
 	}
-	if instructions := gjson.GetBytes(body, "instructions"); instructions.Exists() && instructions.Type == gjson.String {
-		systemText += "\n" + instructions.String()
-	}
-	if input := gjson.GetBytes(body, "input"); input.IsArray() {
-		for _, item := range input.Array() {
-			latestUser += "\n" + messageTextContent(item)
+	if !currentUserFound {
+		if prompt := gjson.GetBytes(body, "prompt"); prompt.Exists() {
+			switch prompt.Type {
+			case gjson.String:
+				currentUser = prompt.String()
+			case gjson.JSON:
+				currentUser = prompt.Raw
+			}
 		}
-	} else if input.Exists() && input.Type == gjson.String {
-		latestUser += "\n" + input.String()
 	}
 	return JuiceContext{
-		Triggered: juiceTriggerPattern.MatchString(normalizeJuiceText(latestUser)) ||
-			juiceTriggerPattern.MatchString(normalizeJuiceText(systemText)),
+		Triggered: juiceTriggerPattern.MatchString(normalizeJuiceText(currentUser)),
 	}
 }
 
