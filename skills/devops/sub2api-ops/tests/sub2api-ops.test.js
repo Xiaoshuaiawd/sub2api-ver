@@ -83,6 +83,27 @@ test("read commands reject conflicting time filters", () => {
   );
 });
 
+test("alerts uses the bounded default time range", () => {
+  assert.deepEqual(buildReadRequest("alerts", [], {}), {
+    method: "GET",
+    path: "/api/v1/admin/ops/alert-events?time_range=1h&limit=20",
+  });
+});
+
+test("read commands reject named time ranges unsupported by the backend", () => {
+  assert.throws(
+    () => buildReadRequest("snapshot", [], { "time-range": "2h" }),
+    /supported values/,
+  );
+});
+
+test("system-logs rejects the unsupported group filter", () => {
+  assert.throws(
+    () => buildReadRequest("system-logs", [], { "group-id": "7" }),
+    /--group-id is not supported by system-logs/,
+  );
+});
+
 test("redaction removes sensitive keys and truncates opaque bodies", () => {
   assert.deepEqual(
     redactValue({
@@ -221,6 +242,52 @@ test("every approved action maps to its exact write request", async (t) => {
   }
 });
 
+test("silence-alert requires a platform before reading the target", async (t) => {
+  const api = fakeApi([]);
+  await assert.rejects(
+    () => createMutationPlan({
+      action: "silence-alert",
+      flags: {
+        "rule-id": "7",
+        until: "2026-08-18T13:00:00Z",
+        reason: "provider maintenance",
+      },
+      api,
+      stateDir: tempStateDir(t),
+      now: () => new Date("2026-08-18T12:00:00Z"),
+    }),
+    /platform must be provided/,
+  );
+  assert.equal(api.calls.length, 0);
+});
+
+test("mutation plans reject bare value flags before reading a target", async (t) => {
+  for (const item of [
+    { action: "resolve-error", flags: { id: true } },
+    {
+      action: "silence-alert",
+      flags: {
+        "rule-id": "7",
+        platform: true,
+        until: "2026-08-18T13:00:00Z",
+        reason: "provider maintenance",
+      },
+    },
+  ]) {
+    const api = fakeApi([]);
+    await assert.rejects(
+      () => createMutationPlan({
+        ...item,
+        api,
+        stateDir: tempStateDir(t),
+        now: () => new Date("2026-08-18T12:00:00Z"),
+      }),
+      /must be (?:a positive integer|provided)/,
+    );
+    assert.equal(api.calls.length, 0);
+  }
+});
+
 test("resolve-error plan binds target and produces a private signed plan", async (t) => {
   const stateDir = tempStateDir(t);
   const api = fakeApi([{ id: 42, resolved: false, status_code: 502 }]);
@@ -279,7 +346,7 @@ test("execute rejects expired plans", async (t) => {
       confirmationToken: plan.confirmation_token,
       api,
       stateDir,
-      now: () => new Date("2026-08-18T12:11:00Z"),
+      now: () => new Date("2026-08-18T12:10:00Z"),
     }),
     (error) => error.exitCode === 2 && /expired/.test(error.message),
   );
@@ -402,6 +469,58 @@ test("execute rechecks, writes once, verifies, and blocks replay", async (t) => 
     }),
     (error) => error.exitCode === 2 && /consumed/.test(error.message),
   );
+});
+
+test("concurrent execution claims a plan only once", async (t) => {
+  const stateDir = tempStateDir(t);
+  const before = { id: 42, resolved: false, status_code: 502 };
+  const plan = await createMutationPlan({
+    action: "resolve-error",
+    flags: { id: "42" },
+    api: fakeApi([before]),
+    stateDir,
+  });
+
+  let releaseReads;
+  let signalReadStarted;
+  let writes = 0;
+  const readsReleased = new Promise((resolve) => { releaseReads = resolve; });
+  const readStarted = new Promise((resolve) => { signalReadStarted = resolve; });
+  const api = {
+    async request(method) {
+      if (method === "GET" && writes === 0) {
+        signalReadStarted();
+        await readsReleased;
+        return before;
+      }
+      if (method === "GET") return { ...before, resolved: true };
+      writes += 1;
+      return { ok: true };
+    },
+  };
+
+  const first = executeMutationPlan({
+    planFile: plan.plan_file,
+    confirmationToken: plan.confirmation_token,
+    api,
+    stateDir,
+  });
+  await readStarted;
+  const second = executeMutationPlan({
+    planFile: plan.plan_file,
+    confirmationToken: plan.confirmation_token,
+    api,
+    stateDir,
+  });
+  const settled = Promise.allSettled([first, second]);
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseReads();
+
+  const results = await settled;
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+  const rejection = results.find((result) => result.status === "rejected");
+  assert.equal(rejection.reason.exitCode, 2);
+  assert.equal(writes, 1);
 });
 
 test("unknown mutation actions fail before authentication setup", async () => {
