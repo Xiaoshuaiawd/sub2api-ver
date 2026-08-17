@@ -350,6 +350,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	usage := &OpenAIUsage{}
 	imageCounter := newOpenAIImageOutputCounter()
 	var firstTokenMs *int
+	modelOutputStarted := false
 	responseID := ""
 	var finalResponse []byte
 	wroteDownstream := false
@@ -540,12 +541,16 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		isTokenEvent := isOpenAIWSTokenEvent(eventType)
 		if isTokenEvent {
 			tokenEventCount++
+			modelOutputStarted = true
 		}
 		isTerminalEvent := isOpenAIWSTerminalEvent(eventType)
 		if isTerminalEvent {
 			terminalEventCount++
 		}
-		if firstTokenMs == nil && isTokenEvent {
+		// HTTP ingress clients observe response.created as the first SSE response,
+		// so record that latency for the bridge. Native WS and HTTP-upstream paths
+		// retain the existing first-model-output metric.
+		if firstTokenMs == nil && (isTokenEvent || (reqStream && httpIngressBridge && eventType == "response.created")) {
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
 		}
@@ -668,7 +673,10 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 				emitStreamMessage(message, true)
 				continue
 			}
-			shouldBuffer := firstTokenMs == nil && !isTokenEvent && !isTerminalEvent
+			// Keep pre-model-output buffering independent from the bridge latency
+			// metric: response.created starts the HTTP client's response timer but is
+			// not model output and must not relax the WS safety buffer.
+			shouldBuffer := !modelOutputStarted && !isTokenEvent && !isTerminalEvent
 			if shouldBuffer {
 				buffered := make([]byte, len(message))
 				copy(buffered, message)

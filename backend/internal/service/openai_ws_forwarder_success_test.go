@@ -119,6 +119,11 @@ func TestOpenAIGatewayService_Forward_HTTPIngressBridgeFlushesCreatedBeforeDelta
 		createdWasFlushed = true
 	case <-time.After(250 * time.Millisecond):
 	}
+	// Keep the real model delta well behind response.created. For the HTTP->WS
+	// bridge, the usage-log first response latency must describe what the HTTP
+	// client observed (the flushed response.created), not collapse onto the
+	// terminal duration when the first model delta arrives late.
+	time.Sleep(200 * time.Millisecond)
 	close(allowDelta)
 	outcome := <-outcomeCh
 
@@ -126,7 +131,9 @@ func TestOpenAIGatewayService_Forward_HTTPIngressBridgeFlushesCreatedBeforeDelta
 	require.NoError(t, outcome.err)
 	require.NotNil(t, outcome.result)
 	require.True(t, outcome.result.OpenAIWSMode)
-	require.NotNil(t, outcome.result.FirstTokenMs, "created must not count as the first model token")
+	require.NotNil(t, outcome.result.FirstTokenMs)
+	require.GreaterOrEqual(t, outcome.result.Duration.Milliseconds()-int64(*outcome.result.FirstTokenMs), int64(150),
+		"HTTP bridge first response latency must be recorded at response.created, before the delayed model delta")
 	require.Nil(t, httpUpstream.lastReq, "bridge must not issue an HTTP upstream request")
 	require.Contains(t, rec.Body.String(), `"type":"response.created"`)
 	require.Contains(t, rec.Body.String(), `data: {"delta":"OK","type":"response.output_text.delta"`)
