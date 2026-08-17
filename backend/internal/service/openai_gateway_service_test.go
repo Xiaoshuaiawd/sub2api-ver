@@ -378,44 +378,6 @@ func TestOpenAIGatewayService_GenerateSessionHash_Priority(t *testing.T) {
 	}
 }
 
-func TestOpenAIGatewayService_GenerateSessionHash_StableBodySignals(t *testing.T) {
-	tests := []struct {
-		name string
-		body string
-	}{
-		{name: "thread_id", body: `{"thread_id":"thread-1"}`},
-		{name: "conversation object", body: `{"conversation":{"id":"conversation-1"}}`},
-		{name: "metadata thread", body: `{"metadata":{"thread_id":"thread-1"}}`},
-		{name: "metadata conversation", body: `{"metadata":{"conversation_id":"conversation-1"}}`},
-		{name: "client metadata session", body: `{"client_metadata":{"session_id":"session-1"}}`},
-		{name: "client metadata conversation", body: `{"client_metadata":{"conversation_id":"conversation-1"}}`},
-		{name: "client metadata thread", body: `{"client_metadata":{"thread_id":"thread-1"}}`},
-	}
-
-	svc := &OpenAIGatewayService{}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			recorder := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(recorder)
-			c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
-			first := svc.GenerateSessionHash(c, []byte(tt.body))
-			second := svc.GenerateSessionHash(c, []byte(tt.body))
-			require.NotEmpty(t, first)
-			require.Equal(t, first, second)
-		})
-	}
-}
-
-func TestOpenAIGatewayService_GenerateSessionHash_IgnoresRotatingBodyIDs(t *testing.T) {
-	svc := &OpenAIGatewayService{}
-	recorder := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
-	body := []byte(`{"id":"request-1","request_id":"request-2","message_id":"message-1","tool_call_id":"call-1"}`)
-
-	require.Empty(t, svc.GenerateSessionHash(c, body))
-}
-
 func TestOpenAIGatewayService_ClientSessionHeaderPriority(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()

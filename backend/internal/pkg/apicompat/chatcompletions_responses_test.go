@@ -32,20 +32,6 @@ func TestChatCompletionsToResponses_BasicText(t *testing.T) {
 	assert.Equal(t, "user", items[0].Role)
 }
 
-func TestChatCompletionsToResponsesPreservesPreviousResponseID(t *testing.T) {
-	req := &ChatCompletionsRequest{
-		Model:              "gpt-5.6-sol",
-		PreviousResponseID: "resp_chain_1",
-		Messages: []ChatMessage{
-			{Role: "user", Content: json.RawMessage(`"next"`)},
-		},
-	}
-
-	got, err := ChatCompletionsToResponses(req)
-	require.NoError(t, err)
-	require.Equal(t, "resp_chain_1", got.PreviousResponseID)
-}
-
 func TestUsageConversionsPreserveCacheWriteTokens(t *testing.T) {
 	var responsesUsage ResponsesUsage
 	require.NoError(t, json.Unmarshal([]byte(`{

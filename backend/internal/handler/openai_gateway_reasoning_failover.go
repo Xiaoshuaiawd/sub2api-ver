@@ -60,3 +60,28 @@ func (h *OpenAIGatewayHandler) deriveOpenAIForwardAttemptBody(
 	}
 	return sanitized
 }
+
+// prepareOpenAIForwardAttemptBody checks whether an automatic cache identity
+// rotation requires account reselection before advancing passthrough failover
+// state. A nil body means the caller must release the slot and reselect.
+func (h *OpenAIGatewayHandler) prepareOpenAIForwardAttemptBody(
+	reqLog *zap.Logger,
+	canonicalBody []byte,
+	account *service.Account,
+	state *openAIPassthroughFailoverState,
+	sessionHash string,
+	previousIdentity string,
+	refreshedIdentity string,
+	usesAutoIdentity bool,
+) ([]byte, string, bool) {
+	refreshedSessionHash, reselect := refreshOpenAIAutoPromptCacheSessionHash(
+		sessionHash,
+		previousIdentity,
+		refreshedIdentity,
+		usesAutoIdentity,
+	)
+	if reselect {
+		return nil, refreshedSessionHash, true
+	}
+	return h.deriveOpenAIForwardAttemptBody(reqLog, canonicalBody, account, state), sessionHash, false
+}

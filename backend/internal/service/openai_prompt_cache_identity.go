@@ -2,9 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
-	"encoding/hex"
 	"strings"
 	"time"
 
@@ -15,6 +12,8 @@ import (
 	"github.com/tidwall/sjson"
 	"go.uber.org/zap"
 )
+
+const openAIAutoPromptCacheIdentityTTL = 5 * time.Minute
 
 const openAIAutoPromptCacheIdentityGinKey = "openai_auto_prompt_cache_identity"
 
@@ -36,21 +35,15 @@ const (
 // OpenAIPromptCacheIdentityDecision explains automatic identity handling
 // without retaining the prompt or any raw session identifier.
 type OpenAIPromptCacheIdentityDecision struct {
-	Reason           string
-	Source           string
-	Hit              bool
-	RemainingTTL     time.Duration
-	PrefixSHA256     string
-	IdentitySHA256   string
-	ShardCount       int
-	ShardIndex       int
-	BreakpointReason string
+	Reason       string
+	Source       string
+	Hit          bool
+	RemainingTTL time.Duration
 }
 
 type openAIAutoPromptCacheIdentity struct {
 	Value         string
 	ModelIdentity string
-	StoreSource   OpenAIPromptCacheIdentitySource
 	APIKeyID      int64
 	ExpiresAt     time.Time
 	Source        string
@@ -64,8 +57,7 @@ func (s *OpenAIGatewayService) ResolveAndStageOpenAIAutoPromptCacheIdentity(
 	ctx context.Context,
 	c *gin.Context,
 	apiKeyID int64,
-	finalModel string,
-	sessionHash string,
+	model string,
 	body []byte,
 ) string {
 	if s == nil || c == nil || apiKeyID <= 0 || len(body) == 0 {
@@ -79,10 +71,31 @@ func (s *OpenAIGatewayService) ResolveAndStageOpenAIAutoPromptCacheIdentity(
 		setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{Reason: OpenAIPromptCacheIdentityReasonExplicit})
 		return ""
 	}
-	modelIdentity := canonicalOpenAIPromptCacheModel(finalModel)
+	modelIdentity := strings.ToLower(strings.TrimSpace(model))
+	if modelIdentity == "" {
+		modelIdentity = strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "model").String()))
+	}
 	if modelIdentity == "" {
 		setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{Reason: OpenAIPromptCacheIdentityReasonInvalidModel})
 		return ""
+	}
+	if staged := stagedOpenAIAutoPromptCacheIdentity(c); staged != nil &&
+		staged.APIKeyID == apiKeyID && staged.ModelIdentity == modelIdentity &&
+		validOpenAIAutoPromptCacheUUIDv7(staged.Value) {
+		now := time.Now()
+		if now.Before(staged.ExpiresAt) {
+			reason := OpenAIPromptCacheIdentityReasonRedisMiss
+			if staged.Hit {
+				reason = OpenAIPromptCacheIdentityReasonRedisHit
+			}
+			setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{
+				Reason:       reason,
+				Source:       staged.Source,
+				Hit:          staged.Hit,
+				RemainingTTL: staged.ExpiresAt.Sub(now),
+			})
+			return staged.Value
+		}
 	}
 	store, ok := s.cache.(OpenAIPromptCacheIdentityStore)
 	if !ok || store == nil {
@@ -91,6 +104,10 @@ func (s *OpenAIGatewayService) ResolveAndStageOpenAIAutoPromptCacheIdentity(
 	}
 	if ctx == nil {
 		ctx = context.Background()
+	}
+
+	if sourceKind, sourceIdentity := resolveOpenAIAutoPromptCacheStableSource(c, body); sourceIdentity != "" {
+		return s.resolveAndStageOpenAIAutoPromptCacheIdentity(ctx, c, store, apiKeyID, modelIdentity, sourceKind, sourceIdentity)
 	}
 
 	previousResponseID := strings.TrimSpace(gjson.GetBytes(body, "previous_response_id").String())
@@ -116,11 +133,10 @@ func (s *OpenAIGatewayService) ResolveAndStageOpenAIAutoPromptCacheIdentity(
 				Hit:           true,
 			})
 			setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{
-				Reason:         OpenAIPromptCacheIdentityReasonRedisHit,
-				Source:         "previous_response_alias",
-				Hit:            true,
-				RemainingTTL:   alias.RemainingTTL,
-				IdentitySHA256: hashOpenAIPromptCacheDecisionValue(alias.Value),
+				Reason:       OpenAIPromptCacheIdentityReasonRedisHit,
+				Source:       "previous_response_alias",
+				Hit:          true,
+				RemainingTTL: alias.RemainingTTL,
 			})
 			return strings.ToLower(strings.TrimSpace(alias.Value))
 		}
@@ -140,31 +156,12 @@ func (s *OpenAIGatewayService) ResolveAndStageOpenAIAutoPromptCacheIdentity(
 			apiKeyID,
 			modelIdentity,
 			"previous_response",
-			openAIPromptCacheIdentitySessionSource("previous_response:"+previousResponseID),
+			"previous_response:"+previousResponseID,
 		)
 	}
 
-	if prefix, ok := deriveOpenAIPromptCachePrefix(body, modelIdentity); ok {
-		shardCount := openAIPromptCacheIdentityShardCount(s)
-		storeSource := OpenAIPromptCacheIdentitySource{
-			Kind:       OpenAIPromptCacheIdentitySourcePrefix,
-			Hash:       prefix.Hash,
-			ShardCount: shardCount,
-			ShardIndex: shardForSessionHash(sessionHash, shardCount),
-		}
-		return s.resolveAndStageOpenAIAutoPromptCacheIdentity(ctx, c, store, apiKeyID, modelIdentity, "prefix", storeSource)
-	}
-
-	if strings.TrimSpace(sessionHash) != "" {
-		return s.resolveAndStageOpenAIAutoPromptCacheIdentity(
-			ctx,
-			c,
-			store,
-			apiKeyID,
-			modelIdentity,
-			"session",
-			openAIPromptCacheIdentitySessionSource(sessionHash),
-		)
+	if sourceIdentity := resolveOpenAIAutoPromptCacheContentSource(body); sourceIdentity != "" {
+		return s.resolveAndStageOpenAIAutoPromptCacheIdentity(ctx, c, store, apiKeyID, modelIdentity, "content", sourceIdentity)
 	}
 	setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{Reason: OpenAIPromptCacheIdentityReasonNoSource})
 	return ""
@@ -177,31 +174,8 @@ func (s *OpenAIGatewayService) resolveAndStageOpenAIAutoPromptCacheIdentity(
 	apiKeyID int64,
 	modelIdentity string,
 	sourceKind string,
-	storeSource OpenAIPromptCacheIdentitySource,
+	sourceIdentity string,
 ) string {
-	if staged := stagedOpenAIAutoPromptCacheIdentity(c); staged != nil &&
-		staged.APIKeyID == apiKeyID && staged.ModelIdentity == modelIdentity &&
-		staged.StoreSource == storeSource && validOpenAIAutoPromptCacheUUIDv7(staged.Value) {
-		now := time.Now()
-		if now.Before(staged.ExpiresAt) {
-			reason := OpenAIPromptCacheIdentityReasonRedisMiss
-			if staged.Hit {
-				reason = OpenAIPromptCacheIdentityReasonRedisHit
-			}
-			setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{
-				Reason:         reason,
-				Source:         staged.Source,
-				Hit:            staged.Hit,
-				RemainingTTL:   staged.ExpiresAt.Sub(now),
-				PrefixSHA256:   openAIPromptCacheDecisionPrefixHash(staged.StoreSource),
-				IdentitySHA256: hashOpenAIPromptCacheDecisionValue(staged.Value),
-				ShardCount:     staged.StoreSource.ShardCount,
-				ShardIndex:     staged.StoreSource.ShardIndex,
-			})
-			return staged.Value
-		}
-	}
-	clearStagedOpenAIAutoPromptCacheIdentity(c)
 	candidate, err := uuid.NewV7()
 	if err != nil {
 		setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{
@@ -216,9 +190,9 @@ func (s *OpenAIGatewayService) resolveAndStageOpenAIAutoPromptCacheIdentity(
 		ctx,
 		apiKeyID,
 		modelIdentity,
-		storeSource,
+		sourceIdentity,
 		candidate.String(),
-		openAIPromptCacheIdentityTTL(s),
+		openAIAutoPromptCacheIdentityTTL,
 	)
 	if err != nil {
 		setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{
@@ -245,7 +219,6 @@ func (s *OpenAIGatewayService) resolveAndStageOpenAIAutoPromptCacheIdentity(
 	stageOpenAIAutoPromptCacheIdentity(c, &openAIAutoPromptCacheIdentity{
 		Value:         value,
 		ModelIdentity: modelIdentity,
-		StoreSource:   storeSource,
 		APIKeyID:      apiKeyID,
 		ExpiresAt:     deadlineBase.Add(record.RemainingTTL),
 		Source:        sourceKind,
@@ -256,14 +229,10 @@ func (s *OpenAIGatewayService) resolveAndStageOpenAIAutoPromptCacheIdentity(
 		reason = OpenAIPromptCacheIdentityReasonRedisHit
 	}
 	setOpenAIPromptCacheIdentityDecision(c, OpenAIPromptCacheIdentityDecision{
-		Reason:         reason,
-		Source:         sourceKind,
-		Hit:            record.Hit,
-		RemainingTTL:   record.RemainingTTL,
-		PrefixSHA256:   openAIPromptCacheDecisionPrefixHash(storeSource),
-		IdentitySHA256: hashOpenAIPromptCacheDecisionValue(value),
-		ShardCount:     storeSource.ShardCount,
-		ShardIndex:     storeSource.ShardIndex,
+		Reason:       reason,
+		Source:       sourceKind,
+		Hit:          record.Hit,
+		RemainingTTL: record.RemainingTTL,
 	})
 	logger.L().Debug("openai.auto_prompt_cache_identity_resolved",
 		zap.Int64("api_key_id", apiKeyID),
@@ -274,52 +243,6 @@ func (s *OpenAIGatewayService) resolveAndStageOpenAIAutoPromptCacheIdentity(
 		zap.String("identity_sha256", hashSensitiveValueForLog(value)),
 	)
 	return value
-}
-
-func openAIPromptCacheIdentityTTL(s *OpenAIGatewayService) time.Duration {
-	if s == nil || s.cfg == nil {
-		return 30 * time.Minute
-	}
-	return s.cfg.Gateway.OpenAIPromptCache.IdentityTTL()
-}
-
-func openAIPromptCacheIdentityShardCount(s *OpenAIGatewayService) int {
-	if s == nil || s.cfg == nil {
-		return 4
-	}
-	return s.cfg.Gateway.OpenAIPromptCache.ShardCountValue()
-}
-
-func shardForSessionHash(sessionHash string, shardCount int) int {
-	if shardCount <= 1 {
-		return 0
-	}
-	sum := sha256.Sum256([]byte(strings.TrimSpace(sessionHash)))
-	return int(binary.BigEndian.Uint64(sum[:8]) % uint64(shardCount))
-}
-
-func openAIPromptCacheIdentitySessionSource(sourceIdentity string) OpenAIPromptCacheIdentitySource {
-	sum := sha256.Sum256([]byte(strings.TrimSpace(sourceIdentity)))
-	return OpenAIPromptCacheIdentitySource{
-		Kind: OpenAIPromptCacheIdentitySourceSession,
-		Hash: hex.EncodeToString(sum[:]),
-	}
-}
-
-func openAIPromptCacheDecisionPrefixHash(source OpenAIPromptCacheIdentitySource) string {
-	if source.Kind == OpenAIPromptCacheIdentitySourcePrefix {
-		return source.Hash
-	}
-	return ""
-}
-
-func hashOpenAIPromptCacheDecisionValue(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	sum := sha256.Sum256([]byte(value))
-	return hex.EncodeToString(sum[:])
 }
 
 // BindStagedOpenAIAutoPromptCacheResponseAlias binds a successful response ID
@@ -365,22 +288,57 @@ func (s *OpenAIGatewayService) BindStagedOpenAIAutoPromptCacheResponseAlias(ctx 
 }
 
 func resolveOpenAIAutoPromptCacheStableSource(c *gin.Context, body []byte) (string, string) {
-	source, value := resolveOpenAIStableSessionSignal(c, body, true)
-	if source == "" || value == "" {
-		return "", ""
+	if c != nil {
+		for _, header := range append(append([]string(nil), explicitOpenAIHeaderSessionNames...), claudeCodeSessionHeader) {
+			if value := sanitizeSessionID(c.GetHeader(header)); value != "" {
+				lowerHeader := strings.ToLower(strings.TrimSpace(header))
+				return "header", "header:" + lowerHeader + ":" + value
+			}
+		}
+		if metadata := strings.TrimSpace(c.GetHeader("x-codex-turn-metadata")); metadata != "" && gjson.Valid(metadata) {
+			for _, field := range []string{"session_id", "thread_id"} {
+				if value := sanitizeSessionID(gjson.Get(metadata, field).String()); value != "" {
+					return "header_metadata", "header:x-codex-turn-metadata." + field + ":" + value
+				}
+			}
+		}
 	}
-	sourceKind := "body_metadata"
-	switch {
-	case strings.HasPrefix(source, "header:x-codex-turn-metadata."):
-		sourceKind = "header_metadata"
-	case strings.HasPrefix(source, "header:"):
-		sourceKind = "header"
-	case source == "body:conversation":
-		sourceKind = "conversation"
-	case strings.HasPrefix(source, "body:metadata.user_id."):
-		sourceKind = "metadata_user"
+
+	conversation := gjson.GetBytes(body, "conversation")
+	if conversation.Exists() {
+		value := ""
+		if conversation.Type == gjson.String {
+			value = sanitizeSessionID(conversation.String())
+		} else {
+			value = sanitizeSessionID(conversation.Get("id").String())
+		}
+		if value != "" {
+			return "conversation", "body:conversation:" + value
+		}
 	}
-	return sourceKind, source + ":" + value
+
+	for _, field := range []string{
+		"session_id",
+		"conversation_id",
+		"metadata.session_id",
+		"metadata.conversation_id",
+		"client_metadata.session_id",
+		"client_metadata.thread_id",
+	} {
+		if value := sanitizeSessionID(gjson.GetBytes(body, field).String()); value != "" {
+			return "body_metadata", "body:" + field + ":" + value
+		}
+	}
+
+	metadataUserID := strings.TrimSpace(gjson.GetBytes(body, "metadata.user_id").String())
+	if metadataUserID != "" && gjson.Valid(metadataUserID) {
+		for _, field := range []string{"session_id", "conversation_id", "thread_id"} {
+			if value := sanitizeSessionID(gjson.Get(metadataUserID, field).String()); value != "" {
+				return "metadata_user", "body:metadata.user_id." + field + ":" + value
+			}
+		}
+	}
+	return "", ""
 }
 
 func resolveOpenAIAutoPromptCacheContentSource(body []byte) string {
@@ -396,12 +354,6 @@ func stageOpenAIAutoPromptCacheIdentity(c *gin.Context, identity *openAIAutoProm
 		return
 	}
 	c.Set(openAIAutoPromptCacheIdentityGinKey, identity)
-}
-
-func clearStagedOpenAIAutoPromptCacheIdentity(c *gin.Context) {
-	if c != nil {
-		c.Set(openAIAutoPromptCacheIdentityGinKey, nil)
-	}
 }
 
 func stagedOpenAIAutoPromptCacheIdentity(c *gin.Context) *openAIAutoPromptCacheIdentity {

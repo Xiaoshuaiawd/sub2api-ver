@@ -442,8 +442,27 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 
-	// Account stickiness is derived independently from the upstream cache key.
-	sessionHash := h.gatewayService.GenerateSessionHash(c, sessionHashBody)
+	// Generate an upstream cache identity before account selection so requests
+	// without a client key can reuse the existing sticky scheduling path.
+	autoPromptCacheIdentity := ""
+	if requestPlatform == service.PlatformOpenAI && !legacyCompact {
+		autoPromptCacheIdentity = h.gatewayService.ResolveAndStageOpenAIAutoPromptCacheIdentity(
+			c.Request.Context(),
+			c,
+			apiKey.ID,
+			reqModel,
+			body,
+		)
+	}
+	// Generate session hash (header first; fallback to prompt_cache_key).
+	// conversation-only requests can lack every legacy scheduling signal, so
+	// use the generated UUID only when the existing hash is empty.
+	legacySessionHash := h.gatewayService.GenerateSessionHash(c, sessionHashBody)
+	sessionHashUsesAutoPromptCacheIdentity := strings.TrimSpace(legacySessionHash) == "" && strings.TrimSpace(autoPromptCacheIdentity) != ""
+	sessionHash := openAIAutoPromptCacheSessionHash(
+		legacySessionHash,
+		autoPromptCacheIdentity,
+	)
 	if h.rejectIfCyberSessionBlocked(c, apiKey, sessionHashBody, reqModel, cyberBlockFormatResponses) {
 		return
 	}
@@ -571,20 +590,44 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		// 用扣除 compact 心跳字节的口径快照：心跳注释不构成语义响应，
 		// 不能因心跳字节变化而放弃 failover 换号（#3887）。
 		writerSizeBeforeForward := service.OpenAICompactKeepaliveAdjustedWrittenSize(c)
-		attemptBody := h.deriveOpenAIForwardAttemptBody(reqLog, forwardBody, account, &passthroughFailoverState)
+		refreshedIdentity := autoPromptCacheIdentity
 		if requestPlatform == service.PlatformOpenAI && !legacyCompact {
-			attemptModel := strings.TrimSpace(gjson.GetBytes(attemptBody, "model").String())
-			if attemptModel == "" {
-				attemptModel = reqModel
-			}
-			h.gatewayService.ResolveAndStageOpenAIAutoPromptCacheIdentity(
+			// Account-slot waits can approach the fixed five-minute identity window.
+			// Re-resolve here; an unexpired staged value is reused without Redis I/O.
+			resolvedIdentity := h.gatewayService.ResolveAndStageOpenAIAutoPromptCacheIdentity(
 				c.Request.Context(),
 				c,
 				apiKey.ID,
-				account.GetMappedModel(attemptModel),
-				sessionHash,
-				attemptBody,
+				reqModel,
+				body,
 			)
+			if resolvedIdentity != "" {
+				refreshedIdentity = resolvedIdentity
+			}
+		}
+		// Cross-mode request-body derivation mutates failover state, so it must
+		// happen only after identity rotation has confirmed this account will be used.
+		attemptBody, refreshedSessionHash, reselect := h.prepareOpenAIForwardAttemptBody(
+			reqLog,
+			forwardBody,
+			account,
+			&passthroughFailoverState,
+			sessionHash,
+			autoPromptCacheIdentity,
+			refreshedIdentity,
+			sessionHashUsesAutoPromptCacheIdentity,
+		)
+		autoPromptCacheIdentity = refreshedIdentity
+		if reselect {
+			if accountReleaseFunc != nil {
+				accountReleaseFunc()
+				accountReleaseFunc = nil
+			}
+			sessionHash = refreshedSessionHash
+			reqLog.Debug("openai.auto_prompt_cache_identity_rotated_reselecting",
+				zap.Int64("account_id", account.ID),
+			)
+			continue
 		}
 		result, err := func() (*service.OpenAIForwardResult, error) {
 			defer func() {
@@ -725,7 +768,6 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		} else {
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(reqModel), openAIForwardSucceededForScheduling(result), nil)
 		}
-		recordOpenAIPromptCacheOutcome(reqLog, account, result)
 
 		// 捕获请求信息（用于异步记录，避免在 goroutine 中访问 gin.Context）
 		userAgent := c.GetHeader("User-Agent")
@@ -733,21 +775,6 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		requestPayloadHash := service.HashUsageRequestPayload(body)
 		inboundEndpoint := GetInboundEndpoint(c)
 		upstreamEndpoint := resolveOpenAIUpstreamEndpoint(c, account, result)
-		if decision, ok := service.GetOpenAIPromptCacheIdentityDecision(c); ok {
-			reqLog.Debug("openai.prompt_cache_identity_decision",
-				zap.String("ingress", EndpointResponses),
-				zap.String("upstream", upstreamEndpoint),
-				zap.String("reason", decision.Reason),
-				zap.String("source", decision.Source),
-				zap.Bool("hit", decision.Hit),
-				zap.Int64("ttl_ms", decision.RemainingTTL.Milliseconds()),
-				zap.String("prefix_sha256", decision.PrefixSHA256),
-				zap.String("identity_sha256", decision.IdentitySHA256),
-				zap.Int("shard_count", decision.ShardCount),
-				zap.Int("shard_index", decision.ShardIndex),
-				zap.String("breakpoint_reason", decision.BreakpointReason),
-			)
-		}
 		quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 		sessionID := service.ExtractClientSessionID(c)
 
@@ -788,6 +815,27 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		)
 		return
 	}
+}
+
+func openAIAutoPromptCacheSessionHash(sessionHash, identity string) string {
+	if strings.TrimSpace(sessionHash) != "" {
+		return sessionHash
+	}
+	return service.DeriveSessionHashFromSeed(identity)
+}
+
+func refreshOpenAIAutoPromptCacheSessionHash(
+	sessionHash string,
+	previousIdentity string,
+	refreshedIdentity string,
+	usesAutoIdentity bool,
+) (string, bool) {
+	previousIdentity = strings.TrimSpace(previousIdentity)
+	refreshedIdentity = strings.TrimSpace(refreshedIdentity)
+	if !usesAutoIdentity || previousIdentity == "" || refreshedIdentity == "" || previousIdentity == refreshedIdentity {
+		return sessionHash, false
+	}
+	return service.DeriveSessionHashFromSeed(refreshedIdentity), true
 }
 
 func isOpenAILegacyCompactPath(c *gin.Context) bool {

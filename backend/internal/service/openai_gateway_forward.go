@@ -31,7 +31,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	startTime := time.Now()
 	// 固定渠道映射后的请求级 canonical body；账号 normalize/strip 不得改写跨 failover hint。
 	canonicalImageIntentBody := body
-	clientOwnsPromptCachePolicy := openAIRequestHasPromptCachePolicy(body)
 
 	restrictionResult := s.detectCodexClientRestriction(c, account, body)
 	apiKeyID := getAPIKeyIDFromContext(c)
@@ -568,19 +567,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			requestView = newOpenAIRequestView(body)
 		}
 	}
-	breakpointDecision := openAIPromptCacheBreakpointDecision{Reason: "client_policy"}
-	if !clientOwnsPromptCachePolicy {
-		var breakpointErr error
-		body, breakpointDecision, breakpointErr = injectOpenAIPromptCacheBreakpoint(s.cfg, account, upstreamModel, body)
-		if breakpointErr != nil {
-			return nil, breakpointErr
-		}
-		if breakpointDecision.Injected {
-			requestView = newOpenAIRequestView(body)
-			reqBody = nil
-		}
-	}
-	stageOpenAIPromptCacheBreakpointInjection(c, breakpointDecision)
 	imageBillingModel := ""
 	imageSizeTier := ""
 	imageInputSize := ""
@@ -939,18 +925,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				}
 				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Skip non-WSv2 invalid_encrypted_content retry because encrypted reasoning items are missing (account: %s)", account.Name)
 			}
-			if retryBody, reason, changed, retryErr := normalizeOpenAIResponsesRejectedFieldRetryBodyWithPromptCache(
-				resp.StatusCode,
-				body,
-				respBody,
-				stagedOpenAIPromptCacheBreakpointInjection(c),
-			); retryErr != nil {
+			if retryBody, reason, changed, retryErr := normalizeOpenAIResponsesRejectedFieldRetryBody(resp.StatusCode, body, respBody); retryErr != nil {
 				return nil, fmt.Errorf("normalize rejected Responses field retry body: %w", retryErr)
 			} else if changed && rejectedFieldRetryState.Allow(retryBody) {
 				body = retryBody
 				requestView = newOpenAIRequestView(body)
 				reqBody = nil
-				stageOpenAIPromptCacheBreakpointInjection(c, openAIPromptCacheBreakpointDecision{Reason: "rejected_retry"})
 				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Retrying non-WSv2 request after %s (account: %s)", reason, account.Name)
 				continue
 			}

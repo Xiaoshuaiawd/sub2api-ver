@@ -18,9 +18,8 @@ type openAIPromptCacheIdentityStoreStub struct {
 	resolveCalls     int
 	resolveAPIKeyID  int64
 	resolveModel     string
-	resolveSource    OpenAIPromptCacheIdentitySource
+	resolveSource    string
 	resolveCandidate string
-	resolveTTL       time.Duration
 	resolveRecord    *OpenAIPromptCacheIdentityRecord
 	resolveErr       error
 	resolveDelay     time.Duration
@@ -71,9 +70,9 @@ func (s *openAIPromptCacheIdentityStoreStub) ResolveOpenAIPromptCacheIdentity(
 	_ context.Context,
 	apiKeyID int64,
 	modelIdentity string,
-	sourceIdentity OpenAIPromptCacheIdentitySource,
+	sourceIdentity string,
 	candidate string,
-	ttl time.Duration,
+	_ time.Duration,
 ) (*OpenAIPromptCacheIdentityRecord, error) {
 	if s.resolveDelay > 0 {
 		time.Sleep(s.resolveDelay)
@@ -83,14 +82,13 @@ func (s *openAIPromptCacheIdentityStoreStub) ResolveOpenAIPromptCacheIdentity(
 	s.resolveModel = modelIdentity
 	s.resolveSource = sourceIdentity
 	s.resolveCandidate = candidate
-	s.resolveTTL = ttl
 	if s.resolveErr != nil {
 		return nil, s.resolveErr
 	}
 	if s.resolveRecord != nil {
 		return s.resolveRecord, nil
 	}
-	return &OpenAIPromptCacheIdentityRecord{Value: candidate, RemainingTTL: 30 * time.Minute}, nil
+	return &OpenAIPromptCacheIdentityRecord{Value: candidate, RemainingTTL: 5 * time.Minute}, nil
 }
 
 func (s *openAIPromptCacheIdentityStoreStub) GetOpenAIPromptCacheResponseAlias(
@@ -143,7 +141,7 @@ func TestOpenAIAutoPromptCacheExplicitKeyBypassesStore(t *testing.T) {
 	c := newOpenAIPromptCacheIdentityTestContext(t, "")
 
 	resolved := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(
-		context.Background(), c, 101, "gpt-5.6", "", []byte(`{"model":"gpt-5.6","prompt_cache_key":"client-key","input":"hello"}`),
+		context.Background(), c, 101, "gpt-5.6", []byte(`{"model":"gpt-5.6","prompt_cache_key":"client-key","input":"hello"}`),
 	)
 
 	require.Empty(t, resolved)
@@ -160,14 +158,14 @@ func TestOpenAIAutoPromptCacheDecisionRecordsRedisMiss(t *testing.T) {
 	c := newOpenAIPromptCacheIdentityTestContext(t, "")
 
 	resolved := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(
-		context.Background(), c, 109, "gpt-5.6", "session-hash", []byte(`{"model":"gpt-5.6","input":"hello"}`),
+		context.Background(), c, 109, "gpt-5.6", []byte(`{"model":"gpt-5.6","input":"hello"}`),
 	)
 
 	require.NotEmpty(t, resolved)
 	decision, ok := GetOpenAIPromptCacheIdentityDecision(c)
 	require.True(t, ok)
 	require.Equal(t, OpenAIPromptCacheIdentityReasonRedisMiss, decision.Reason)
-	require.Equal(t, "session", decision.Source)
+	require.Equal(t, "content", decision.Source)
 	require.False(t, decision.Hit)
 	require.Greater(t, decision.RemainingTTL, time.Duration(0))
 }
@@ -178,7 +176,7 @@ func TestOpenAIAutoPromptCacheDecisionRecordsNoSource(t *testing.T) {
 	c := newOpenAIPromptCacheIdentityTestContext(t, "")
 
 	resolved := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(
-		context.Background(), c, 110, "gpt-5.6", "", []byte(`{"model":"gpt-5.6"}`),
+		context.Background(), c, 110, "gpt-5.6", []byte(`{"model":"gpt-5.6"}`),
 	)
 
 	require.Empty(t, resolved)
@@ -193,7 +191,7 @@ func TestOpenAIAutoPromptCacheDecisionRecordsUnavailableStore(t *testing.T) {
 	c := newOpenAIPromptCacheIdentityTestContext(t, "")
 
 	resolved := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(
-		context.Background(), c, 112, "gpt-5.6", "session-hash", []byte(`{"model":"gpt-5.6","input":"hello"}`),
+		context.Background(), c, 112, "gpt-5.6", []byte(`{"model":"gpt-5.6","input":"hello"}`),
 	)
 
 	require.Empty(t, resolved)
@@ -208,14 +206,14 @@ func TestOpenAIAutoPromptCacheDecisionRecordsRedisError(t *testing.T) {
 	c := newOpenAIPromptCacheIdentityTestContext(t, "")
 
 	resolved := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(
-		context.Background(), c, 111, "gpt-5.6", "session-hash", []byte(`{"model":"gpt-5.6","input":"hello"}`),
+		context.Background(), c, 111, "gpt-5.6", []byte(`{"model":"gpt-5.6","input":"hello"}`),
 	)
 
 	require.Empty(t, resolved)
 	decision, ok := GetOpenAIPromptCacheIdentityDecision(c)
 	require.True(t, ok)
 	require.Equal(t, OpenAIPromptCacheIdentityReasonRedisError, decision.Reason)
-	require.Equal(t, "session", decision.Source)
+	require.Equal(t, "content", decision.Source)
 }
 
 func TestOpenAIAutoPromptCacheStableSourcePriority(t *testing.T) {
@@ -267,7 +265,7 @@ func TestOpenAIAutoPromptCachePreviousResponseAliasWins(t *testing.T) {
 	c := newOpenAIPromptCacheIdentityTestContext(t, "")
 	body := []byte(`{"model":"gpt-5.6","previous_response_id":"resp_previous","input":"next question"}`)
 
-	resolved := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(context.Background(), c, 102, "gpt-5.6", "session-hash", body)
+	resolved := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(context.Background(), c, 102, "gpt-5.6", body)
 
 	require.Equal(t, value, resolved)
 	require.Equal(t, "resp_previous", store.aliasResponseID)
@@ -284,11 +282,10 @@ func TestOpenAIAutoPromptCachePreviousResponseMissStartsChainFromResponseID(t *t
 	c := newOpenAIPromptCacheIdentityTestContext(t, "")
 	body := []byte(`{"model":"gpt-5.6","previous_response_id":"resp_previous","input":"next question"}`)
 
-	resolved := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(context.Background(), c, 102, "gpt-5.6", "session-hash", body)
+	resolved := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(context.Background(), c, 102, "gpt-5.6", body)
 
 	require.NotEmpty(t, resolved)
-	require.Equal(t, OpenAIPromptCacheIdentitySourceSession, store.resolveSource.Kind)
-	require.Len(t, store.resolveSource.Hash, 64)
+	require.Equal(t, "previous_response:resp_previous", store.resolveSource)
 	require.Equal(t, "previous_response", stagedOpenAIAutoPromptCacheIdentity(c).Source)
 }
 
@@ -298,49 +295,15 @@ func TestOpenAIAutoPromptCacheCreatesUUIDv7FromContent(t *testing.T) {
 	c := newOpenAIPromptCacheIdentityTestContext(t, "")
 	body := []byte(`{"model":"gpt-5.6","instructions":"be concise","input":[{"role":"user","content":"hello"}]}`)
 
-	resolved := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(context.Background(), c, 103, "gpt-5.6", "session-hash", body)
+	resolved := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(context.Background(), c, 103, "gpt-5.6", body)
 
 	require.NotEmpty(t, resolved)
 	parsed, err := uuid.Parse(store.resolveCandidate)
 	require.NoError(t, err)
 	require.Equal(t, uuid.Version(7), parsed.Version())
 	require.Equal(t, int64(103), store.resolveAPIKeyID)
-	require.Equal(t, "gpt-5.6-sol", store.resolveModel)
-	require.Equal(t, OpenAIPromptCacheIdentitySourcePrefix, store.resolveSource.Kind)
-	require.Equal(t, 4, store.resolveSource.ShardCount)
-	require.Len(t, store.resolveSource.Hash, 64)
-	require.Equal(t, 30*time.Minute, store.resolveTTL)
-	decision, ok := GetOpenAIPromptCacheIdentityDecision(c)
-	require.True(t, ok)
-	require.Len(t, decision.PrefixSHA256, 64)
-	require.Len(t, decision.IdentitySHA256, 64)
-	require.Equal(t, store.resolveSource.ShardCount, decision.ShardCount)
-	require.Equal(t, store.resolveSource.ShardIndex, decision.ShardIndex)
-}
-
-func TestOpenAIAutoPromptCacheFinalModelScopesIdentity(t *testing.T) {
-	store := &openAIPromptCacheIdentityStoreStub{}
-	svc := &OpenAIGatewayService{cache: store}
-	body := []byte(`{"instructions":"be concise","input":[{"role":"user","content":"hello"}]}`)
-
-	c1 := newOpenAIPromptCacheIdentityTestContext(t, "")
-	first := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(context.Background(), c1, 103, "mapped-a", "session-hash", body)
-	c2 := newOpenAIPromptCacheIdentityTestContext(t, "")
-	second := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(context.Background(), c2, 103, "mapped-b", "session-hash", body)
-
-	require.NotEmpty(t, first)
-	require.NotEmpty(t, second)
-	require.Equal(t, 2, store.resolveCalls)
-}
-
-func TestOpenAIPromptCacheShardForSessionHashIsStable(t *testing.T) {
-	first := shardForSessionHash("stable-session", 4)
-	second := shardForSessionHash("stable-session", 4)
-
-	require.Equal(t, first, second)
-	require.GreaterOrEqual(t, first, 0)
-	require.Less(t, first, 4)
-	require.Equal(t, 0, shardForSessionHash("", 4))
+	require.Equal(t, "gpt-5.6", store.resolveModel)
+	require.Contains(t, store.resolveSource, "content:")
 }
 
 func TestOpenAIAutoPromptCacheReusesStagedIdentityWithinRequest(t *testing.T) {
@@ -349,44 +312,12 @@ func TestOpenAIAutoPromptCacheReusesStagedIdentityWithinRequest(t *testing.T) {
 	c := newOpenAIPromptCacheIdentityTestContext(t, "")
 	body := []byte(`{"model":"gpt-5.6","input":"hello"}`)
 
-	first := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(context.Background(), c, 103, "gpt-5.6", "session-hash", body)
-	second := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(context.Background(), c, 103, "gpt-5.6", "session-hash", body)
+	first := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(context.Background(), c, 103, "gpt-5.6", body)
+	second := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(context.Background(), c, 103, "gpt-5.6", body)
 
 	require.NotEmpty(t, first)
 	require.Equal(t, first, second)
 	require.Equal(t, 1, store.resolveCalls)
-}
-
-func TestOpenAIAutoPromptCacheStagedIdentityIsScopedBySource(t *testing.T) {
-	store := &openAIPromptCacheIdentityStoreStub{}
-	svc := &OpenAIGatewayService{cache: store}
-	c := newOpenAIPromptCacheIdentityTestContext(t, "")
-	firstBody := []byte(`{"model":"gpt-5.6","instructions":"policy one","input":"hello"}`)
-	secondBody := []byte(`{"model":"gpt-5.6","instructions":"policy two","input":"hello"}`)
-
-	first := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(context.Background(), c, 103, "gpt-5.6", "session-hash", firstBody)
-	second := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(context.Background(), c, 103, "gpt-5.6", "session-hash", secondBody)
-
-	require.NotEmpty(t, first)
-	require.NotEmpty(t, second)
-	require.Equal(t, 2, store.resolveCalls)
-}
-
-func TestOpenAIAutoPromptCacheDoesNotReuseStaleIdentityAfterSourceChangeError(t *testing.T) {
-	store := &openAIPromptCacheIdentityStoreStub{}
-	svc := &OpenAIGatewayService{cache: store}
-	c := newOpenAIPromptCacheIdentityTestContext(t, "")
-	firstBody := []byte(`{"model":"gpt-5.6","instructions":"policy one","input":"hello"}`)
-	secondBody := []byte(`{"model":"gpt-5.6","instructions":"policy two","input":"hello"}`)
-
-	require.NotEmpty(t, svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(
-		context.Background(), c, 103, "gpt-5.6", "session-hash", firstBody,
-	))
-	store.resolveErr = errors.New("redis unavailable")
-	require.Empty(t, svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(
-		context.Background(), c, 103, "gpt-5.6", "session-hash", secondBody,
-	))
-	require.Nil(t, stagedOpenAIAutoPromptCacheIdentity(c))
 }
 
 func TestOpenAIAutoPromptCacheReusedStageRefreshesDecisionRemainingTTL(t *testing.T) {
@@ -395,13 +326,13 @@ func TestOpenAIAutoPromptCacheReusedStageRefreshesDecisionRemainingTTL(t *testin
 	c := newOpenAIPromptCacheIdentityTestContext(t, "")
 	body := []byte(`{"model":"gpt-5.6","input":"hello"}`)
 
-	resolved := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(context.Background(), c, 103, "gpt-5.6", "session-hash", body)
+	resolved := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(context.Background(), c, 103, "gpt-5.6", body)
 	require.NotEmpty(t, resolved)
 	staged := stagedOpenAIAutoPromptCacheIdentity(c)
 	require.NotNil(t, staged)
 	staged.ExpiresAt = time.Now().Add(30 * time.Second)
 
-	reused := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(context.Background(), c, 103, "gpt-5.6", "session-hash", body)
+	reused := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(context.Background(), c, 103, "gpt-5.6", body)
 	require.Equal(t, resolved, reused)
 	decision, ok := GetOpenAIPromptCacheIdentityDecision(c)
 	require.True(t, ok)
@@ -415,7 +346,7 @@ func TestOpenAIAutoPromptCacheIgnoresRotatingGenericIDs(t *testing.T) {
 	c := newOpenAIPromptCacheIdentityTestContext(t, "")
 	body := []byte(`{"model":"gpt-5.6","id":"msg_123","request_id":"req_123"}`)
 
-	resolved := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(context.Background(), c, 104, "gpt-5.6", "", body)
+	resolved := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(context.Background(), c, 104, "gpt-5.6", body)
 
 	require.Empty(t, resolved)
 	require.Zero(t, store.resolveCalls)
@@ -427,7 +358,7 @@ func TestOpenAIAutoPromptCacheRedisErrorFailsOpen(t *testing.T) {
 	c := newOpenAIPromptCacheIdentityTestContext(t, "")
 	body := []byte(`{"model":"gpt-5.6","input":"hello"}`)
 
-	resolved := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(context.Background(), c, 105, "gpt-5.6", "session-hash", body)
+	resolved := svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(context.Background(), c, 105, "gpt-5.6", body)
 
 	require.Empty(t, resolved)
 	require.Nil(t, stagedOpenAIAutoPromptCacheIdentity(c))
@@ -441,7 +372,7 @@ func TestOpenAIAutoPromptCacheBindsResponseAliasWithRemainingTTL(t *testing.T) {
 	svc := &OpenAIGatewayService{cache: store}
 	c := newOpenAIPromptCacheIdentityTestContext(t, "")
 	body := []byte(`{"model":"gpt-5.6","input":"hello"}`)
-	require.Equal(t, value, svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(context.Background(), c, 106, "gpt-5.6", "session-hash", body))
+	require.Equal(t, value, svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(context.Background(), c, 106, "gpt-5.6", body))
 
 	svc.BindStagedOpenAIAutoPromptCacheResponseAlias(context.Background(), c, "resp_next")
 
@@ -466,7 +397,7 @@ func TestOpenAIAutoPromptCacheResolveDeadlineDoesNotAddStoreLatency(t *testing.T
 	startedAt := time.Now()
 
 	require.Equal(t, value, svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(
-		context.Background(), c, 107, "gpt-5.6", "session-hash", []byte(`{"model":"gpt-5.6","input":"hello"}`),
+		context.Background(), c, 107, "gpt-5.6", []byte(`{"model":"gpt-5.6","input":"hello"}`),
 	))
 
 	staged := stagedOpenAIAutoPromptCacheIdentity(c)
@@ -487,7 +418,7 @@ func TestOpenAIAutoPromptCacheAliasDeadlineDoesNotAddStoreLatency(t *testing.T) 
 	startedAt := time.Now()
 
 	require.Equal(t, value, svc.ResolveAndStageOpenAIAutoPromptCacheIdentity(
-		context.Background(), c, 108, "gpt-5.6", "session-hash", []byte(`{"model":"gpt-5.6","previous_response_id":"resp_previous","input":"next"}`),
+		context.Background(), c, 108, "gpt-5.6", []byte(`{"model":"gpt-5.6","previous_response_id":"resp_previous","input":"next"}`),
 	))
 
 	staged := stagedOpenAIAutoPromptCacheIdentity(c)

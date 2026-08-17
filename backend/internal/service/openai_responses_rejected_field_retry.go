@@ -16,7 +16,7 @@ const maxOpenAIResponsesRejectedFieldRetries = 6
 
 var (
 	openAIResponsesRejectedNamespaceParamPattern = regexp.MustCompile(`(?i)^input\[(\d+)\]\.namespace$`)
-	openAIResponsesRejectedMessageParamPattern   = regexp.MustCompile(`(?i)(?:unknown|unsupported)[ _-]+parameter\s*(?::|=|is)?\s*["']?(max_output_tokens|input\[\d+\]\.namespace|prompt_cache_options|(?:input\[\d+\]\.content\[\d+\]\.)?prompt_cache_breakpoint)(?:["']|\b)`)
+	openAIResponsesRejectedMessageParamPattern   = regexp.MustCompile(`(?i)(?:unknown|unsupported)[ _-]+parameter\s*(?::|=|is)?\s*["']?(max_output_tokens|input\[\d+\]\.namespace)(?:["']|\b)`)
 )
 
 type openAIResponsesRejectedFieldRetryState struct {
@@ -56,14 +56,6 @@ func (s *openAIResponsesRejectedFieldRetryState) remember(body []byte) {
 }
 
 func normalizeOpenAIResponsesRejectedFieldRetryBody(statusCode int, body, responseBody []byte) ([]byte, string, bool, error) {
-	return normalizeOpenAIResponsesRejectedFieldRetryBodyWithPromptCache(statusCode, body, responseBody, nil)
-}
-
-func normalizeOpenAIResponsesRejectedFieldRetryBodyWithPromptCache(
-	statusCode int,
-	body, responseBody []byte,
-	injection *openAIPromptCacheBreakpointInjection,
-) ([]byte, string, bool, error) {
 	if statusCode != http.StatusBadRequest || len(body) == 0 || len(responseBody) == 0 {
 		return nil, "", false, nil
 	}
@@ -88,31 +80,7 @@ func normalizeOpenAIResponsesRejectedFieldRetryBodyWithPromptCache(
 		}
 		return retryBody, "max_output_tokens parameter rejection", true, nil
 	}
-	if injection != nil && isRejectedOpenAIPromptCacheParam(param, injection) {
-		retryBody, err := sjson.DeleteBytes(body, "prompt_cache_options")
-		if err != nil {
-			return nil, "", false, fmt.Errorf("delete rejected prompt_cache_options: %w", err)
-		}
-		path := fmt.Sprintf("input.%d.content.%d.prompt_cache_breakpoint", injection.InputIndex, injection.ContentIndex)
-		retryBody, err = sjson.DeleteBytes(retryBody, path)
-		if err != nil {
-			return nil, "", false, fmt.Errorf("delete rejected prompt cache breakpoint: %w", err)
-		}
-		return retryBody, "automatic prompt cache parameter rejection", true, nil
-	}
 	return nil, "", false, nil
-}
-
-func isRejectedOpenAIPromptCacheParam(param string, injection *openAIPromptCacheBreakpointInjection) bool {
-	if injection == nil {
-		return false
-	}
-	param = strings.ToLower(strings.TrimSpace(param))
-	if param == "prompt_cache_options" || param == "prompt_cache_breakpoint" {
-		return true
-	}
-	want := fmt.Sprintf("input[%d].content[%d].prompt_cache_breakpoint", injection.InputIndex, injection.ContentIndex)
-	return param == want || strings.HasPrefix(param, want+".")
 }
 
 func isExplicitOpenAIResponsesFieldRejection(code, message string) bool {

@@ -140,11 +140,21 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 
 	legacySessionHash := h.gatewayService.GenerateSessionHash(c, body)
 	legacyPromptCacheKey := h.gatewayService.ExtractSessionID(c, body)
+	autoPromptCacheIdentity := ""
+	if requestPlatform == service.PlatformOpenAI {
+		autoPromptCacheIdentity = h.gatewayService.ResolveAndStageOpenAIAutoPromptCacheIdentity(
+			c.Request.Context(),
+			c,
+			apiKey.ID,
+			reqModel,
+			body,
+		)
+	}
 	promptCacheRouting := resolveOpenAIChatPromptCacheRouting(
 		body,
 		legacySessionHash,
 		legacyPromptCacheKey,
-		"",
+		autoPromptCacheIdentity,
 	)
 	sessionHash := promptCacheRouting.SessionHash
 	promptCacheKey := promptCacheRouting.PromptCacheKey
@@ -235,32 +245,35 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
 		forwardStart := time.Now()
 
+		refreshedIdentity := promptCacheRouting.AutoIdentity
+		if requestPlatform == service.PlatformOpenAI && strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String()) == "" {
+			refreshedIdentity = h.gatewayService.ResolveAndStageOpenAIAutoPromptCacheIdentity(
+				c.Request.Context(),
+				c,
+				apiKey.ID,
+				reqModel,
+				body,
+			)
+		}
+		refreshedRouting, reselect := refreshOpenAIChatPromptCacheRouting(promptCacheRouting, refreshedIdentity)
+		promptCacheRouting = refreshedRouting
+		sessionHash = refreshedRouting.SessionHash
+		promptCacheKey = refreshedRouting.PromptCacheKey
+		if reselect {
+			if accountReleaseFunc != nil {
+				accountReleaseFunc()
+				accountReleaseFunc = nil
+			}
+			reqLog.Debug("openai_chat_completions.auto_prompt_cache_identity_rotated_reselecting",
+				zap.Int64("account_id", account.ID),
+			)
+			continue
+		}
+
 		forwardBody := body
 		if channelMapping.Mapped {
 			forwardBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
 		}
-		autoPromptCacheIdentity := ""
-		if requestPlatform == service.PlatformOpenAI {
-			attemptModel := strings.TrimSpace(gjson.GetBytes(forwardBody, "model").String())
-			if attemptModel == "" {
-				attemptModel = reqModel
-			}
-			autoPromptCacheIdentity = h.gatewayService.ResolveAndStageOpenAIAutoPromptCacheIdentity(
-				c.Request.Context(),
-				c,
-				apiKey.ID,
-				account.GetMappedModel(attemptModel),
-				sessionHash,
-				forwardBody,
-			)
-		}
-		promptCacheRouting = resolveOpenAIChatPromptCacheRouting(
-			body,
-			sessionHash,
-			legacyPromptCacheKey,
-			autoPromptCacheIdentity,
-		)
-		promptCacheKey = promptCacheRouting.PromptCacheKey
 		writerSizeBeforeForward := c.Writer.Size()
 		result, err := func() (*service.OpenAIForwardResult, error) {
 			defer func() {
@@ -378,7 +391,6 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		} else {
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(reqModel), true, nil)
 		}
-		recordOpenAIPromptCacheOutcome(reqLog, account, result)
 
 		userAgent := c.GetHeader("User-Agent")
 		clientIP := ip.GetClientIP(c)
@@ -395,11 +407,6 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 				zap.String("source", decision.Source),
 				zap.Bool("hit", decision.Hit),
 				zap.Int64("ttl_ms", decision.RemainingTTL.Milliseconds()),
-				zap.String("prefix_sha256", decision.PrefixSHA256),
-				zap.String("identity_sha256", decision.IdentitySHA256),
-				zap.Int("shard_count", decision.ShardCount),
-				zap.Int("shard_index", decision.ShardIndex),
-				zap.String("breakpoint_reason", decision.BreakpointReason),
 				zap.Bool("auto_identity_injected", autoIdentityInjected),
 			)
 		}
@@ -444,10 +451,11 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 }
 
 type openAIChatPromptCacheRouting struct {
-	PromptCacheKey         string
-	FallbackPromptCacheKey string
-	AutoIdentity           string
-	SessionHash            string
+	PromptCacheKey              string
+	FallbackPromptCacheKey      string
+	AutoIdentity                string
+	SessionHash                 string
+	SessionHashUsesAutoIdentity bool
 }
 
 func resolveOpenAIChatPromptCacheRouting(
@@ -471,12 +479,42 @@ func resolveOpenAIChatPromptCacheRouting(
 		promptCacheKey = fallbackPromptCacheKey
 	}
 
-	return openAIChatPromptCacheRouting{
-		PromptCacheKey:         promptCacheKey,
-		FallbackPromptCacheKey: fallbackPromptCacheKey,
-		AutoIdentity:           autoIdentity,
-		SessionHash:            strings.TrimSpace(legacySessionHash),
+	legacySessionHash = strings.TrimSpace(legacySessionHash)
+	sessionHash := legacySessionHash
+	usesAutoIdentity := autoIdentity != ""
+	if usesAutoIdentity {
+		sessionHash = service.DeriveSessionHashFromSeed(autoIdentity)
 	}
+	return openAIChatPromptCacheRouting{
+		PromptCacheKey:              promptCacheKey,
+		FallbackPromptCacheKey:      fallbackPromptCacheKey,
+		AutoIdentity:                autoIdentity,
+		SessionHash:                 sessionHash,
+		SessionHashUsesAutoIdentity: usesAutoIdentity,
+	}
+}
+
+func refreshOpenAIChatPromptCacheRouting(
+	routing openAIChatPromptCacheRouting,
+	refreshedIdentity string,
+) (openAIChatPromptCacheRouting, bool) {
+	refreshedIdentity = strings.TrimSpace(refreshedIdentity)
+	if refreshedIdentity == routing.AutoIdentity {
+		return routing, false
+	}
+	if refreshedIdentity == "" {
+		routing.AutoIdentity = ""
+		routing.PromptCacheKey = routing.FallbackPromptCacheKey
+		return routing, false
+	}
+
+	routing.AutoIdentity = refreshedIdentity
+	routing.PromptCacheKey = refreshedIdentity
+	refreshedSessionHash := service.DeriveSessionHashFromSeed(refreshedIdentity)
+	reselect := refreshedSessionHash != strings.TrimSpace(routing.SessionHash)
+	routing.SessionHash = refreshedSessionHash
+	routing.SessionHashUsesAutoIdentity = true
+	return routing, reselect
 }
 
 // resolveOpenAIUpstreamEndpoint returns the actual upstream endpoint for an

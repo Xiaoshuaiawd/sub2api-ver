@@ -13,20 +13,6 @@ type OpenAIPromptCacheIdentityRecord struct {
 	Hit          bool
 }
 
-const (
-	OpenAIPromptCacheIdentitySourcePrefix  = "prefix"
-	OpenAIPromptCacheIdentitySourceSession = "session"
-)
-
-// OpenAIPromptCacheIdentitySource contains only pre-hashed routing material.
-// Raw prompts, session IDs, and response IDs must never cross this boundary.
-type OpenAIPromptCacheIdentitySource struct {
-	Kind       string
-	Hash       string
-	ShardCount int
-	ShardIndex int
-}
-
 // OpenAIPromptCacheIdentityStore keeps automatic prompt-cache identities and
 // response-id aliases without exposing the Redis implementation to services.
 type OpenAIPromptCacheIdentityStore interface {
@@ -34,7 +20,7 @@ type OpenAIPromptCacheIdentityStore interface {
 		ctx context.Context,
 		apiKeyID int64,
 		modelIdentity string,
-		source OpenAIPromptCacheIdentitySource,
+		sourceIdentity string,
 		candidate string,
 		ttl time.Duration,
 	) (*OpenAIPromptCacheIdentityRecord, error)

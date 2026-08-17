@@ -321,14 +321,6 @@ gateway:
   # Use this to avoid compact failures when newer models are not yet supported by the compact endpoint.
   # 当 compact 端点暂未支持更新模型时，可通过这里降级规避失败。
   openai_compact_model: "gpt-5.4"
-  # OpenAI Prompt Cache 自动路由身份。
-  # TTL 从首次创建开始固定计时，命中不会续期。
-  openai_prompt_cache:
-    identity_ttl_seconds: 1800
-    # 仅支持 1、4、8、16；流量越高可使用越多分片，避免单 key 过热。
-    shard_count: 4
-    # 仅对能力确认的 GPT-5.6+ OpenAI API Key Responses 上游生效。
-    explicit_breakpoints_enabled: true
   # ChatGPT Frameless Live 单会话硬上限（秒）。
   live:
     max_session_duration_seconds: 3600
