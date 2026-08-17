@@ -23,7 +23,198 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-func TestOpenAIGatewayService_Forward_WSv2_SuccessAndBindSticky(t *testing.T) {
+type openAIWSBridgeFlushWriter struct {
+	gin.ResponseWriter
+	createdFlushed chan struct{}
+	once           sync.Once
+}
+
+func (w *openAIWSBridgeFlushWriter) Flush() {
+	w.ResponseWriter.Flush()
+	w.once.Do(func() { close(w.createdFlushed) })
+}
+
+func TestOpenAIGatewayService_Forward_HTTPIngressBridgeFlushesCreatedBeforeDelta(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	allowDelta := make(chan struct{})
+	createdSent := make(chan struct{})
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, err)
+		defer func() { _ = conn.Close() }()
+
+		var request map[string]any
+		require.NoError(t, conn.ReadJSON(&request))
+		require.NoError(t, conn.WriteJSON(map[string]any{
+			"type":     "response.created",
+			"response": map[string]any{"id": "resp_http_ws_bridge", "model": "gpt-5.1"},
+		}))
+		close(createdSent)
+		<-allowDelta
+		require.NoError(t, conn.WriteJSON(map[string]any{
+			"type": "response.output_text.delta", "delta": "OK",
+		}))
+		require.NoError(t, conn.WriteJSON(map[string]any{
+			"type": "response.completed",
+			"response": map[string]any{
+				"id": "resp_http_ws_bridge", "model": "gpt-5.1",
+				"usage": map[string]any{"input_tokens": 1, "output_tokens": 1},
+			},
+		}))
+	}))
+	defer wsServer.Close()
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+	flushWriter := &openAIWSBridgeFlushWriter{ResponseWriter: c.Writer, createdFlushed: make(chan struct{})}
+	c.Writer = flushWriter
+
+	cfg := &config.Config{}
+	cfg.Security.URLAllowlist.Enabled = false
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+	cfg.Gateway.OpenAIWS.Enabled = true
+	cfg.Gateway.OpenAIWS.APIKeyEnabled = true
+	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+	cfg.Gateway.OpenAIWS.HTTPIngressBridgeEnabled = true
+	cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 30
+	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 10
+
+	httpUpstream := &httpUpstreamRecorder{}
+	svc := &OpenAIGatewayService{
+		cfg:              cfg,
+		httpUpstream:     httpUpstream,
+		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
+		toolCorrector:    NewCodexToolCorrector(),
+	}
+	account := &Account{
+		ID: 9912, Name: "openai-http-ws-bridge", Platform: PlatformOpenAI,
+		Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1,
+		Credentials: map[string]any{"api_key": "sk-test", "base_url": wsServer.URL},
+		Extra:       map[string]any{"responses_websockets_v2_enabled": true},
+	}
+
+	type forwardOutcome struct {
+		result *OpenAIForwardResult
+		err    error
+	}
+	outcomeCh := make(chan forwardOutcome, 1)
+	go func() {
+		result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.1","stream":true,"input":"hello"}`))
+		outcomeCh <- forwardOutcome{result: result, err: err}
+	}()
+
+	select {
+	case <-createdSent:
+	case <-time.After(3 * time.Second):
+		t.Fatal("upstream did not send response.created")
+	}
+	createdWasFlushed := false
+	select {
+	case <-flushWriter.createdFlushed:
+		createdWasFlushed = true
+	case <-time.After(250 * time.Millisecond):
+	}
+	close(allowDelta)
+	outcome := <-outcomeCh
+
+	require.True(t, createdWasFlushed, "response.created must be flushed before the first model delta")
+	require.NoError(t, outcome.err)
+	require.NotNil(t, outcome.result)
+	require.True(t, outcome.result.OpenAIWSMode)
+	require.NotNil(t, outcome.result.FirstTokenMs, "created must not count as the first model token")
+	require.Nil(t, httpUpstream.lastReq, "bridge must not issue an HTTP upstream request")
+	require.Contains(t, rec.Body.String(), `"type":"response.created"`)
+	require.Contains(t, rec.Body.String(), `data: {"delta":"OK","type":"response.output_text.delta"`)
+	require.NotContains(t, rec.Body.String(), "[DONE]")
+}
+
+func TestOpenAIGatewayService_Forward_HTTPIngressBridgeFailoverBoundary(t *testing.T) {
+	tests := []struct {
+		name             string
+		sendPreamble     bool
+		sendCreated      bool
+		wantFailover     bool
+		wantCreatedInSSE bool
+	}{
+		{name: "before_created_allows_account_failover", wantFailover: true},
+		{name: "preamble_before_created_still_allows_account_failover", sendPreamble: true, wantFailover: true},
+		{name: "after_created_forbids_replay", sendCreated: true, wantCreatedInSSE: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+			wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := upgrader.Upgrade(w, r, nil)
+				require.NoError(t, err)
+				var request map[string]any
+				require.NoError(t, conn.ReadJSON(&request))
+				if tt.sendPreamble {
+					require.NoError(t, conn.WriteJSON(map[string]any{
+						"type":     "response.in_progress",
+						"response": map[string]any{"id": "resp_failover_boundary", "model": "gpt-5.1"},
+					}))
+				}
+				if tt.sendCreated {
+					require.NoError(t, conn.WriteJSON(map[string]any{
+						"type":     "response.created",
+						"response": map[string]any{"id": "resp_failover_boundary", "model": "gpt-5.1"},
+					}))
+				}
+				_ = conn.Close()
+			}))
+			defer wsServer.Close()
+
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+			SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+
+			cfg := &config.Config{}
+			cfg.Security.URLAllowlist.Enabled = false
+			cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+			cfg.Gateway.OpenAIWS.Enabled = true
+			cfg.Gateway.OpenAIWS.APIKeyEnabled = true
+			cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+			cfg.Gateway.OpenAIWS.HTTPIngressBridgeEnabled = true
+			cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 3
+			cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
+			cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
+			cfg.Gateway.OpenAIWS.RetryBackoffInitialMS = 0
+			cfg.Gateway.OpenAIWS.RetryBackoffMaxMS = 0
+
+			svc := &OpenAIGatewayService{cfg: cfg, openaiWSResolver: NewOpenAIWSProtocolResolver(cfg), toolCorrector: NewCodexToolCorrector()}
+			account := &Account{
+				ID: 9913, Name: "openai-http-ws-boundary", Platform: PlatformOpenAI,
+				Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1,
+				Credentials: map[string]any{"api_key": "sk-test", "base_url": wsServer.URL},
+				Extra:       map[string]any{"responses_websockets_v2_enabled": true},
+			}
+
+			result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.1","stream":true,"input":"hello"}`))
+			require.Error(t, err)
+			require.Nil(t, result)
+			var failoverErr *UpstreamFailoverError
+			require.Equal(t, tt.wantFailover, errors.As(err, &failoverErr))
+			if tt.wantFailover {
+				require.Equal(t, NextAccountRetry, failoverErr.NextAccountAction)
+				require.False(t, c.Writer.Written())
+			}
+			require.Equal(t, tt.wantCreatedInSSE, strings.Contains(rec.Body.String(), `"type":"response.created"`))
+			if tt.wantFailover {
+				require.NotContains(t, rec.Body.String(), `"type":"response.in_progress"`)
+			}
+		})
+	}
+}
+
+func TestOpenAIGatewayService_Forward_HTTPIngressBridgeNonStreamSuccessAndBindSticky(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	type receivedPayload struct {
@@ -92,6 +283,7 @@ func TestOpenAIGatewayService_Forward_WSv2_SuccessAndBindSticky(t *testing.T) {
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
 	c.Request.Header.Set("User-Agent", "unit-test-agent/1.0")
+	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
 	groupID := int64(1001)
 	c.Set("api_key", &APIKey{GroupID: &groupID})
 
@@ -102,6 +294,7 @@ func TestOpenAIGatewayService_Forward_WSv2_SuccessAndBindSticky(t *testing.T) {
 	cfg.Gateway.OpenAIWS.OAuthEnabled = true
 	cfg.Gateway.OpenAIWS.APIKeyEnabled = true
 	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+	cfg.Gateway.OpenAIWS.HTTPIngressBridgeEnabled = true
 	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 2
 	cfg.Gateway.OpenAIWS.QueueLimitPerConn = 8
 	cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 3
@@ -152,6 +345,8 @@ func TestOpenAIGatewayService_Forward_WSv2_SuccessAndBindSticky(t *testing.T) {
 	require.Equal(t, 3, result.Usage.CacheReadInputTokens)
 	require.Equal(t, "resp_new_1", result.RequestID)
 	require.True(t, result.OpenAIWSMode)
+	require.Contains(t, rec.Header().Get("Content-Type"), "application/json")
+	require.NotContains(t, rec.Body.String(), "data:")
 	require.False(t, gjson.GetBytes(upstream.lastBody, "model").Exists(), "WSv2 成功时不应回落 HTTP 上游")
 
 	received := <-receivedCh

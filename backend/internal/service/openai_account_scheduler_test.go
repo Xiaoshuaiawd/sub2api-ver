@@ -3543,6 +3543,53 @@ func TestDefaultOpenAIAccountScheduler_IsAccountTransportCompatible_Branches(t *
 	require.False(t, scheduler.isAccountTransportCompatible(account, OpenAIUpstreamTransportResponsesWebsocketV2Ingress))
 }
 
+func TestOpenAIAccountTransportCompatible_HTTPIngressBridge(t *testing.T) {
+	cfg := newSchedulerTestOpenAIWSV2Config()
+	svc := &OpenAIGatewayService{cfg: cfg}
+	account := &Account{
+		ID:          9911,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 20,
+		Extra: map[string]any{
+			"openai_oauth_responses_websockets_v2_enabled": true,
+			"openai_passthrough":                           false,
+		},
+	}
+
+	required := OpenAIUpstreamTransportResponsesWebsocketV2HTTPIngress
+	require.True(t, svc.isOpenAIAccountTransportCompatible(account, required))
+
+	account.Extra["openai_oauth_responses_websockets_v2_enabled"] = false
+	require.False(t, svc.isOpenAIAccountTransportCompatible(account, required))
+	account.Extra["openai_oauth_responses_websockets_v2_enabled"] = true
+
+	account.Type = AccountTypeAPIKey
+	delete(account.Extra, "openai_oauth_responses_websockets_v2_enabled")
+	account.Extra["openai_apikey_responses_websockets_v2_enabled"] = true
+	account.Extra["openai_responses_supported"] = false
+	require.False(t, svc.isOpenAIAccountTransportCompatible(account, required))
+	delete(account.Extra, "openai_responses_supported")
+	require.True(t, svc.isOpenAIAccountTransportCompatible(account, required))
+
+	account.Extra["openai_passthrough"] = true
+	require.False(t, svc.isOpenAIAccountTransportCompatible(account, required))
+	account.Extra["openai_passthrough"] = false
+
+	account.Extra["openai_ws_force_http"] = true
+	require.False(t, svc.isOpenAIAccountTransportCompatible(account, required))
+	account.Extra["openai_ws_force_http"] = false
+
+	cfg.Gateway.OpenAIWS.ForceHTTP = true
+	require.False(t, svc.isOpenAIAccountTransportCompatible(account, required))
+	cfg.Gateway.OpenAIWS.ForceHTTP = false
+
+	account.Platform = PlatformAnthropic
+	require.False(t, svc.isOpenAIAccountTransportCompatible(account, required))
+}
+
 func int64PtrForTest(v int64) *int64 {
 	return &v
 }

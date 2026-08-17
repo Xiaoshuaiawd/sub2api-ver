@@ -326,6 +326,9 @@ gateway:
     max_session_duration_seconds: 3600
   # OpenAI Responses WebSocket 配置（默认开启，可按需回滚到 HTTP）
   openai_ws:
+    # HTTP /openai/v1/responses 入站改用 WSv2 上游，同时保持客户端 SSE/JSON 契约。
+    # 默认 false；参与账号需启用对应 WSv2 开关，并关闭 openai_passthrough。
+    http_ingress_bridge_enabled: false
     # 新版 WS mode 路由（默认关闭）。关闭时忽略账号级 WS mode（包括 http_bridge），保持 legacy ctx_pool 行为。
     # 环境变量：GATEWAY_OPENAI_WS_MODE_ROUTER_V2_ENABLED=true
     mode_router_v2_enabled: false

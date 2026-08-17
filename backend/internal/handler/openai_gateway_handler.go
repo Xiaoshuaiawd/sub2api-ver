@@ -192,6 +192,13 @@ func openAIResponsesRequiredCapabilityForRequest(imageIntent bool, needsResponse
 	return openAIResponsesRequiredCapability(imageIntent, platform)
 }
 
+func openAIResponsesRequiredTransport(cfg *config.Config, bareResponses bool, compact bool, platform string) service.OpenAIUpstreamTransport {
+	if cfg != nil && cfg.Gateway.OpenAIWS.HTTPIngressBridgeEnabled && bareResponses && !compact && platform == service.PlatformOpenAI {
+		return service.OpenAIUpstreamTransportResponsesWebsocketV2HTTPIngress
+	}
+	return service.OpenAIUpstreamTransportAny
+}
+
 func allowOpenAICompatibleMessagesDispatch(apiKey *service.APIKey) bool {
 	if apiKey == nil || apiKey.Group == nil {
 		return true
@@ -465,6 +472,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	// 该判断已排除 Codex 被动 image_gen namespace，避免 CC-only 账号被误过滤（#4476）。
 	needsResponses := nativeV2 || legacyCompact
 	requiredCapability := openAIResponsesRequiredCapabilityForRequest(imageIntent, needsResponses, requestPlatform)
+	requiredTransport := openAIResponsesRequiredTransport(h.cfg, isBareOpenAIResponsesPath(c), legacyCompact, requestPlatform)
 
 	// 分组利润控制：请求级装配定价上下文——pricingAt 固定本请求的
 	// D 与计费高峰因子，选号、槽位终检与全部 failover 重入共用同一门与阈值。
@@ -489,7 +497,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			sessionHash,
 			reqModel,
 			failedAccountIDs,
-			service.OpenAIUpstreamTransportAny,
+			requiredTransport,
 			requiredCapability,
 			requireCompact,
 			false,
@@ -506,6 +514,11 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
 			if len(failedAccountIDs) == 0 {
+				if requiredTransport == service.OpenAIUpstreamTransportResponsesWebsocketV2HTTPIngress {
+					markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
+					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts support Responses WebSocket v2", streamStarted)
+					return
+				}
 				if legacyCompact && errors.Is(err, service.ErrNoAvailableCompactAccounts) {
 					markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
 					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "compact_not_supported", "No available accounts support /responses/compact", streamStarted)
@@ -2527,6 +2540,15 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 	if service.IsOpenAISilentRefusalErrorBody(responseBody) {
 		service.SetOpsUpstreamError(c, statusCode, service.OpenAISilentRefusalClientMessage(), "")
 		h.handleStreamingAwareError(c, http.StatusBadGateway, "upstream_error", service.OpenAISilentRefusalClientMessage(), streamStarted)
+		return
+	}
+	// Pool-mode retry policies may exhaust on a deterministic 400. Preserve a
+	// FastAPI-style detail envelope instead of mapping it to a generic 502 after
+	// the final account attempt. ResponseBody was already redacted by service.
+	if statusCode == http.StatusBadRequest && !streamStarted && json.Valid(responseBody) &&
+		strings.TrimSpace(gjson.GetBytes(responseBody, "detail").String()) != "" {
+		service.SetOpsUpstreamError(c, statusCode, service.ExtractUpstreamErrorMessage(responseBody), "")
+		c.Data(statusCode, "application/json; charset=utf-8", responseBody)
 		return
 	}
 

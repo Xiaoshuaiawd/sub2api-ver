@@ -15,7 +15,10 @@ const (
 	OpenAIClientTransportWS      OpenAIClientTransport = "ws"
 )
 
-const openAIClientTransportContextKey = "openai_client_transport"
+const (
+	openAIClientTransportContextKey  = "openai_client_transport"
+	openAIWSHTTPIngressBridgeContext = "openai_ws_http_ingress_bridge"
+)
 
 // SetOpenAIClientTransport 标记当前请求的客户端入站协议。
 func SetOpenAIClientTransport(c *gin.Context, transport OpenAIClientTransport) {
@@ -49,6 +52,38 @@ func GetOpenAIClientTransport(c *gin.Context) OpenAIClientTransport {
 	}
 }
 
+func setOpenAIWSHTTPIngressBridge(c *gin.Context, enabled bool) {
+	if c == nil {
+		return
+	}
+	c.Set(openAIWSHTTPIngressBridgeContext, enabled)
+}
+
+func isOpenAIWSHTTPIngressBridge(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	enabled, ok := c.Get(openAIWSHTTPIngressBridgeContext)
+	if !ok {
+		return false
+	}
+	value, _ := enabled.(bool)
+	return value
+}
+
+func isBareOpenAIResponsesHTTPPath(c *gin.Context) bool {
+	if c == nil || c.Request == nil || c.Request.URL == nil {
+		return false
+	}
+	normalizedPath := strings.TrimRight(strings.TrimSpace(c.Request.URL.Path), "/")
+	switch normalizedPath {
+	case "/v1/responses", "/openai/v1/responses", "/responses", "/backend-api/codex/responses":
+		return true
+	default:
+		return false
+	}
+}
+
 func normalizeOpenAIClientTransport(transport OpenAIClientTransport) OpenAIClientTransport {
 	switch strings.ToLower(strings.TrimSpace(string(transport))) {
 	case string(OpenAIClientTransportHTTP), "http_sse", "sse":
@@ -63,8 +98,15 @@ func normalizeOpenAIClientTransport(transport OpenAIClientTransport) OpenAIClien
 func resolveOpenAIWSDecisionByClientTransport(
 	decision OpenAIWSProtocolDecision,
 	clientTransport OpenAIClientTransport,
+	httpIngressBridgeEnabled bool,
 ) OpenAIWSProtocolDecision {
 	if clientTransport == OpenAIClientTransportHTTP {
+		if httpIngressBridgeEnabled {
+			if decision.Transport == OpenAIUpstreamTransportResponsesWebsocketV2 {
+				decision.Reason = "http_ingress_bridge_" + decision.Reason
+			}
+			return decision
+		}
 		return openAIWSHTTPDecision("client_protocol_http")
 	}
 	return decision

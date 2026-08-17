@@ -28,6 +28,17 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+func TestOpenAIResponsesRequiredTransport_HTTPIngressBridge(t *testing.T) {
+	cfg := &config.Config{}
+	require.Equal(t, service.OpenAIUpstreamTransportAny, openAIResponsesRequiredTransport(cfg, true, false, service.PlatformOpenAI))
+
+	cfg.Gateway.OpenAIWS.HTTPIngressBridgeEnabled = true
+	require.Equal(t, service.OpenAIUpstreamTransportResponsesWebsocketV2HTTPIngress, openAIResponsesRequiredTransport(cfg, true, false, service.PlatformOpenAI))
+	require.Equal(t, service.OpenAIUpstreamTransportAny, openAIResponsesRequiredTransport(cfg, false, false, service.PlatformOpenAI))
+	require.Equal(t, service.OpenAIUpstreamTransportAny, openAIResponsesRequiredTransport(cfg, true, true, service.PlatformOpenAI))
+	require.Equal(t, service.OpenAIUpstreamTransportAny, openAIResponsesRequiredTransport(cfg, true, false, service.PlatformGrok))
+}
+
 func TestOpenAIHandleStreamingAwareError_JSONEscaping(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -2283,6 +2294,159 @@ func TestOpenAIResponses_APIKeyPassthroughSSERateLimitUsesConfiguredPoolRetry(t 
 	require.Equal(t, "1", rec.Header().Get("Retry-After"))
 	require.Equal(t, "rate_limit_error", gjson.GetBytes(rec.Body.Bytes(), "error.type").String())
 	require.Equal(t, "Upstream rate limit exceeded, please retry later", gjson.GetBytes(rec.Body.Bytes(), "error.message").String())
+}
+
+func TestOpenAIResponses_HTTPIngressWSBridgeSwitchesAccountBeforeCreated(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	firstHit := make(chan struct{}, 1)
+	secondHit := make(chan struct{}, 1)
+
+	firstUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := coderws.Accept(w, r, nil)
+		require.NoError(t, err)
+		defer func() { _ = conn.CloseNow() }()
+		readCtx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		_, _, err = conn.Read(readCtx)
+		cancel()
+		require.NoError(t, err)
+		firstHit <- struct{}{}
+	}))
+	defer firstUpstream.Close()
+
+	secondUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := coderws.Accept(w, r, nil)
+		require.NoError(t, err)
+		defer func() { _ = conn.CloseNow() }()
+		readCtx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		_, _, err = conn.Read(readCtx)
+		cancel()
+		require.NoError(t, err)
+		secondHit <- struct{}{}
+		for _, event := range []string{
+			`{"type":"response.created","response":{"id":"resp_http_bridge_second","model":"gpt-5.1"}}`,
+			`{"type":"response.output_text.delta","response_id":"resp_http_bridge_second","delta":"OK"}`,
+			`{"type":"response.completed","response":{"id":"resp_http_bridge_second","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`,
+		} {
+			writeCtx, cancelWrite := context.WithTimeout(r.Context(), 3*time.Second)
+			require.NoError(t, conn.Write(writeCtx, coderws.MessageText, []byte(event)))
+			cancelWrite()
+		}
+	}))
+	defer secondUpstream.Close()
+
+	groupID := int64(4213)
+	accounts := []service.Account{
+		{ID: 9920, Name: "bridge-failing", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Status: service.StatusActive, Schedulable: true, Concurrency: 1, Priority: 1, Credentials: map[string]any{"api_key": "sk-first", "base_url": firstUpstream.URL}, Extra: map[string]any{"openai_apikey_responses_websockets_v2_enabled": true}},
+		{ID: 9921, Name: "bridge-healthy", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Status: service.StatusActive, Schedulable: true, Concurrency: 1, Priority: 2, Credentials: map[string]any{"api_key": "sk-second", "base_url": secondUpstream.URL}, Extra: map[string]any{"openai_apikey_responses_websockets_v2_enabled": true}},
+	}
+	cfg := &config.Config{RunMode: config.RunModeSimple}
+	cfg.Default.RateMultiplier = 1
+	cfg.Security.URLAllowlist.Enabled = false
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+	cfg.Gateway.MaxAccountSwitches = 1
+	cfg.Gateway.OpenAIWS.Enabled = true
+	cfg.Gateway.OpenAIWS.APIKeyEnabled = true
+	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+	cfg.Gateway.OpenAIWS.HTTPIngressBridgeEnabled = true
+	cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.RetryTotalBudgetMS = 1
+
+	accountRepo := &openAIWSFailoverHandlerAccountRepoStub{accounts: accounts}
+	billingCacheSvc := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(billingCacheSvc.Stop)
+	gatewaySvc := service.NewOpenAIGatewayService(accountRepo, nil, nil, nil, nil, nil, nil, cfg, nil, nil, service.NewBillingService(cfg, nil), nil, billingCacheSvc, nil, &service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil)
+	h := NewOpenAIGatewayHandler(gatewaySvc, service.NewConcurrencyService(nil), billingCacheSvc, service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg), nil, nil, nil, nil, cfg)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", strings.NewReader(`{"model":"gpt-5.1","input":"hello","stream":true}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set(string(middleware.ContextKeyAPIKey), &service.APIKey{ID: 1810, GroupID: &groupID, User: &service.User{ID: 1710, Status: service.StatusActive}, Group: &service.Group{ID: groupID, Platform: service.PlatformOpenAI, Status: service.StatusActive}})
+	c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 1710, Concurrency: 0})
+
+	h.Responses(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Header().Get("Content-Type"), "text/event-stream")
+	require.Contains(t, rec.Body.String(), "resp_http_bridge_second")
+	require.Equal(t, 1, strings.Count(rec.Body.String(), `"type":"response.created"`))
+	require.NotContains(t, rec.Body.String(), "[DONE]")
+	select {
+	case <-firstHit:
+	default:
+		t.Fatal("first bridge account was not attempted")
+	}
+	select {
+	case <-secondHit:
+	default:
+		t.Fatal("second bridge account was not attempted")
+	}
+}
+
+func TestOpenAIResponses_HTTPIngressWSBridgeAfterCreatedTerminatesWithoutReplay(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var secondHits atomic.Int32
+
+	firstUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := coderws.Accept(w, r, nil)
+		require.NoError(t, err)
+		readCtx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		_, _, err = conn.Read(readCtx)
+		cancel()
+		require.NoError(t, err)
+		writeCtx, cancelWrite := context.WithTimeout(r.Context(), 3*time.Second)
+		require.NoError(t, conn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.created","response":{"id":"resp_http_bridge_committed","model":"gpt-5.1"}}`)))
+		cancelWrite()
+		_ = conn.CloseNow()
+	}))
+	defer firstUpstream.Close()
+
+	secondUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		secondHits.Add(1)
+		http.Error(w, "must not replay after response.created", http.StatusInternalServerError)
+	}))
+	defer secondUpstream.Close()
+
+	groupID := int64(4214)
+	accounts := []service.Account{
+		{ID: 9922, Name: "bridge-committed", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Status: service.StatusActive, Schedulable: true, Concurrency: 1, Priority: 1, Credentials: map[string]any{"api_key": "sk-first", "base_url": firstUpstream.URL}, Extra: map[string]any{"openai_apikey_responses_websockets_v2_enabled": true}},
+		{ID: 9923, Name: "bridge-must-not-replay", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Status: service.StatusActive, Schedulable: true, Concurrency: 1, Priority: 2, Credentials: map[string]any{"api_key": "sk-second", "base_url": secondUpstream.URL}, Extra: map[string]any{"openai_apikey_responses_websockets_v2_enabled": true}},
+	}
+	cfg := &config.Config{RunMode: config.RunModeSimple}
+	cfg.Default.RateMultiplier = 1
+	cfg.Security.URLAllowlist.Enabled = false
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+	cfg.Gateway.MaxAccountSwitches = 1
+	cfg.Gateway.OpenAIWS.Enabled = true
+	cfg.Gateway.OpenAIWS.APIKeyEnabled = true
+	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+	cfg.Gateway.OpenAIWS.HTTPIngressBridgeEnabled = true
+	cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
+
+	accountRepo := &openAIWSFailoverHandlerAccountRepoStub{accounts: accounts}
+	billingCacheSvc := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(billingCacheSvc.Stop)
+	gatewaySvc := service.NewOpenAIGatewayService(accountRepo, nil, nil, nil, nil, nil, nil, cfg, nil, nil, service.NewBillingService(cfg, nil), nil, billingCacheSvc, nil, &service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil)
+	h := NewOpenAIGatewayHandler(gatewaySvc, service.NewConcurrencyService(nil), billingCacheSvc, service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg), nil, nil, nil, nil, cfg)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", strings.NewReader(`{"model":"gpt-5.1","input":"hello","stream":true}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set(string(middleware.ContextKeyAPIKey), &service.APIKey{ID: 1811, GroupID: &groupID, User: &service.User{ID: 1711, Status: service.StatusActive}, Group: &service.Group{ID: groupID, Platform: service.PlatformOpenAI, Status: service.StatusActive}})
+	c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 1711, Concurrency: 0})
+
+	h.Responses(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, int32(0), secondHits.Load(), "response.created commits the attempt and forbids account replay")
+	require.Equal(t, 1, strings.Count(rec.Body.String(), `"type":"response.created"`))
+	require.Equal(t, 1, strings.Count(rec.Body.String(), `"type":"response.failed"`))
+	require.Contains(t, rec.Body.String(), "event: response.failed\n")
 }
 
 func TestOpenAIResponsesWebSocket_FailoverOnUpstreamUsageLimitEvent(t *testing.T) {

@@ -292,3 +292,28 @@ func TestWriteOpenAIUpstreamClientError_PayloadShape(t *testing.T) {
 		})
 	}
 }
+
+func TestWriteOpenAIUpstreamClientError_PreservesDetailEnvelope(t *testing.T) {
+	c, rec := newOpenAIUpstreamErrorTestContext(t)
+	body := []byte(`{"detail":"Unsupported parameter: max_output_tokens","request_id":"req_123"}`)
+
+	writeOpenAIUpstreamClientError(c, http.StatusBadRequest, body, "Unsupported parameter: max_output_tokens")
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.JSONEq(t, string(body), rec.Body.String(), "detail 风格的上游 JSON 应完整返回，不得重建成通用 error envelope")
+}
+
+func TestHandleErrorResponsePassthrough_Deterministic400PreservesDetailEnvelope(t *testing.T) {
+	c, rec := newOpenAIUpstreamErrorTestContext(t)
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+	body := []byte(`{"detail":"Unsupported parameter: max_output_tokens","request_id":"req_123"}`)
+	resp := newOpenAIUpstreamErrorResponse(http.StatusBadRequest, string(body))
+
+	err := svc.handleErrorResponsePassthrough(
+		context.Background(), resp, c, newOpenAIUpstreamErrorTestAccount(), nil, body,
+	)
+
+	require.Error(t, err)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.JSONEq(t, string(body), rec.Body.String())
+}

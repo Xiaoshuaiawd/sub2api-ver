@@ -160,6 +160,20 @@ func TestResolveOpenAIWSFallbackErrorResponse(t *testing.T) {
 	})
 }
 
+func TestNewOpenAIWSBridgeFailoverError(t *testing.T) {
+	err := newOpenAIWSBridgeFailoverError(
+		&Account{ID: 42, Platform: PlatformOpenAI},
+		wrapOpenAIWSFallback("read_event", errors.New("connection reset")),
+	)
+	require.NotNil(t, err)
+	require.Equal(t, http.StatusBadGateway, err.StatusCode)
+	require.Equal(t, GatewayFailureStageInference, err.Stage)
+	require.Equal(t, GatewayFailureScopeAccount, err.Scope)
+	require.Equal(t, GatewayFailureReason("openai_ws_bridge_transport"), err.Reason)
+	require.Equal(t, NextAccountRetry, err.NextAccountAction)
+	require.Contains(t, string(err.ResponseBody), "connection reset")
+}
+
 func TestOpenAIWSFallbackCooling(t *testing.T) {
 	svc := &OpenAIGatewayService{cfg: &config.Config{}}
 	svc.cfg.Gateway.OpenAIWS.FallbackCooldownSeconds = 1

@@ -71,8 +71,17 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 	}
 	wsDecision := s.getOpenAIWSProtocolResolver().Resolve(account)
-	// 仅允许 WS 入站请求走 WS 上游，避免出现 HTTP -> WS 协议混用。
-	wsDecision = resolveOpenAIWSDecisionByClientTransport(wsDecision, GetOpenAIClientTransport(c))
+	httpIngressBridgeEnabled := s != nil && s.cfg != nil &&
+		s.cfg.Gateway.OpenAIWS.HTTPIngressBridgeEnabled && isBareOpenAIResponsesHTTPPath(c)
+	wsDecision = resolveOpenAIWSDecisionByClientTransport(
+		wsDecision,
+		GetOpenAIClientTransport(c),
+		httpIngressBridgeEnabled,
+	)
+	setOpenAIWSHTTPIngressBridge(c,
+		GetOpenAIClientTransport(c) == OpenAIClientTransportHTTP &&
+			wsDecision.Transport == OpenAIUpstreamTransportResponsesWebsocketV2,
+	)
 	passthroughEnabled := account.IsOpenAIPassthroughEnabled()
 	compactPath := isOpenAIResponsesCompactPath(c)
 	if shouldFlattenOpenAIResponsesNamespaces(account, wsDecision.Transport, passthroughEnabled, compactPath) {
@@ -794,6 +803,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				wsResult.BillingModel = imageBillingModel
 			}
 			return wsResult, nil
+		}
+		if isOpenAIWSHTTPIngressBridge(c) && c != nil && c.Writer != nil && !c.Writer.Written() && ctx.Err() == nil {
+			if _, retryable := classifyOpenAIWSReconnectReason(wsErr); retryable {
+				return nil, newOpenAIWSBridgeFailoverError(account, wsErr)
+			}
 		}
 		s.writeOpenAIWSFallbackErrorResponse(c, account, wsErr)
 		return nil, wsErr

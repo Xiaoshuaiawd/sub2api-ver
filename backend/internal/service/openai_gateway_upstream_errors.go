@@ -237,6 +237,32 @@ const OpenAIRequestBodyTooLargeClientMessage = "Request payload is too large"
 
 const openAIRequestBodyTooLargeReason = GatewayFailureReason("openai_request_body_too_large")
 
+const openAIWSBridgeFailureReason = GatewayFailureReason("openai_ws_bridge_transport")
+
+func newOpenAIWSBridgeFailoverError(account *Account, wsErr error) *UpstreamFailoverError {
+	statusCode, _, _, upstreamMessage, ok := resolveOpenAIWSFallbackErrorResponse(wsErr)
+	if !ok || statusCode == 0 {
+		statusCode = http.StatusBadGateway
+	}
+	if strings.TrimSpace(upstreamMessage) == "" && wsErr != nil {
+		upstreamMessage = sanitizeUpstreamErrorMessage(wsErr.Error())
+	}
+	if strings.TrimSpace(upstreamMessage) == "" {
+		upstreamMessage = "Upstream WebSocket request failed"
+	}
+	if account != nil {
+		upstreamMessage = sanitizeUpstreamErrorMessage(upstreamMessage)
+	}
+	return &UpstreamFailoverError{
+		StatusCode:        statusCode,
+		ResponseBody:      []byte(upstreamMessage),
+		Stage:             GatewayFailureStageInference,
+		Scope:             GatewayFailureScopeAccount,
+		Reason:            openAIWSBridgeFailureReason,
+		NextAccountAction: NextAccountRetry,
+	}
+}
+
 func isOpenAIRequestBodyTooLargeError(statusCode int, upstreamMsg string, upstreamBody []byte) bool {
 	return statusCode == http.StatusRequestEntityTooLarge && !isOpenAIContextWindowError(upstreamMsg, upstreamBody)
 }

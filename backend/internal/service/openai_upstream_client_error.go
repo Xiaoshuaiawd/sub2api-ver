@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -37,6 +38,15 @@ func isOpenAIDeterministicClientError(statusCode int) bool {
 // redactAgentIdentitySensitiveBody；这里不重复清洗，也不回落读取原始 body 的
 // message，避免绕开那两道脱敏。
 func writeOpenAIUpstreamClientError(c *gin.Context, statusCode int, body []byte, upstreamMsg string) {
+	// Some OpenAI-compatible upstreams (notably FastAPI services) return
+	// {"detail":"..."} instead of an OpenAI error envelope. Rebuilding that
+	// response would discard every top-level diagnostic field, so preserve the
+	// complete JSON object after the caller has applied credential redaction.
+	if json.Valid(body) && strings.TrimSpace(gjson.GetBytes(body, "detail").String()) != "" {
+		c.Data(statusCode, "application/json; charset=utf-8", body)
+		return
+	}
+
 	errorPayload := gin.H{"type": openAIUpstreamClientErrorFallbackType}
 	if errType := strings.TrimSpace(gjson.GetBytes(body, "error.type").String()); errType != "" {
 		errorPayload["type"] = errType

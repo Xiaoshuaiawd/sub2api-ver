@@ -436,6 +436,9 @@ func TestLoadDefaultOpenAIWSConfig(t *testing.T) {
 	if !cfg.Gateway.OpenAIWS.Enabled {
 		t.Fatalf("Gateway.OpenAIWS.Enabled = false, want true")
 	}
+	if cfg.Gateway.OpenAIWS.HTTPIngressBridgeEnabled {
+		t.Fatalf("Gateway.OpenAIWS.HTTPIngressBridgeEnabled = true, want false")
+	}
 	if !cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 {
 		t.Fatalf("Gateway.OpenAIWS.ResponsesWebsocketsV2 = false, want true")
 	}
@@ -542,6 +545,15 @@ func TestLoadDefaultOpenAIWSConfig(t *testing.T) {
 	if cfg.Gateway.OpenAIWS.MaxIngressConnectionsPerAPIKey != 64 {
 		t.Fatalf("Gateway.OpenAIWS.MaxIngressConnectionsPerAPIKey = %d, want 64", cfg.Gateway.OpenAIWS.MaxIngressConnectionsPerAPIKey)
 	}
+}
+
+func TestLoadOpenAIWSHTTPIngressBridgeFromEnv(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("GATEWAY_OPENAI_WS_HTTP_INGRESS_BRIDGE_ENABLED", "true")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.True(t, cfg.Gateway.OpenAIWS.HTTPIngressBridgeEnabled)
 }
 
 func TestLoadOpenAIWSClientFirstMessageTimeoutFromEnv(t *testing.T) {

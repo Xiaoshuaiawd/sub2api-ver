@@ -359,6 +359,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		mappedModelBytes = []byte(mappedModel)
 	}
 	bufferedStreamEvents := make([][]byte, 0, 4)
+	httpIngressBridge := isOpenAIWSHTTPIngressBridge(c)
 	eventCount := 0
 	tokenEventCount := 0
 	terminalEventCount := 0
@@ -660,8 +661,13 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		}
 
 		if reqStream {
-			// 在首个 token 前先缓冲事件（如 response.created），
-			// 以便上游早期断连时仍可安全回退到 HTTP，不给下游发送半截流。
+			// WS ingress keeps its existing pre-token safety buffer. HTTP ingress
+			// bridge emits response.created immediately so the HTTP client observes
+			// upstream creation latency through standard SSE.
+			if httpIngressBridge && eventType == "response.created" {
+				emitStreamMessage(message, true)
+				continue
+			}
 			shouldBuffer := firstTokenMs == nil && !isTokenEvent && !isTerminalEvent
 			if shouldBuffer {
 				buffered := make([]byte, len(message))

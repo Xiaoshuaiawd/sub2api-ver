@@ -742,7 +742,11 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 	// context-window 超限是确定性请求失败（shouldFailoverOpenAIPassthroughResponse
 	// 已保证不切号），其文案对客户端可操作（如触发自动压缩）；在净化信封内保留
 	// 脱敏后的上游消息，而不是抹成通用文案。
-	if isOpenAIContextWindowError(upstreamMsg, body) && upstreamMsg != "" {
+	if isOpenAIDeterministicClientError(resp.StatusCode) && json.Valid(body) &&
+		strings.TrimSpace(gjson.GetBytes(body, "detail").String()) != "" {
+		writeOpenAIPassthroughErrorHeaders(c.Writer.Header(), resp.Header)
+		c.Data(resp.StatusCode, "application/json; charset=utf-8", body)
+	} else if isOpenAIContextWindowError(upstreamMsg, body) && upstreamMsg != "" {
 		writeOpenAIPassthroughErrorEnvelope(c, resp.StatusCode, resp.Header, upstreamMsg)
 	} else {
 		writeSanitizedOpenAIPassthroughError(c, resp.StatusCode, resp.Header)

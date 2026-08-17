@@ -89,19 +89,37 @@ func TestOpenAIClientTransport_NilAndUnknownInput(t *testing.T) {
 	require.False(t, exists)
 }
 
+func TestOpenAIWSHTTPIngressBridgeContextCanBeCleared(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	setOpenAIWSHTTPIngressBridge(c, true)
+	require.True(t, isOpenAIWSHTTPIngressBridge(c))
+	setOpenAIWSHTTPIngressBridge(c, false)
+	require.False(t, isOpenAIWSHTTPIngressBridge(c))
+}
+
 func TestResolveOpenAIWSDecisionByClientTransport(t *testing.T) {
 	base := OpenAIWSProtocolDecision{
 		Transport: OpenAIUpstreamTransportResponsesWebsocketV2,
 		Reason:    "ws_v2_enabled",
 	}
 
-	httpDecision := resolveOpenAIWSDecisionByClientTransport(base, OpenAIClientTransportHTTP)
+	httpDecision := resolveOpenAIWSDecisionByClientTransport(base, OpenAIClientTransportHTTP, false)
 	require.Equal(t, OpenAIUpstreamTransportHTTPSSE, httpDecision.Transport)
 	require.Equal(t, "client_protocol_http", httpDecision.Reason)
 
-	wsDecision := resolveOpenAIWSDecisionByClientTransport(base, OpenAIClientTransportWS)
+	bridgeDecision := resolveOpenAIWSDecisionByClientTransport(base, OpenAIClientTransportHTTP, true)
+	require.Equal(t, OpenAIUpstreamTransportResponsesWebsocketV2, bridgeDecision.Transport)
+	require.Equal(t, "http_ingress_bridge_ws_v2_enabled", bridgeDecision.Reason)
+
+	baseHTTP := openAIWSHTTPDecision("account_disabled")
+	require.Equal(t, baseHTTP, resolveOpenAIWSDecisionByClientTransport(baseHTTP, OpenAIClientTransportHTTP, true))
+
+	wsDecision := resolveOpenAIWSDecisionByClientTransport(base, OpenAIClientTransportWS, false)
 	require.Equal(t, base, wsDecision)
 
-	unknownDecision := resolveOpenAIWSDecisionByClientTransport(base, OpenAIClientTransportUnknown)
+	unknownDecision := resolveOpenAIWSDecisionByClientTransport(base, OpenAIClientTransportUnknown, false)
 	require.Equal(t, base, unknownDecision)
 }
