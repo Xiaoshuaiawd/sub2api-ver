@@ -235,13 +235,13 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
 		forwardStart := time.Now()
 
-		forwardBody := body
+		channelMappedModel := ""
 		if channelMapping.Mapped {
-			forwardBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
+			channelMappedModel = channelMapping.MappedModel
 		}
 		autoPromptCacheIdentity := ""
 		if requestPlatform == service.PlatformOpenAI {
-			attemptModel := strings.TrimSpace(gjson.GetBytes(forwardBody, "model").String())
+			attemptModel := strings.TrimSpace(channelMappedModel)
 			if attemptModel == "" {
 				attemptModel = reqModel
 			}
@@ -251,7 +251,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 				apiKey.ID,
 				account.GetMappedModel(attemptModel),
 				sessionHash,
-				forwardBody,
+				body,
 			)
 		}
 		promptCacheRouting = resolveOpenAIChatPromptCacheRouting(
@@ -268,7 +268,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					accountReleaseFunc()
 				}
 			}()
-			return h.gatewayService.ForwardAsChatCompletions(c.Request.Context(), c, account, forwardBody, promptCacheKey, "")
+			return h.gatewayService.ForwardAsChatCompletions(c.Request.Context(), c, account, body, promptCacheKey, channelMappedModel)
 		}()
 		cyberBlockKeyChat := ""
 		if service.GetOpsCyberPolicy(c) != nil {
