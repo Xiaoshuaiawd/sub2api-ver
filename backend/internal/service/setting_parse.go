@@ -231,6 +231,9 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 
 		// 分组隔离（默认不允许未分组 Key 调度）
 		SettingKeyAllowUngroupedKeyScheduling:                        "false",
+		SettingKeyOpenAIDefaultProxyEnabled:                          "true",
+		SettingKeyOpenAIDefaultProxyURL:                              DefaultOpenAIDefaultProxyURL,
+		SettingKeyOpenAIDefaultProxyFailurePolicy:                    string(OpenAIProxyFailurePolicyFailClosed),
 		SettingKeyOpenAILowUpstreamRatePriorityEnabled:               "false",
 		SettingKeyOpenAIOAuthSchedulingRateMultiplier:                "1",
 		SettingKeyEnableAnthropicCacheTTL1hInjection:                 "false",
@@ -904,6 +907,10 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.PaymentVisibleMethodWxpaySource = NormalizeVisibleMethodSource("wxpay", settings[SettingPaymentVisibleMethodWxpaySource])
 	result.PaymentVisibleMethodAlipayEnabled = settings[SettingPaymentVisibleMethodAlipayEnabled] == "true"
 	result.PaymentVisibleMethodWxpayEnabled = settings[SettingPaymentVisibleMethodWxpayEnabled] == "true"
+	openAIProxySettings := parseOpenAIProxySettings(settings)
+	result.OpenAIDefaultProxyEnabled = openAIProxySettings.Enabled
+	result.OpenAIDefaultProxyURL = openAIProxySettings.ProxyURL
+	result.OpenAIDefaultProxyFailurePolicy = openAIProxySettings.FailurePolicy
 	result.OpenAILowUpstreamRatePriorityEnabled = settings[SettingKeyOpenAILowUpstreamRatePriorityEnabled] == "true"
 	result.OpenAIOAuthSchedulingRateMultiplier = parseOpenAIOAuthSchedulingRateMultiplier(settings[SettingKeyOpenAIOAuthSchedulingRateMultiplier])
 	result.OpenAIAdvancedSchedulerEnabled = settings[openAIAdvancedSchedulerSettingKey] == "true"
