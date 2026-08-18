@@ -220,7 +220,7 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 		return attempt(req, proxyURL, accountID, accountConcurrency)
 	}
 	plan := s.openAIProxyPolicy.Resolve(req.Context(), proxyURL)
-	return executeOpenAIProxyAttempts(req, plan, accountID, accountConcurrency, attempt)
+	return executeOpenAIProxyAttempts(req, plan, accountID, accountConcurrency, openAIProxyMetricsRecorder(s.openAIProxyPolicy), attempt)
 }
 
 func (s *httpUpstreamService) doSingleAttempt(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
@@ -290,7 +290,7 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 		return attempt(req, proxyURL, accountID, accountConcurrency, profile)
 	}
 	plan := s.openAIProxyPolicy.Resolve(req.Context(), proxyURL)
-	return executeOpenAIProxyAttempts(req, plan, accountID, accountConcurrency, func(attemptReq *http.Request, candidateURL string, attemptAccountID int64, attemptConcurrency int) (*http.Response, error) {
+	return executeOpenAIProxyAttempts(req, plan, accountID, accountConcurrency, openAIProxyMetricsRecorder(s.openAIProxyPolicy), func(attemptReq *http.Request, candidateURL string, attemptAccountID int64, attemptConcurrency int) (*http.Response, error) {
 		return attempt(attemptReq, candidateURL, attemptAccountID, attemptConcurrency, profile)
 	})
 }
@@ -347,6 +347,7 @@ func executeOpenAIProxyAttempts(
 	plan service.OpenAIProxyPlan,
 	accountID int64,
 	accountConcurrency int,
+	metrics service.OpenAIProxyMetricsRecorder,
 	attempt func(*http.Request, string, int64, int) (*http.Response, error),
 ) (*http.Response, error) {
 	attemptRequests, err := prepareOpenAIProxyAttempts(req, plan)
@@ -359,8 +360,14 @@ func executeOpenAIProxyAttempts(
 
 	var lastErr error
 	for index, candidate := range plan.Candidates {
-		if candidate.Source == service.OpenAIProxyCandidateDirect {
+		if metrics != nil {
+			metrics.RecordAttempt(candidate.Source)
+		}
+		if candidate.Source == service.OpenAIProxyCandidateDirect && index > 0 {
 			slog.Warn("OpenAI upstream falling back to direct egress", "account_id", accountID)
+			if metrics != nil {
+				metrics.RecordDirectFallback()
+			}
 		}
 		resp, attemptErr := attempt(attemptRequests[index], candidate.URL, accountID, accountConcurrency)
 		if resp != nil || attemptErr == nil {
@@ -368,14 +375,28 @@ func executeOpenAIProxyAttempts(
 			return resp, attemptErr
 		}
 		lastErr = attemptErr
+		if metrics != nil {
+			metrics.RecordTransportFailure(service.OpenAIProxyTransportHTTP)
+		}
 		if contextErr := req.Context().Err(); contextErr != nil {
 			closePreparedOpenAIProxyAttempts(attemptRequests, index+1)
 			return nil, contextErr
 		}
+		if metrics != nil && index+1 < len(plan.Candidates) {
+			metrics.RecordCandidateSwitch()
+		}
 	}
 
 	lastSource := plan.Candidates[len(plan.Candidates)-1].Source
+	if metrics != nil && plan.IsFailClosed() {
+		metrics.RecordFailClosedExhaustion()
+	}
 	return nil, fmt.Errorf("OpenAI upstream transport failed after %s candidate: %w", lastSource, lastErr)
+}
+
+func openAIProxyMetricsRecorder(policy service.OpenAIProxyPolicyProvider) service.OpenAIProxyMetricsRecorder {
+	recorder, _ := policy.(service.OpenAIProxyMetricsRecorder)
+	return recorder
 }
 
 func prepareOpenAIProxyAttempts(req *http.Request, plan service.OpenAIProxyPlan) ([]*http.Request, error) {

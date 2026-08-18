@@ -5,6 +5,8 @@ package service
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -332,4 +334,65 @@ func TestSettingServiceUpdateSettingsRejectsInvalidOpenAIProxyBeforeWrite(t *tes
 
 	require.Error(t, err)
 	require.Nil(t, repo.updates)
+}
+
+func TestOpenAIProxyPolicyHealthProbeParsesCloudflareTrace(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ip=203.0.113.4\nwarp=on\n"))
+	}))
+	defer server.Close()
+
+	policy := newOpenAIProxyPolicyForTest(DefaultOpenAIProxySettings(), nil, time.Now())
+	policy.instanceID = "node-a"
+	policy.healthTraceURL = server.URL
+	var usedProxy string
+	policy.healthClientFactory = func(proxyURL string) (*http.Client, error) {
+		usedProxy = proxyURL
+		return server.Client(), nil
+	}
+
+	status := policy.checkHealth(context.Background())
+
+	require.Equal(t, DefaultOpenAIDefaultProxyURL, usedProxy)
+	require.Equal(t, "node-a", status.InstanceID)
+	require.True(t, status.Healthy)
+	require.Equal(t, "203.0.113.4", status.EgressIP)
+	require.NotZero(t, status.CheckedAt)
+	require.Empty(t, status.Error)
+	require.Equal(t, status, policy.Status())
+}
+
+func TestOpenAIProxyPolicyMetricsSnapshot(t *testing.T) {
+	policy := newOpenAIProxyPolicyForTest(DefaultOpenAIProxySettings(), nil, time.Now())
+
+	policy.RecordAttempt(OpenAIProxyCandidateAccount)
+	policy.RecordAttempt(OpenAIProxyCandidateNode)
+	policy.RecordCandidateSwitch()
+	policy.RecordFailClosedExhaustion()
+	policy.RecordDirectFallback()
+	policy.RecordTransportFailure(OpenAIProxyTransportHTTP)
+	policy.RecordTransportFailure(OpenAIProxyTransportWebSocket)
+
+	metrics := policy.Metrics()
+	require.Equal(t, uint64(1), metrics.AttemptsBySource.Account)
+	require.Equal(t, uint64(1), metrics.AttemptsBySource.Node)
+	require.Equal(t, uint64(1), metrics.CandidateSwitches)
+	require.Equal(t, uint64(1), metrics.FailClosedExhaustions)
+	require.Equal(t, uint64(1), metrics.DirectFallbacks)
+	require.Equal(t, uint64(1), metrics.HTTPTransportFailures)
+	require.Equal(t, uint64(1), metrics.WebSocketTransportFailures)
+}
+
+func TestOpenAIProxyPlanIsFailClosedOnlyWithNodeAndWithoutDirect(t *testing.T) {
+	require.True(t, (OpenAIProxyPlan{Candidates: []OpenAIProxyCandidate{
+		{Source: OpenAIProxyCandidateAccount},
+		{Source: OpenAIProxyCandidateNode},
+	}}).IsFailClosed())
+	require.False(t, (OpenAIProxyPlan{Candidates: []OpenAIProxyCandidate{
+		{Source: OpenAIProxyCandidateAccount},
+	}}).IsFailClosed())
+	require.False(t, (OpenAIProxyPlan{Candidates: []OpenAIProxyCandidate{
+		{Source: OpenAIProxyCandidateNode},
+		{Source: OpenAIProxyCandidateDirect},
+	}}).IsFailClosed())
 }
