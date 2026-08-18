@@ -34,6 +34,12 @@ func newTestAgentIdentityKey(t *testing.T) (agentIdentityKey, string) {
 	}, base64.StdEncoding.EncodeToString(der)
 }
 
+func newAgentIdentityDirectTestUpstream() HTTPUpstream {
+	return &codexModelsHTTPUpstreamStub{do: func(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+		return http.DefaultClient.Do(req)
+	}}
+}
+
 func TestBuildAgentAssertionMatchesCodexEnvelopeAndSignature(t *testing.T) {
 	key, _ := newTestAgentIdentityKey(t)
 	now := time.Date(2026, 7, 14, 8, 9, 10, 0, time.FixedZone("UTC+8", 8*60*60))
@@ -113,18 +119,30 @@ func TestRegisterAgentIdentityTaskAcceptsPlaintextAndEncryptedResponses(t *testi
 	oldBase := openAIAgentIdentityAuthAPIBaseURL
 	openAIAgentIdentityAuthAPIBaseURL = server.URL
 	t.Cleanup(func() { openAIAgentIdentityAuthAPIBaseURL = oldBase })
+	proxyID := int64(8)
 
-	account := &Account{ID: 1, Type: AccountTypeOAuth, Platform: PlatformOpenAI, Credentials: map[string]any{
+	account := &Account{ID: 1, Type: AccountTypeOAuth, Platform: PlatformOpenAI, ProxyID: &proxyID, Proxy: &Proxy{Protocol: "http", Host: "account-proxy.test", Port: 8080}, Concurrency: 3, Credentials: map[string]any{
 		"auth_mode":         OpenAIAuthModeAgentIdentity,
 		"agent_runtime_id":  key.runtimeID,
 		"agent_private_key": privateKey,
 	}}
-	taskID, err := registerAgentIdentityTask(context.Background(), account)
+	upstreamCalls := 0
+	upstream := &codexModelsHTTPUpstreamStub{do: func(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+		upstreamCalls++
+		require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(req.Context()))
+		require.True(t, HTTPUpstreamRedirectsDisabled(req.Context()))
+		require.Equal(t, "http://account-proxy.test:8080", proxyURL)
+		require.Equal(t, account.ID, accountID)
+		require.Equal(t, account.Concurrency, accountConcurrency)
+		return server.Client().Do(req)
+	}}
+	taskID, err := registerAgentIdentityTask(context.Background(), upstream, account)
 	require.NoError(t, err)
 	require.Equal(t, "task-plain", taskID)
-	taskID, err = registerAgentIdentityTask(context.Background(), account)
+	taskID, err = registerAgentIdentityTask(context.Background(), upstream, account)
 	require.NoError(t, err)
 	require.Equal(t, "task-encrypted", taskID)
+	require.Equal(t, 2, upstreamCalls)
 }
 
 func TestEnsureAgentIdentityTaskPersistsAndRedactsCredentials(t *testing.T) {
@@ -144,7 +162,7 @@ func TestEnsureAgentIdentityTaskPersistsAndRedactsCredentials(t *testing.T) {
 		"agent_private_key":  privateKey,
 		"chatgpt_account_id": "account-test",
 	}}
-	service := &OpenAIGatewayService{accountRepo: repo}
+	service := &OpenAIGatewayService{accountRepo: repo, httpUpstream: newAgentIdentityDirectTestUpstream()}
 	require.NoError(t, service.ensureAgentIdentityTask(context.Background(), account, ""))
 	require.Equal(t, "task-persisted", account.GetCredential("task_id"))
 	require.Equal(t, "task-persisted", repo.credentials["task_id"])
@@ -181,11 +199,12 @@ func TestEnsureAgentIdentityTaskSharesLockAcrossServicesForSameAccount(t *testin
 
 	start := make(chan struct{})
 	errors := make(chan error, 2)
+	httpUpstream := newAgentIdentityDirectTestUpstream()
 	requests := []*Account{cloneAgentIdentityTestAccount(account), cloneAgentIdentityTestAccount(account)}
 	for _, request := range requests {
 		go func() {
 			<-start
-			errors <- ensureAgentIdentityTaskForAccount(context.Background(), repo, nil, &sync.Mutex{}, request, "")
+			errors <- ensureAgentIdentityTaskForAccount(context.Background(), repo, nil, &sync.Mutex{}, httpUpstream, request, "")
 		}()
 	}
 	close(start)

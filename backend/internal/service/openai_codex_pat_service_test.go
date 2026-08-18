@@ -2,8 +2,9 @@ package service
 
 import (
 	"context"
+	"io"
 	"net/http"
-	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
@@ -14,26 +15,34 @@ func TestOpenAIOAuthService_ValidateCodexPersonalAccessToken(t *testing.T) {
 	var gotAuthorization string
 	var gotOriginator string
 	var gotUserAgent string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var gotProxyURL string
+	upstream := &codexModelsHTTPUpstreamStub{do: func(r *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
 		gotAuthorization = r.Header.Get("authorization")
 		gotOriginator = r.Header.Get("originator")
 		gotUserAgent = r.Header.Get("user-agent")
-		w.Header().Set("content-type", "application/json")
-		_, _ = w.Write([]byte(`{
+		gotProxyURL = proxyURL
+		require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(r.Context()))
+		require.True(t, HTTPUpstreamRedirectsDisabled(r.Context()))
+		require.Equal(t, int64(0), accountID)
+		require.Equal(t, 1, accountConcurrency)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body: io.NopCloser(strings.NewReader(`{
 			"email":"user@example.com",
 			"chatgpt_user_id":"user-123",
 			"chatgpt_account_id":"acct-123",
 			"chatgpt_plan_type":"plus",
 			"chatgpt_account_is_fedramp":true
-		}`))
-	}))
-	defer server.Close()
+		}`)),
+		}, nil
+	}}
 
 	originalURL := openAICodexPATWhoamiURL
-	openAICodexPATWhoamiURL = server.URL
+	openAICodexPATWhoamiURL = "https://auth.openai.test/api/accounts/v1/user-auth-credential/whoami"
 	defer func() { openAICodexPATWhoamiURL = originalURL }()
 
 	svc := NewOpenAIOAuthService(nil, nil)
+	svc.httpUpstream = upstream
 	defer svc.Stop()
 
 	info, err := svc.ValidateCodexPersonalAccessToken(context.Background(), " at-test-token ", "")
@@ -41,6 +50,7 @@ func TestOpenAIOAuthService_ValidateCodexPersonalAccessToken(t *testing.T) {
 	require.Equal(t, "Bearer at-test-token", gotAuthorization)
 	require.Equal(t, openai.CodexDefaultOriginator, gotOriginator)
 	require.Equal(t, codexCLIUserAgent, gotUserAgent)
+	require.Empty(t, gotProxyURL, "empty account proxy must remain empty so the shared policy selects WARP")
 	require.Equal(t, OpenAIAuthModePersonalAccessToken, info.AuthMode)
 	require.Equal(t, "user@example.com", info.Email)
 	require.Equal(t, "user-123", info.ChatGPTUserID)

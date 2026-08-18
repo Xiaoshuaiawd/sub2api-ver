@@ -83,6 +83,7 @@ func TestOpenAIOAuthService_RefreshAccountToken_PATIgnoresStaleRefreshToken(t *t
 	defer func() { openAICodexPATWhoamiURL = originalURL }()
 
 	svc := NewOpenAIOAuthService(nil, client)
+	svc.httpUpstream = newAgentIdentityDirectTestUpstream()
 	defer svc.Stop()
 
 	account := &Account{
@@ -162,6 +163,7 @@ func TestOpenAITokenRefresher_Refresh_PATRemovesStaleOAuthFields(t *testing.T) {
 	defer func() { openAICodexPATWhoamiURL = originalURL }()
 
 	svc := NewOpenAIOAuthService(nil, nil)
+	svc.httpUpstream = newAgentIdentityDirectTestUpstream()
 	defer svc.Stop()
 	refresher := NewOpenAITokenRefresher(svc, nil)
 

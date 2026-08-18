@@ -6,13 +6,29 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
-	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
+
+type openAIOAuthHTTPUpstreamStub struct {
+	do    func(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error)
+	calls int
+}
+
+func (s *openAIOAuthHTTPUpstreamStub) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+	s.calls++
+	return s.do(req, proxyURL, accountID, accountConcurrency)
+}
+
+func (s *openAIOAuthHTTPUpstreamStub) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return s.Do(req, proxyURL, accountID, accountConcurrency)
+}
 
 type OpenAIOAuthServiceSuite struct {
 	suite.Suite
@@ -36,7 +52,120 @@ func (s *OpenAIOAuthServiceSuite) TearDownTest() {
 
 func (s *OpenAIOAuthServiceSuite) setupServer(handler http.HandlerFunc) {
 	s.srv = newLocalTestServer(s.T(), handler)
-	s.svc = &openaiOAuthService{tokenURL: s.srv.URL}
+	s.svc = &openaiOAuthService{
+		tokenURL: s.srv.URL,
+		httpUpstream: &openAIOAuthHTTPUpstreamStub{do: func(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+			return s.srv.Client().Do(req)
+		}},
+	}
+}
+
+func TestOpenAIOAuthExchangeCodeUsesOpenAIProxyProfileWithEmptyPrimary(t *testing.T) {
+	var gotProxyURL string
+	var gotForm url.Values
+	upstream := &openAIOAuthHTTPUpstreamStub{do: func(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+		gotProxyURL = proxyURL
+		require.Equal(t, service.HTTPUpstreamProfileOpenAI, service.HTTPUpstreamProfileFromContext(req.Context()))
+		require.Equal(t, int64(0), accountID)
+		require.Equal(t, 1, accountConcurrency)
+		require.Equal(t, http.MethodPost, req.Method)
+		require.Equal(t, "application/x-www-form-urlencoded", req.Header.Get("Content-Type"))
+		require.Equal(t, "codex-cli/0.91.0", req.Header.Get("User-Agent"))
+		require.NoError(t, req.ParseForm())
+		gotForm = req.PostForm
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"access_token":"at","refresh_token":"rt","expires_in":3600}`)),
+		}, nil
+	}}
+	svc := &openaiOAuthService{tokenURL: "https://auth.openai.test/oauth/token", httpUpstream: upstream}
+
+	result, err := svc.ExchangeCode(context.Background(), "code", "verifier", "", "", "")
+
+	require.NoError(t, err)
+	require.Equal(t, "at", result.AccessToken)
+	require.Empty(t, gotProxyURL, "empty account proxy must remain empty so the shared policy selects WARP")
+	require.Equal(t, "authorization_code", gotForm.Get("grant_type"))
+	require.Equal(t, openai.ClientID, gotForm.Get("client_id"))
+	require.Equal(t, "code", gotForm.Get("code"))
+	require.Equal(t, openai.DefaultRedirectURI, gotForm.Get("redirect_uri"))
+	require.Equal(t, "verifier", gotForm.Get("code_verifier"))
+}
+
+func TestOpenAIOAuthRefreshUsesOpenAIProxyProfileAndPrimary(t *testing.T) {
+	const primaryProxy = "http://account-proxy.test:8080"
+	var gotForm url.Values
+	upstream := &openAIOAuthHTTPUpstreamStub{do: func(req *http.Request, proxyURL string, _ int64, _ int) (*http.Response, error) {
+		require.Equal(t, primaryProxy, proxyURL)
+		require.Equal(t, service.HTTPUpstreamProfileOpenAI, service.HTTPUpstreamProfileFromContext(req.Context()))
+		require.NoError(t, req.ParseForm())
+		gotForm = req.PostForm
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"access_token":"at2","refresh_token":"rt2","expires_in":3600}`)),
+		}, nil
+	}}
+	svc := &openaiOAuthService{tokenURL: "https://auth.openai.test/oauth/token", httpUpstream: upstream}
+
+	result, err := svc.RefreshTokenWithClientID(context.Background(), "refresh-token", primaryProxy, "custom-client")
+
+	require.NoError(t, err)
+	require.Equal(t, "at2", result.AccessToken)
+	require.Equal(t, "refresh_token", gotForm.Get("grant_type"))
+	require.Equal(t, "refresh-token", gotForm.Get("refresh_token"))
+	require.Equal(t, "custom-client", gotForm.Get("client_id"))
+	require.Equal(t, openai.RefreshScopes, gotForm.Get("scope"))
+}
+
+func TestOpenAIOAuthHTTPResponseStopsAtSharedUpstream(t *testing.T) {
+	upstream := &openAIOAuthHTTPUpstreamStub{do: func(*http.Request, string, int64, int) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Body:       io.NopCloser(strings.NewReader("invalid grant")),
+		}, nil
+	}}
+	svc := &openaiOAuthService{tokenURL: "https://auth.openai.test/oauth/token", httpUpstream: upstream}
+
+	_, err := svc.ExchangeCode(context.Background(), "code", "verifier", "", "", "")
+
+	require.ErrorContains(t, err, "status 400")
+	require.Equal(t, 1, upstream.calls, "OAuth must not retry an HTTP response outside the shared transport policy")
+}
+
+func TestOpenAIOAuthErrorBodyIsBounded(t *testing.T) {
+	upstream := &openAIOAuthHTTPUpstreamStub{do: func(*http.Request, string, int64, int) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Body:       io.NopCloser(strings.NewReader(strings.Repeat("a", 16*1024) + "END_MARKER")),
+		}, nil
+	}}
+	svc := &openaiOAuthService{tokenURL: "https://auth.openai.test/oauth/token", httpUpstream: upstream}
+
+	_, err := svc.ExchangeCode(context.Background(), "code", "verifier", "", "", "")
+
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "END_MARKER")
+	require.Less(t, len(err.Error()), 8*1024)
+}
+
+func TestOpenAIOAuthErrorBodyRedactsTokens(t *testing.T) {
+	upstream := &openAIOAuthHTTPUpstreamStub{do: func(*http.Request, string, int64, int) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Body: io.NopCloser(strings.NewReader(
+				`{"error":"invalid_grant","access_token":"access-secret","refresh_token":"refresh-secret","code_verifier":"verifier-secret"}`,
+			)),
+		}, nil
+	}}
+	svc := &openaiOAuthService{tokenURL: "https://auth.openai.test/oauth/token", httpUpstream: upstream}
+
+	_, err := svc.RefreshToken(context.Background(), "refresh-secret", "")
+
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "access-secret")
+	require.NotContains(t, err.Error(), "refresh-secret")
+	require.NotContains(t, err.Error(), "verifier-secret")
+	require.Contains(t, err.Error(), `\"refresh_token\":\"***\"`)
 }
 
 func (s *OpenAIOAuthServiceSuite) TestExchangeCode_DefaultRedirectURI() {
@@ -205,15 +334,15 @@ func (s *OpenAIOAuthServiceSuite) TestRequestError_ClosedServer() {
 	require.ErrorContains(s.T(), err, "request failed")
 }
 
-func (s *OpenAIOAuthServiceSuite) TestExchangeCode_RequestErrorWithoutProxyReturnsProxyHint() {
+func (s *OpenAIOAuthServiceSuite) TestExchangeCode_RequestErrorWithoutPrimaryUsesSharedPolicyError() {
 	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	s.srv.Close()
 
 	_, err := s.svc.ExchangeCode(s.ctx, "code", "ver", openai.DefaultRedirectURI, "", "")
 
 	require.Error(s.T(), err)
-	require.Equal(s.T(), "OPENAI_OAUTH_PROXY_REQUIRED", infraerrors.Reason(err))
-	require.Contains(s.T(), infraerrors.Message(err), "no proxy is configured")
+	require.ErrorContains(s.T(), err, "request failed")
+	require.NotContains(s.T(), err.Error(), "no proxy is configured")
 }
 
 func (s *OpenAIOAuthServiceSuite) TestContextCancel() {
@@ -327,10 +456,14 @@ func (s *OpenAIOAuthServiceSuite) TestRefreshToken_NonSuccessStatus() {
 }
 
 func TestNewOpenAIOAuthClient_DefaultTokenURL(t *testing.T) {
-	client := NewOpenAIOAuthClient()
+	upstream := &openAIOAuthHTTPUpstreamStub{do: func(*http.Request, string, int64, int) (*http.Response, error) {
+		return nil, nil
+	}}
+	client := NewOpenAIOAuthClient(upstream)
 	svc, ok := client.(*openaiOAuthService)
 	require.True(t, ok)
 	require.Equal(t, openai.TokenURL, svc.tokenURL)
+	require.Same(t, upstream, svc.httpUpstream)
 }
 
 func TestOpenAIOAuthServiceSuite(t *testing.T) {
