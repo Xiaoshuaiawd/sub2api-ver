@@ -126,6 +126,21 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	if err := s.normalizeOpenAIAdvancedSchedulerOverrides(settings); err != nil {
 		return nil, err
 	}
+	openAIProxySettings := OpenAIProxySettings{
+		Enabled:       settings.OpenAIDefaultProxyEnabled,
+		ProxyURL:      settings.OpenAIDefaultProxyURL,
+		FailurePolicy: settings.OpenAIDefaultProxyFailurePolicy,
+	}
+	if strings.TrimSpace(openAIProxySettings.ProxyURL) == "" && strings.TrimSpace(string(openAIProxySettings.FailurePolicy)) == "" {
+		openAIProxySettings = DefaultOpenAIProxySettings()
+	}
+	normalizedOpenAIProxy, err := NormalizeOpenAIProxySettings(openAIProxySettings)
+	if err != nil {
+		return nil, infraerrors.BadRequest("INVALID_OPENAI_DEFAULT_PROXY", err.Error())
+	}
+	settings.OpenAIDefaultProxyEnabled = normalizedOpenAIProxy.Enabled
+	settings.OpenAIDefaultProxyURL = normalizedOpenAIProxy.ProxyURL
+	settings.OpenAIDefaultProxyFailurePolicy = normalizedOpenAIProxy.FailurePolicy
 	settings.PaymentVisibleMethodAlipaySource = alipaySource
 	settings.PaymentVisibleMethodWxpaySource = wxpaySource
 	settings.WeChatConnectAppID = strings.TrimSpace(settings.WeChatConnectAppID)
@@ -498,6 +513,9 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingPaymentVisibleMethodWxpaySource] = settings.PaymentVisibleMethodWxpaySource
 	updates[SettingPaymentVisibleMethodAlipayEnabled] = strconv.FormatBool(settings.PaymentVisibleMethodAlipayEnabled)
 	updates[SettingPaymentVisibleMethodWxpayEnabled] = strconv.FormatBool(settings.PaymentVisibleMethodWxpayEnabled)
+	updates[SettingKeyOpenAIDefaultProxyEnabled] = strconv.FormatBool(settings.OpenAIDefaultProxyEnabled)
+	updates[SettingKeyOpenAIDefaultProxyURL] = settings.OpenAIDefaultProxyURL
+	updates[SettingKeyOpenAIDefaultProxyFailurePolicy] = string(settings.OpenAIDefaultProxyFailurePolicy)
 	updates[SettingKeyOpenAILowUpstreamRatePriorityEnabled] = strconv.FormatBool(settings.OpenAILowUpstreamRatePriorityEnabled)
 	updates[SettingKeyOpenAIOAuthSchedulingRateMultiplier] = strconv.FormatFloat(settings.OpenAIOAuthSchedulingRateMultiplier, 'f', -1, 64)
 	updates[openAIAdvancedSchedulerSettingKey] = strconv.FormatBool(settings.OpenAIAdvancedSchedulerEnabled)

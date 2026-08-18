@@ -267,6 +267,9 @@ type SystemSettings struct {
 	PaymentVisibleMethodWxpayEnabled  bool
 
 	// OpenAI 账号调度
+	OpenAIDefaultProxyEnabled                              bool
+	OpenAIDefaultProxyURL                                  string
+	OpenAIDefaultProxyFailurePolicy                        OpenAIProxyFailurePolicy
 	OpenAILowUpstreamRatePriorityEnabled                   bool
 	OpenAIOAuthSchedulingRateMultiplier                    float64
 	OpenAIAdvancedSchedulerEnabled                         bool
