@@ -287,7 +287,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	}
 
 	writeLine := func(line string) {
-		if needModelReplace && upstreamModel != "" && strings.Contains(line, upstreamModel) {
+		if needModelReplace && strings.Contains(line, `"model"`) {
 			line = s.replaceModelInSSELine(line, upstreamModel, originalModel)
 		}
 		if clientDisconnected {
