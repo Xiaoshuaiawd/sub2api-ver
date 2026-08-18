@@ -109,6 +109,7 @@ func provideCleanup(
 	emailQueue *service.EmailQueueService,
 	billingCache *service.BillingCacheService,
 	usageRecordWorkerPool *service.UsageRecordWorkerPool,
+	openAIProxyPolicy *service.OpenAIProxyPolicyService,
 	subscriptionService *service.SubscriptionService,
 	oauth *service.OAuthService,
 	openaiOAuth *service.OpenAIOAuthService,
@@ -149,6 +150,12 @@ func provideCleanup(
 			{"OpenAIQuotaAutoResetService", func() error {
 				if openAIAutoReset != nil {
 					openAIAutoReset.Stop()
+				}
+				return nil
+			}},
+			{"OpenAIProxyPolicyService", func() error {
+				if openAIProxyPolicy != nil {
+					openAIProxyPolicy.Stop()
 				}
 				return nil
 			}},
