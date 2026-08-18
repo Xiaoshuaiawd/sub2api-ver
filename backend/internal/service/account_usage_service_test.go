@@ -2,9 +2,12 @@ package service
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 type accountUsageCodexProbeRepo struct {
@@ -139,6 +142,38 @@ func TestExtractOpenAICodexProbeUpdatesAccepts429WithCodexHeaders(t *testing.T) 
 	if got := updates["codex_7d_used_percent"]; got != 100.0 {
 		t.Fatalf("codex_7d_used_percent = %v, want 100", got)
 	}
+}
+
+func TestAccountUsageServiceOpenAIProbeUsesSharedProxyPolicy(t *testing.T) {
+	proxyID := int64(12)
+	account := &Account{
+		ID:          42,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		ProxyID:     &proxyID,
+		Proxy:       &Proxy{Protocol: "http", Host: "127.0.0.1", Port: 1},
+		Concurrency: 5,
+		Credentials: map[string]any{
+			"access_token":       "oauth-token",
+			"chatgpt_account_id": "chatgpt-account",
+		},
+	}
+	upstream := &codexModelsHTTPUpstreamStub{do: func(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+		require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(req.Context()))
+		require.Equal(t, "http://127.0.0.1:1", proxyURL)
+		require.Equal(t, account.ID, accountID)
+		require.Equal(t, account.Concurrency, accountConcurrency)
+		headers := make(http.Header)
+		headers.Set("x-codex-primary-used-percent", "10")
+		headers.Set("x-codex-primary-window-minutes", "300")
+		return &http.Response{StatusCode: http.StatusOK, Header: headers, Body: io.NopCloser(http.NoBody)}, nil
+	}}
+	svc := &AccountUsageService{httpUpstream: upstream}
+
+	updates, err := svc.probeOpenAICodexSnapshot(context.Background(), account)
+
+	require.NoError(t, err)
+	require.Equal(t, 10.0, updates["codex_5h_used_percent"])
 }
 
 func TestAccountUsageService_PersistOpenAICodexProbeSnapshotOnlyUpdatesExtra(t *testing.T) {
