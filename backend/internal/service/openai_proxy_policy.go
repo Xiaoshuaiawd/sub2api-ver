@@ -4,7 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
+	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -12,11 +16,18 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyurl"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyutil"
 )
 
 const DefaultOpenAIDefaultProxyURL = "socks5h://warp-proxy:1080"
 
-const defaultOpenAIProxySnapshotTTL = 30 * time.Second
+const (
+	defaultOpenAIProxySnapshotTTL    = 30 * time.Second
+	defaultOpenAIProxyHealthInterval = 30 * time.Second
+	defaultOpenAIProxyHealthTimeout  = 10 * time.Second
+	defaultOpenAIProxyHealthTraceURL = "https://www.cloudflare.com/cdn-cgi/trace"
+	maxOpenAIProxyHealthBodyBytes    = 8 << 10
+)
 
 var ErrOpenAIProxyRequestNotReplayable = errors.New("OpenAI proxy fallback requires a replayable request body")
 
@@ -51,6 +62,58 @@ type OpenAIProxyPlan struct {
 	Candidates []OpenAIProxyCandidate
 }
 
+type OpenAIProxyTransport string
+
+const (
+	OpenAIProxyTransportHTTP      OpenAIProxyTransport = "http"
+	OpenAIProxyTransportWebSocket OpenAIProxyTransport = "websocket"
+)
+
+type OpenAIProxyAttemptsBySource struct {
+	Account uint64 `json:"account"`
+	Backup  uint64 `json:"backup"`
+	Node    uint64 `json:"node"`
+	Direct  uint64 `json:"direct"`
+}
+
+type OpenAIProxyMetricsSnapshot struct {
+	AttemptsBySource           OpenAIProxyAttemptsBySource `json:"attempts_by_source"`
+	CandidateSwitches          uint64                      `json:"candidate_switches"`
+	FailClosedExhaustions      uint64                      `json:"fail_closed_exhaustions"`
+	DirectFallbacks            uint64                      `json:"direct_fallbacks"`
+	HTTPTransportFailures      uint64                      `json:"http_transport_failures"`
+	WebSocketTransportFailures uint64                      `json:"websocket_transport_failures"`
+}
+
+type OpenAIProxyHealthStatus struct {
+	InstanceID string                     `json:"instance_id"`
+	Healthy    bool                       `json:"healthy"`
+	EgressIP   string                     `json:"egress_ip"`
+	CheckedAt  time.Time                  `json:"checked_at"`
+	Error      string                     `json:"error"`
+	Metrics    OpenAIProxyMetricsSnapshot `json:"metrics"`
+}
+
+type OpenAIProxyMetricsRecorder interface {
+	RecordAttempt(source OpenAIProxyCandidateSource)
+	RecordCandidateSwitch()
+	RecordFailClosedExhaustion()
+	RecordDirectFallback()
+	RecordTransportFailure(transport OpenAIProxyTransport)
+}
+
+type openAIProxyMetrics struct {
+	accountAttempts            atomic.Uint64
+	backupAttempts             atomic.Uint64
+	nodeAttempts               atomic.Uint64
+	directAttempts             atomic.Uint64
+	candidateSwitches          atomic.Uint64
+	failClosedExhaustions      atomic.Uint64
+	directFallbacks            atomic.Uint64
+	httpTransportFailures      atomic.Uint64
+	webSocketTransportFailures atomic.Uint64
+}
+
 func (p OpenAIProxyPlan) URLs() []string {
 	urls := make([]string, 0, len(p.Candidates))
 	for _, candidate := range p.Candidates {
@@ -65,6 +128,19 @@ func (p OpenAIProxyPlan) Sources() []OpenAIProxyCandidateSource {
 		sources = append(sources, candidate.Source)
 	}
 	return sources
+}
+
+func (p OpenAIProxyPlan) IsFailClosed() bool {
+	hasNode := false
+	for _, candidate := range p.Candidates {
+		switch candidate.Source {
+		case OpenAIProxyCandidateNode:
+			hasNode = true
+		case OpenAIProxyCandidateDirect:
+			return false
+		}
+	}
+	return hasNode
 }
 
 type OpenAIProxyPolicyProvider interface {
@@ -101,6 +177,16 @@ type OpenAIProxyPolicyService struct {
 	snapshot  atomic.Pointer[openAIProxySnapshot]
 	refreshMu sync.Mutex
 	cancel    context.CancelFunc
+
+	instanceID          string
+	healthTraceURL      string
+	healthInterval      time.Duration
+	healthTimeout       time.Duration
+	healthClientFactory func(proxyURL string) (*http.Client, error)
+	healthMu            sync.RWMutex
+	health              OpenAIProxyHealthStatus
+	healthWG            sync.WaitGroup
+	metrics             openAIProxyMetrics
 }
 
 func DefaultOpenAIProxySettings() OpenAIProxySettings {
@@ -151,13 +237,20 @@ func newOpenAIProxyPolicyService(settingRepo openAIProxySettingReader, proxyRepo
 	if ttl <= 0 {
 		ttl = defaultOpenAIProxySnapshotTTL
 	}
+	instanceID, _ := os.Hostname()
 	service := &OpenAIProxyPolicyService{
-		settingRepo: settingRepo,
-		proxyRepo:   proxyRepo,
-		bus:         bus,
-		ttl:         ttl,
-		now:         time.Now,
+		settingRepo:         settingRepo,
+		proxyRepo:           proxyRepo,
+		bus:                 bus,
+		ttl:                 ttl,
+		now:                 time.Now,
+		instanceID:          instanceID,
+		healthTraceURL:      defaultOpenAIProxyHealthTraceURL,
+		healthInterval:      defaultOpenAIProxyHealthInterval,
+		healthTimeout:       defaultOpenAIProxyHealthTimeout,
+		healthClientFactory: newOpenAIProxyHealthClient,
 	}
+	service.health = OpenAIProxyHealthStatus{InstanceID: instanceID}
 	service.snapshot.Store(buildOpenAIProxySnapshot(DefaultOpenAIProxySettings(), nil, time.Now().Add(ttl)))
 	return service
 }
@@ -167,21 +260,223 @@ func NewOpenAIProxyPolicyService(settingRepo SettingRepository, proxyRepo ProxyR
 	if err := service.Refresh(context.Background()); err != nil {
 		slog.Warn("load OpenAI proxy policy failed; retaining safe defaults", "error", err)
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	service.cancel = cancel
 	if bus != nil {
-		ctx, cancel := context.WithCancel(context.Background())
-		service.cancel = cancel
 		bus.Subscribe(ctx, func() {
 			if err := service.Refresh(context.Background()); err != nil {
 				slog.Warn("refresh OpenAI proxy policy after notification failed", "error", err)
 			}
 		})
 	}
+	service.startHealthWorker(ctx)
 	return service
 }
 
 func (s *OpenAIProxyPolicyService) Stop() {
-	if s != nil && s.cancel != nil {
+	if s == nil {
+		return
+	}
+	if s.cancel != nil {
 		s.cancel()
+	}
+	s.healthWG.Wait()
+}
+
+func RedactOpenAIProxyURL(raw string) string {
+	_, parsed, err := proxyurl.Parse(raw)
+	if err != nil || parsed == nil {
+		return ""
+	}
+	return parsed.Redacted()
+}
+
+func newOpenAIProxyHealthClient(rawProxyURL string) (*http.Client, error) {
+	_, parsed, err := proxyurl.Parse(rawProxyURL)
+	if err != nil {
+		return nil, err
+	}
+	if parsed == nil {
+		return nil, errors.New("node proxy is not configured")
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	if err := proxyutil.ConfigureTransportProxy(transport, parsed); err != nil {
+		return nil, err
+	}
+	return &http.Client{Transport: transport, Timeout: defaultOpenAIProxyHealthTimeout}, nil
+}
+
+func (s *OpenAIProxyPolicyService) startHealthWorker(ctx context.Context) {
+	if s == nil || s.healthInterval <= 0 {
+		return
+	}
+	s.healthWG.Add(1)
+	go func() {
+		defer s.healthWG.Done()
+		s.checkHealth(ctx)
+		ticker := time.NewTicker(s.healthInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.checkHealth(ctx)
+			}
+		}
+	}()
+}
+
+func (s *OpenAIProxyPolicyService) checkHealth(ctx context.Context) OpenAIProxyHealthStatus {
+	status := OpenAIProxyHealthStatus{InstanceID: s.instanceID, CheckedAt: s.now().UTC()}
+	snapshot := s.snapshot.Load()
+	proxyURL := ""
+	if snapshot != nil {
+		proxyURL = snapshot.settings.ProxyURL
+	}
+	if strings.TrimSpace(proxyURL) == "" {
+		return s.storeHealthStatus(status, "node proxy is not configured", proxyURL)
+	}
+	clientFactory := s.healthClientFactory
+	if clientFactory == nil {
+		clientFactory = newOpenAIProxyHealthClient
+	}
+	client, err := clientFactory(proxyURL)
+	if err != nil {
+		return s.storeHealthStatus(status, "node proxy health client could not be created", proxyURL)
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, s.healthTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, s.healthTraceURL, nil)
+	if err != nil {
+		return s.storeHealthStatus(status, "node proxy health request could not be created", proxyURL)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return s.storeHealthStatus(status, "node proxy health request failed", proxyURL)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return s.storeHealthStatus(status, fmt.Sprintf("health endpoint returned HTTP %d", resp.StatusCode), proxyURL)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxOpenAIProxyHealthBodyBytes+1))
+	if err != nil || len(body) > maxOpenAIProxyHealthBodyBytes {
+		return s.storeHealthStatus(status, "node proxy health response could not be read", proxyURL)
+	}
+	egressIP, warpEnabled := parseOpenAIProxyTrace(string(body))
+	if !warpEnabled || net.ParseIP(egressIP) == nil {
+		return s.storeHealthStatus(status, "health response did not confirm WARP", proxyURL)
+	}
+	status.Healthy = true
+	status.EgressIP = egressIP
+	return s.storeHealthStatus(status, "", proxyURL)
+}
+
+func parseOpenAIProxyTrace(body string) (egressIP string, warpEnabled bool) {
+	for _, line := range strings.Split(body, "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "ip":
+			egressIP = strings.TrimSpace(value)
+		case "warp":
+			value = strings.TrimSpace(value)
+			warpEnabled = value == "on" || value == "plus"
+		}
+	}
+	return egressIP, warpEnabled
+}
+
+func (s *OpenAIProxyPolicyService) storeHealthStatus(status OpenAIProxyHealthStatus, errorMessage, proxyURL string) OpenAIProxyHealthStatus {
+	status.Error = errorMessage
+	status.Metrics = s.Metrics()
+	s.healthMu.Lock()
+	s.health = status
+	s.healthMu.Unlock()
+	if status.Healthy {
+		slog.Debug("OpenAI node proxy health check passed", "instance_id", status.InstanceID, "proxy", RedactOpenAIProxyURL(proxyURL), "egress_ip", status.EgressIP)
+	} else {
+		slog.Warn("OpenAI node proxy health check failed", "instance_id", status.InstanceID, "proxy", RedactOpenAIProxyURL(proxyURL), "error", errorMessage)
+	}
+	return status
+}
+
+func (s *OpenAIProxyPolicyService) Status() OpenAIProxyHealthStatus {
+	if s == nil {
+		return OpenAIProxyHealthStatus{}
+	}
+	s.healthMu.RLock()
+	status := s.health
+	s.healthMu.RUnlock()
+	status.Metrics = s.Metrics()
+	return status
+}
+
+func (s *OpenAIProxyPolicyService) RecordAttempt(source OpenAIProxyCandidateSource) {
+	if s == nil {
+		return
+	}
+	switch source {
+	case OpenAIProxyCandidateAccount:
+		s.metrics.accountAttempts.Add(1)
+	case OpenAIProxyCandidateBackup:
+		s.metrics.backupAttempts.Add(1)
+	case OpenAIProxyCandidateNode:
+		s.metrics.nodeAttempts.Add(1)
+	case OpenAIProxyCandidateDirect:
+		s.metrics.directAttempts.Add(1)
+	}
+}
+
+func (s *OpenAIProxyPolicyService) RecordCandidateSwitch() {
+	if s != nil {
+		s.metrics.candidateSwitches.Add(1)
+	}
+}
+
+func (s *OpenAIProxyPolicyService) RecordFailClosedExhaustion() {
+	if s != nil {
+		s.metrics.failClosedExhaustions.Add(1)
+	}
+}
+
+func (s *OpenAIProxyPolicyService) RecordDirectFallback() {
+	if s != nil {
+		s.metrics.directFallbacks.Add(1)
+	}
+}
+
+func (s *OpenAIProxyPolicyService) RecordTransportFailure(transport OpenAIProxyTransport) {
+	if s == nil {
+		return
+	}
+	switch transport {
+	case OpenAIProxyTransportHTTP:
+		s.metrics.httpTransportFailures.Add(1)
+	case OpenAIProxyTransportWebSocket:
+		s.metrics.webSocketTransportFailures.Add(1)
+	}
+}
+
+func (s *OpenAIProxyPolicyService) Metrics() OpenAIProxyMetricsSnapshot {
+	if s == nil {
+		return OpenAIProxyMetricsSnapshot{}
+	}
+	return OpenAIProxyMetricsSnapshot{
+		AttemptsBySource: OpenAIProxyAttemptsBySource{
+			Account: s.metrics.accountAttempts.Load(),
+			Backup:  s.metrics.backupAttempts.Load(),
+			Node:    s.metrics.nodeAttempts.Load(),
+			Direct:  s.metrics.directAttempts.Load(),
+		},
+		CandidateSwitches:          s.metrics.candidateSwitches.Load(),
+		FailClosedExhaustions:      s.metrics.failClosedExhaustions.Load(),
+		DirectFallbacks:            s.metrics.directFallbacks.Load(),
+		HTTPTransportFailures:      s.metrics.httpTransportFailures.Load(),
+		WebSocketTransportFailures: s.metrics.webSocketTransportFailures.Load(),
 	}
 }
 

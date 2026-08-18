@@ -26,6 +26,15 @@ type CustomEndpoint struct {
 	Description string `json:"description"`
 }
 
+type OpenAIProxyStatus struct {
+	InstanceID string                             `json:"instance_id"`
+	Healthy    bool                               `json:"healthy"`
+	EgressIP   string                             `json:"egress_ip"`
+	CheckedAt  string                             `json:"checked_at"`
+	Error      string                             `json:"error"`
+	Metrics    service.OpenAIProxyMetricsSnapshot `json:"metrics"`
+}
+
 // SystemSettings represents the admin settings API response payload.
 type SystemSettings struct {
 	RegistrationEnabled                 bool                     `json:"registration_enabled"`
@@ -236,6 +245,11 @@ type SystemSettings struct {
 	PaymentVisibleMethodWxpayEnabled  bool   `json:"payment_visible_method_wxpay_enabled"`
 
 	// OpenAI account scheduling
+	OpenAIDefaultProxyEnabled       bool                             `json:"openai_default_proxy_enabled"`
+	OpenAIDefaultProxyURL           string                           `json:"openai_default_proxy_url"`
+	OpenAIDefaultProxyFailurePolicy service.OpenAIProxyFailurePolicy `json:"openai_default_proxy_failure_policy"`
+	OpenAIDefaultProxyStatus        OpenAIProxyStatus                `json:"openai_default_proxy_status"`
+
 	OpenAILowUpstreamRatePriorityEnabled                   bool    `json:"openai_low_upstream_rate_priority_enabled"`
 	OpenAIOAuthSchedulingRateMultiplier                    float64 `json:"openai_oauth_scheduling_rate_multiplier"`
 	OpenAIAdvancedSchedulerEnabled                         bool    `json:"openai_advanced_scheduler_enabled"`

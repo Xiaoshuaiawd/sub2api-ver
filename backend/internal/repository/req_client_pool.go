@@ -108,7 +108,7 @@ func (r *openAIPrivacyRoundTripper) RoundTrip(request *http.Request) (*http.Resp
 		return nil, fmt.Errorf("OpenAI privacy transport factory is not configured")
 	}
 	plan := r.policy.Resolve(request.Context(), r.primaryProxyURL)
-	return executeOpenAIProxyAttempts(request, plan, 0, 1, func(attempt *http.Request, proxyURL string, _ int64, _ int) (*http.Response, error) {
+	return executeOpenAIProxyAttempts(request, plan, 0, 1, openAIProxyMetricsRecorder(r.policy), func(attempt *http.Request, proxyURL string, _ int64, _ int) (*http.Response, error) {
 		transport, err := r.transportFor(proxyURL)
 		if err != nil {
 			return nil, err

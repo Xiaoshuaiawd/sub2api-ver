@@ -22,6 +22,30 @@ func (s stubOpenAIProxyPolicy) Resolve(context.Context, string) service.OpenAIPr
 	return s.plan
 }
 
+type recordingOpenAIProxyPolicy struct {
+	plan              service.OpenAIProxyPlan
+	attempts          []service.OpenAIProxyCandidateSource
+	transportFailures []service.OpenAIProxyTransport
+	switches          int
+	exhaustions       int
+	directFallbacks   int
+}
+
+func (s *recordingOpenAIProxyPolicy) Resolve(context.Context, string) service.OpenAIProxyPlan {
+	return s.plan
+}
+
+func (s *recordingOpenAIProxyPolicy) RecordAttempt(source service.OpenAIProxyCandidateSource) {
+	s.attempts = append(s.attempts, source)
+}
+
+func (s *recordingOpenAIProxyPolicy) RecordCandidateSwitch()      { s.switches++ }
+func (s *recordingOpenAIProxyPolicy) RecordFailClosedExhaustion() { s.exhaustions++ }
+func (s *recordingOpenAIProxyPolicy) RecordDirectFallback()       { s.directFallbacks++ }
+func (s *recordingOpenAIProxyPolicy) RecordTransportFailure(transport service.OpenAIProxyTransport) {
+	s.transportFailures = append(s.transportFailures, transport)
+}
+
 type openAIProxyAttemptResult struct {
 	response *http.Response
 	err      error
@@ -63,6 +87,72 @@ func TestHTTPUpstreamOpenAIAdvancesOnlyOnTransportError(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
 	require.Equal(t, []string{"http://a:1", "http://b:2"}, attempted)
+}
+
+func TestHTTPUpstreamOpenAIMetricsRecordCandidateFallback(t *testing.T) {
+	policy := &recordingOpenAIProxyPolicy{plan: openAIProxyTestPlan(
+		service.OpenAIProxyCandidate{URL: "http://a:1", Source: service.OpenAIProxyCandidateAccount},
+		service.OpenAIProxyCandidate{URL: "socks5h://warp:1080", Source: service.OpenAIProxyCandidateNode},
+	)}
+	upstream := &httpUpstreamService{
+		openAIProxyPolicy: policy,
+		doAttempt: func(_ *http.Request, proxyURL string, _ int64, _ int) (*http.Response, error) {
+			if proxyURL == "http://a:1" {
+				return nil, errors.New("connection refused")
+			}
+			return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+		},
+	}
+
+	resp, err := upstream.Do(openAIProxyTestRequest(t, nil), "", 7, 1)
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, []service.OpenAIProxyCandidateSource{
+		service.OpenAIProxyCandidateAccount,
+		service.OpenAIProxyCandidateNode,
+	}, policy.attempts)
+	require.Equal(t, []service.OpenAIProxyTransport{service.OpenAIProxyTransportHTTP}, policy.transportFailures)
+	require.Equal(t, 1, policy.switches)
+	require.Zero(t, policy.exhaustions)
+}
+
+func TestHTTPUpstreamOpenAIMetricsDoNotCountNormalDirectAsFallback(t *testing.T) {
+	policy := &recordingOpenAIProxyPolicy{plan: openAIProxyTestPlan(
+		service.OpenAIProxyCandidate{Source: service.OpenAIProxyCandidateDirect},
+	)}
+	upstream := &httpUpstreamService{
+		openAIProxyPolicy: policy,
+		doAttempt: func(_ *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+		},
+	}
+
+	resp, err := upstream.Do(openAIProxyTestRequest(t, nil), "", 7, 1)
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, []service.OpenAIProxyCandidateSource{service.OpenAIProxyCandidateDirect}, policy.attempts)
+	require.Zero(t, policy.directFallbacks)
+}
+
+func TestHTTPUpstreamOpenAIMetricsRecordFailClosedExhaustion(t *testing.T) {
+	policy := &recordingOpenAIProxyPolicy{plan: openAIProxyTestPlan(
+		service.OpenAIProxyCandidate{URL: "http://account:8080", Source: service.OpenAIProxyCandidateAccount},
+		service.OpenAIProxyCandidate{URL: "socks5h://warp:1080", Source: service.OpenAIProxyCandidateNode},
+	)}
+	upstream := &httpUpstreamService{
+		openAIProxyPolicy: policy,
+		doAttempt: func(_ *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+			return nil, errors.New("connection refused")
+		},
+	}
+
+	resp, err := upstream.Do(openAIProxyTestRequest(t, nil), "", 7, 1)
+
+	require.Error(t, err)
+	require.Nil(t, resp)
+	require.Equal(t, 1, policy.exhaustions)
 }
 
 func TestHTTPUpstreamOpenAINonProfileUsesSingleExistingAttempt(t *testing.T) {

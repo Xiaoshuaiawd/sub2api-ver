@@ -168,21 +168,37 @@ func (d *coderOpenAIWSClientDialer) Dial(
 	if len(plan.Candidates) == 0 {
 		return nil, 0, nil, errors.New("OpenAI WebSocket proxy policy returned no candidates")
 	}
+	metrics, _ := d.policy.(OpenAIProxyMetricsRecorder)
 	var lastErr error
-	for _, candidate := range plan.Candidates {
-		if candidate.Source == OpenAIProxyCandidateDirect {
+	for index, candidate := range plan.Candidates {
+		if metrics != nil {
+			metrics.RecordAttempt(candidate.Source)
+		}
+		if candidate.Source == OpenAIProxyCandidateDirect && index > 0 {
 			slog.Warn("OpenAI WebSocket falling back to direct egress")
+			if metrics != nil {
+				metrics.RecordDirectFallback()
+			}
 		}
 		conn, status, responseHeaders, err := attempt(ctx, targetURL, headers, candidate.URL)
 		if err == nil || status != 0 {
 			return conn, status, responseHeaders, err
 		}
 		lastErr = err
+		if metrics != nil {
+			metrics.RecordTransportFailure(OpenAIProxyTransportWebSocket)
+		}
 		if contextErr := ctx.Err(); contextErr != nil {
 			return nil, 0, nil, contextErr
 		}
+		if metrics != nil && index+1 < len(plan.Candidates) {
+			metrics.RecordCandidateSwitch()
+		}
 	}
 	lastSource := plan.Candidates[len(plan.Candidates)-1].Source
+	if metrics != nil && plan.IsFailClosed() {
+		metrics.RecordFailClosedExhaustion()
+	}
 	return nil, 0, nil, newOpenAIWSProxyExhaustedError(lastSource, lastErr)
 }
 

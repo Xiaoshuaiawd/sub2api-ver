@@ -21,6 +21,29 @@ func (s openAIWSProxyPolicyStub) Resolve(context.Context, string) OpenAIProxyPla
 	return s.plan
 }
 
+type recordingOpenAIWSProxyPolicy struct {
+	plan              OpenAIProxyPlan
+	attempts          []OpenAIProxyCandidateSource
+	transportFailures []OpenAIProxyTransport
+	switches          int
+	directFallbacks   int
+}
+
+func (s *recordingOpenAIWSProxyPolicy) Resolve(context.Context, string) OpenAIProxyPlan {
+	return s.plan
+}
+
+func (s *recordingOpenAIWSProxyPolicy) RecordAttempt(source OpenAIProxyCandidateSource) {
+	s.attempts = append(s.attempts, source)
+}
+
+func (s *recordingOpenAIWSProxyPolicy) RecordCandidateSwitch()      { s.switches++ }
+func (s *recordingOpenAIWSProxyPolicy) RecordFailClosedExhaustion() {}
+func (s *recordingOpenAIWSProxyPolicy) RecordDirectFallback()       { s.directFallbacks++ }
+func (s *recordingOpenAIWSProxyPolicy) RecordTransportFailure(transport OpenAIProxyTransport) {
+	s.transportFailures = append(s.transportFailures, transport)
+}
+
 type openAIWSProxyTestConn struct{}
 
 func (*openAIWSProxyTestConn) WriteJSON(context.Context, any) error { return nil }
@@ -55,6 +78,48 @@ func TestOpenAIWSDefaultDialerAdvancesOnTransportFailure(t *testing.T) {
 	require.Zero(t, status)
 	require.Equal(t, "ok", headers.Get("X-Test"))
 	require.Equal(t, []string{"http://a:1", "http://b:2"}, attempted)
+}
+
+func TestOpenAIWSDefaultDialerRecordsCandidateFallback(t *testing.T) {
+	policy := &recordingOpenAIWSProxyPolicy{plan: openAIWSProxyPlan(
+		OpenAIProxyCandidate{URL: "http://a:1", Source: OpenAIProxyCandidateAccount},
+		OpenAIProxyCandidate{URL: "socks5h://warp:1080", Source: OpenAIProxyCandidateNode},
+	)}
+	dialer := newDefaultOpenAIWSClientDialer(policy).(*coderOpenAIWSClientDialer)
+	dialer.dialOnce = func(_ context.Context, _ string, _ http.Header, proxyURL string) (openAIWSClientConn, int, http.Header, error) {
+		if proxyURL == "http://a:1" {
+			return nil, 0, nil, errors.New("connect refused")
+		}
+		return &openAIWSProxyTestConn{}, 0, nil, nil
+	}
+
+	conn, _, _, err := dialer.Dial(context.Background(), "wss://chatgpt.com/backend-api/codex/responses", nil, "")
+
+	require.NoError(t, err)
+	require.NotNil(t, conn)
+	require.Equal(t, []OpenAIProxyCandidateSource{
+		OpenAIProxyCandidateAccount,
+		OpenAIProxyCandidateNode,
+	}, policy.attempts)
+	require.Equal(t, []OpenAIProxyTransport{OpenAIProxyTransportWebSocket}, policy.transportFailures)
+	require.Equal(t, 1, policy.switches)
+}
+
+func TestOpenAIWSDefaultDialerDoesNotCountNormalDirectAsFallback(t *testing.T) {
+	policy := &recordingOpenAIWSProxyPolicy{plan: openAIWSProxyPlan(
+		OpenAIProxyCandidate{Source: OpenAIProxyCandidateDirect},
+	)}
+	dialer := newDefaultOpenAIWSClientDialer(policy).(*coderOpenAIWSClientDialer)
+	dialer.dialOnce = func(_ context.Context, _ string, _ http.Header, _ string) (openAIWSClientConn, int, http.Header, error) {
+		return &openAIWSProxyTestConn{}, 0, nil, nil
+	}
+
+	conn, _, _, err := dialer.Dial(context.Background(), "wss://chatgpt.com/backend-api/codex/responses", nil, "")
+
+	require.NoError(t, err)
+	require.NotNil(t, conn)
+	require.Equal(t, []OpenAIProxyCandidateSource{OpenAIProxyCandidateDirect}, policy.attempts)
+	require.Zero(t, policy.directFallbacks)
 }
 
 func TestOpenAIWSDefaultDialerStopsOnHandshakeHTTPResponse(t *testing.T) {

@@ -309,6 +309,13 @@ func (s *SettingService) SetOpenAIProxyPolicyService(policy *OpenAIProxyPolicySe
 	s.openAIProxyPolicy = policy
 }
 
+func (s *SettingService) OpenAIProxyStatus() OpenAIProxyHealthStatus {
+	if s == nil || s.openAIProxyPolicy == nil {
+		return OpenAIProxyHealthStatus{}
+	}
+	return s.openAIProxyPolicy.Status()
+}
+
 func (s *SettingService) LoadForwardedClientIPSettings(ctx context.Context) error {
 	if s == nil || s.cfg == nil || s.settingRepo == nil {
 		return nil

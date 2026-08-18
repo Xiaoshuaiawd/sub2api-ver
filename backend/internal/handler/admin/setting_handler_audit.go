@@ -68,6 +68,15 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	if before.StepUpEnabled != after.StepUpEnabled {
 		changed = append(changed, "step_up_enabled")
 	}
+	if before.OpenAIDefaultProxyEnabled != after.OpenAIDefaultProxyEnabled {
+		changed = append(changed, service.SettingKeyOpenAIDefaultProxyEnabled)
+	}
+	if before.OpenAIDefaultProxyURL != after.OpenAIDefaultProxyURL {
+		changed = append(changed, service.SettingKeyOpenAIDefaultProxyURL)
+	}
+	if before.OpenAIDefaultProxyFailurePolicy != after.OpenAIDefaultProxyFailurePolicy {
+		changed = append(changed, service.SettingKeyOpenAIDefaultProxyFailurePolicy)
+	}
 	if before.LoginAgreementEnabled != after.LoginAgreementEnabled {
 		changed = append(changed, "login_agreement_enabled")
 	}

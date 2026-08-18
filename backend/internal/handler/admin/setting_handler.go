@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -314,6 +315,10 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		PaymentVisibleMethodWxpaySource:                        settings.PaymentVisibleMethodWxpaySource,
 		PaymentVisibleMethodAlipayEnabled:                      settings.PaymentVisibleMethodAlipayEnabled,
 		PaymentVisibleMethodWxpayEnabled:                       settings.PaymentVisibleMethodWxpayEnabled,
+		OpenAIDefaultProxyEnabled:                              settings.OpenAIDefaultProxyEnabled,
+		OpenAIDefaultProxyURL:                                  service.RedactOpenAIProxyURL(settings.OpenAIDefaultProxyURL),
+		OpenAIDefaultProxyFailurePolicy:                        settings.OpenAIDefaultProxyFailurePolicy,
+		OpenAIDefaultProxyStatus:                               openAIProxyStatusToDTO(h.settingService.OpenAIProxyStatus()),
 		OpenAILowUpstreamRatePriorityEnabled:                   settings.OpenAILowUpstreamRatePriorityEnabled,
 		OpenAIOAuthSchedulingRateMultiplier:                    settings.OpenAIOAuthSchedulingRateMultiplier,
 		OpenAIAdvancedSchedulerEnabled:                         settings.OpenAIAdvancedSchedulerEnabled,
@@ -411,6 +416,21 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 	}
 
 	response.Success(c, systemSettingsResponseData(payload, authSourceDefaults))
+}
+
+func openAIProxyStatusToDTO(status service.OpenAIProxyHealthStatus) dto.OpenAIProxyStatus {
+	checkedAt := ""
+	if !status.CheckedAt.IsZero() {
+		checkedAt = status.CheckedAt.UTC().Format(time.RFC3339)
+	}
+	return dto.OpenAIProxyStatus{
+		InstanceID: status.InstanceID,
+		Healthy:    status.Healthy,
+		EgressIP:   status.EgressIP,
+		CheckedAt:  checkedAt,
+		Error:      status.Error,
+		Metrics:    status.Metrics,
+	}
 }
 
 // openaiFastPolicySettingsToDTO converts service -> dto for OpenAI fast policy.
