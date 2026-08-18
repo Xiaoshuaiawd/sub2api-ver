@@ -684,6 +684,9 @@ func registerUsageRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	usage := admin.Group("/usage")
 	{
 		usage.GET("", h.Admin.Usage.List)
+		usage.GET("/message-storage/settings", h.Admin.Usage.MessageStorageSettings)
+		usage.PUT("/message-storage/settings", h.Admin.Usage.UpdateMessageStorageSettings)
+		usage.GET("/:id/message", h.Admin.Usage.MessageDetail)
 		usage.GET("/stats", h.Admin.Usage.Stats)
 		usage.GET("/search-users", h.Admin.Usage.SearchUsers)
 		usage.GET("/search-api-keys", h.Admin.Usage.SearchAPIKeys)

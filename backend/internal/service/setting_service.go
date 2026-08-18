@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 
@@ -153,6 +154,31 @@ type SettingService struct {
 
 	channelMonitorRuntimeListenersMu sync.Mutex
 	channelMonitorRuntimeListeners   []func()
+}
+
+func (s *SettingService) GetMessageStorageRetentionDays(ctx context.Context, fallback int) int {
+	if fallback < 1 || fallback > 30 {
+		fallback = 7
+	}
+	if s == nil || s.settingRepo == nil {
+		return fallback
+	}
+	raw, err := s.settingRepo.GetValue(ctx, SettingKeyMessageStorageRetentionDays)
+	if err != nil {
+		return fallback
+	}
+	days, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || days < 1 || days > 30 {
+		return fallback
+	}
+	return days
+}
+
+func (s *SettingService) SetMessageStorageRetentionDays(ctx context.Context, days int) error {
+	if days < 1 || days > 30 {
+		return fmt.Errorf("message storage retention days must be between 1-30")
+	}
+	return s.settingRepo.Set(ctx, SettingKeyMessageStorageRetentionDays, strconv.Itoa(days))
 }
 
 // DefaultPlatformQuotaSetting 单 platform 三档限额（nil = 沿用上层；0 = 显式禁用；>0 = 上限）

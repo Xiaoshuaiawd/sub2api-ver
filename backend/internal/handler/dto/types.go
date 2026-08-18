@@ -559,6 +559,11 @@ type UsageLog struct {
 // AdminUsageLog 是管理员接口使用的 usage log DTO（包含管理员字段）。
 type AdminUsageLog struct {
 	UsageLog
+	MessageStorageStatus string `json:"message_storage_status,omitempty"`
+	RequestBodyState     string `json:"request_body_state,omitempty"`
+	ResponseBodyState    string `json:"response_body_state,omitempty"`
+	RequestBodyBytes     int64  `json:"request_body_bytes"`
+	ResponseBodyBytes    int64  `json:"response_body_bytes"`
 
 	// UpstreamModel is the actual model sent to the upstream provider after mapping.
 	// Omitted when no mapping was applied (requested model was used as-is).

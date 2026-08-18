@@ -219,6 +219,26 @@ gateway:
   # Pure-text endpoint body limit (embeddings and alpha/search), default 32 MiB.
   # 纯文本端点请求体上限（embeddings、alpha/search），默认 32 MiB。
   text_max_body_size: 33554432
+  # Administrator-visible client request and response body storage.
+  # 管理员可查看的客户端原始请求体与最终响应体存储。
+  message_storage:
+    enabled: true
+    # Default retention; administrators can change this to 1-30 days in the usage page.
+    # 默认保留期；管理员可在使用记录页调整为 1-30 天。
+    retention_days: 7
+    # Bodies larger than this are marked too_large and never block the API request.
+    # 超过该大小的正文标记为 too_large，始终不阻断 API 请求。
+    max_body_bytes: 16777216
+    # Process-wide capture budgets. Memory overflow spills to bounded local temporary storage.
+    # 进程级捕获预算；内存不足时写入有上限的本地临时目录。
+    memory_budget_bytes: 536870912
+    spool_directory: ""
+    spool_budget_bytes: 21474836480
+    # Bounded asynchronous persistence for high-concurrency traffic.
+    # 高并发流量使用的有界异步持久化参数。
+    worker_count: 32
+    queue_size: 4096
+    db_max_open_conns: 16
   # Max bytes to read for non-stream upstream responses (default: 8MB)
   # 非流式上游响应体读取上限（默认 8MB）
   upstream_response_read_max_bytes: 8388608

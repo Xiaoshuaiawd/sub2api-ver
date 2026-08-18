@@ -26,6 +26,31 @@ export interface AdminUsageStatsResponse {
   endpoint_paths?: EndpointStat[]
 }
 
+export type MessageBodyState = 'pending' | 'available' | 'failed' | 'partial' | 'too_large' | 'expired' | 'disabled'
+
+export interface UsageMessageBodyDetail {
+  state: MessageBodyState
+  raw_bytes: number
+  stored_bytes: number
+  sha256?: string
+  body?: string
+}
+
+export interface UsageMessageDetail {
+  usage_log_id: number
+  request_id: string
+  request: UsageMessageBodyDetail
+  response: UsageMessageBodyDetail
+  compression: string
+  error_code?: string
+  error_message?: string
+  expires_at: string
+}
+
+export interface UsageMessageStorageSettings {
+  retention_days: number
+}
+
 export interface SimpleUser {
   id: number
   email: string
@@ -137,6 +162,25 @@ export async function getStats(params: {
   return data
 }
 
+export async function getMessageDetail(id: number, includeBodies = true): Promise<UsageMessageDetail> {
+  const { data } = await apiClient.get<UsageMessageDetail>(`/admin/usage/${id}/message`, {
+    params: { include_bodies: includeBodies }
+  })
+  return data
+}
+
+export async function getMessageStorageSettings(): Promise<UsageMessageStorageSettings> {
+  const { data } = await apiClient.get<UsageMessageStorageSettings>('/admin/usage/message-storage/settings')
+  return data
+}
+
+export async function updateMessageStorageSettings(retentionDays: number): Promise<UsageMessageStorageSettings> {
+  const { data } = await apiClient.put<UsageMessageStorageSettings>('/admin/usage/message-storage/settings', {
+    retention_days: retentionDays
+  })
+  return data
+}
+
 /**
  * Search users by email keyword (admin only)
  * @param keyword - Email keyword to search
@@ -209,6 +253,9 @@ export async function cancelCleanupTask(taskId: number): Promise<{ id: number; s
 export const adminUsageAPI = {
   list,
   getStats,
+  getMessageDetail,
+  getMessageStorageSettings,
+  updateMessageStorageSettings,
   searchUsers,
   searchApiKeys,
   listCleanupTasks,

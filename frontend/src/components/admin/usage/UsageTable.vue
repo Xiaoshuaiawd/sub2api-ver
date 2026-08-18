@@ -238,6 +238,23 @@
           <span class="text-sm text-gray-600 dark:text-gray-400">{{ formatDateTime(value) }}</span>
         </template>
 
+        <template #cell-message_storage="{ row }">
+          <button
+            v-if="row.message_storage_status"
+            type="button"
+            class="inline-flex h-11 w-11 items-center justify-center rounded text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-primary-400"
+            :title="t('admin.usage.message.view')"
+            :aria-label="t('admin.usage.message.view')"
+            @click="$emit('messageClick', row.id)"
+          >
+            <span class="relative">
+              <Icon name="document" size="sm" />
+              <span class="absolute -right-1 -top-1 h-2 w-2 rounded-full ring-2 ring-white dark:ring-dark-800" :class="messageStateDot(row.message_storage_status)"></span>
+            </span>
+          </button>
+          <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
+        </template>
+
         <template #cell-request_id="{ row }">
           <div v-if="row.request_id" class="flex max-w-[160px] items-center gap-1.5">
             <span class="truncate font-mono text-xs text-gray-500 dark:text-gray-400" :title="row.request_id">
@@ -575,6 +592,7 @@ const props = withDefaults(defineProps<Props>(), {
 })
 const emit = defineEmits<{
   userClick: [userID: number, email?: string]
+  messageClick: [usageLogID: number]
   sort: [key: string, order: 'asc' | 'desc']
   ipGeoBatchFailed: []
 }>()
@@ -584,6 +602,11 @@ const copiedRequestId = ref<string | null>(null)
 const showAccountBilling = props.showAccountBilling
 const showUpstreamEndpoint = props.showUpstreamEndpoint
 const ipGeoBatchLoading = ref(false)
+
+const messageStateDot = (state?: string) => ({
+  available: 'bg-emerald-500', pending: 'bg-sky-500', partial: 'bg-amber-500',
+  too_large: 'bg-orange-500', failed: 'bg-rose-500', expired: 'bg-gray-400', disabled: 'bg-gray-400'
+}[state || ''] || 'bg-gray-400')
 
 const showIpGeoToolbar = computed(() => props.columns.some((col) => col.key === 'ip_address'))
 

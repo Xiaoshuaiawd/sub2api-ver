@@ -1690,6 +1690,11 @@ export interface UsageLogAccountSummary {
 }
 
 export interface AdminUsageLog extends UsageLog {
+	message_storage_status?: string
+	request_body_state?: string
+	response_body_state?: string
+	request_body_bytes?: number
+	response_body_bytes?: number
   upstream_model?: string | null
   upstream_response_model?: string | null
   upstream_model_mismatch?: boolean | null

@@ -112,7 +112,15 @@ type usageLogCreateResult struct {
 type usageLogBestEffortRequest struct {
 	prepared usageLogInsertPrepared
 	apiKeyID int64
+	log      *service.UsageLog
 	resultCh chan error
+}
+
+type usageLogBestEffortGroup struct {
+	prepared usageLogInsertPrepared
+	apiKeyID int64
+	key      string
+	reqs     []usageLogBestEffortRequest
 }
 
 type usageLogInsertPrepared struct {
@@ -157,10 +165,18 @@ func (r *usageLogRepository) Create(ctx context.Context, log *service.UsageLog) 
 	}
 	requestID := strings.TrimSpace(log.RequestID)
 	if requestID == "" {
-		return r.createSingle(ctx, r.sql, log)
+		inserted, err := r.createSingle(ctx, r.sql, log)
+		if err == nil && inserted {
+			r.enqueueMessageCapture(ctx, log)
+		}
+		return inserted, err
 	}
 	log.RequestID = requestID
-	return r.createBatched(ctx, log)
+	inserted, err := r.createBatched(ctx, log)
+	if err == nil && inserted {
+		r.enqueueMessageCapture(ctx, log)
+	}
+	return inserted, err
 }
 
 func (r *usageLogRepository) CreateBestEffort(ctx context.Context, log *service.UsageLog) error {
@@ -173,19 +189,26 @@ func (r *usageLogRepository) CreateBestEffort(ctx context.Context, log *service.
 		return err
 	}
 	if r.db == nil {
-		_, err := r.createSingle(ctx, r.sql, log)
+		inserted, err := r.createSingle(ctx, r.sql, log)
+		if err == nil && inserted {
+			r.enqueueMessageCapture(ctx, log)
+		}
 		return err
 	}
 
 	r.ensureBestEffortBatcher()
 	if r.bestEffortBatchCh == nil {
-		_, err := r.createSingle(ctx, r.sql, log)
+		inserted, err := r.createSingle(ctx, r.sql, log)
+		if err == nil && inserted {
+			r.enqueueMessageCapture(ctx, log)
+		}
 		return err
 	}
 
 	req := usageLogBestEffortRequest{
 		prepared: prepareUsageLogInsert(log),
 		apiKeyID: log.APIKeyID,
+		log:      log,
 		resultCh: make(chan error, 1),
 	}
 	if key, ok := r.bestEffortRecentKey(req.prepared.requestID, req.apiKeyID); ok {
@@ -205,6 +228,9 @@ func (r *usageLogRepository) CreateBestEffort(ctx context.Context, log *service.
 
 	select {
 	case err := <-req.resultCh:
+		if err == nil {
+			r.enqueueMessageCapture(ctx, log)
+		}
 		return err
 	case <-ctx.Done():
 		return service.MarkUsageLogCreateDropped(ctx.Err())
@@ -558,15 +584,8 @@ func (r *usageLogRepository) flushBestEffortBatch(db *sql.DB, batch []usageLogBe
 		return
 	}
 
-	type bestEffortGroup struct {
-		prepared usageLogInsertPrepared
-		apiKeyID int64
-		key      string
-		reqs     []usageLogBestEffortRequest
-	}
-
-	groupsByKey := make(map[string]*bestEffortGroup, len(batch))
-	groupOrder := make([]*bestEffortGroup, 0, len(batch))
+	groupsByKey := make(map[string]*usageLogBestEffortGroup, len(batch))
+	groupOrder := make([]*usageLogBestEffortGroup, 0, len(batch))
 	preparedList := make([]usageLogInsertPrepared, 0, len(batch))
 
 	for idx, req := range batch {
@@ -577,7 +596,7 @@ func (r *usageLogRepository) flushBestEffortBatch(db *sql.DB, batch []usageLogBe
 		}
 		group, exists := groupsByKey[key]
 		if !exists {
-			group = &bestEffortGroup{
+			group = &usageLogBestEffortGroup{
 				prepared: prepared,
 				apiKeyID: req.apiKeyID,
 				key:      key,
@@ -606,7 +625,10 @@ func (r *usageLogRepository) flushBestEffortBatch(db *sql.DB, batch []usageLogBe
 			singleErr := execUsageLogInsertNoResult(ctx, db, group.prepared)
 			if singleErr != nil {
 				logger.LegacyPrintf("repository.usage_log", "best-effort single fallback insert failed: %v", singleErr)
-			} else if group.prepared.requestID != "" && r != nil && r.bestEffortRecent != nil {
+			} else {
+				populateBestEffortLogID(ctx, db, group.reqs)
+			}
+			if singleErr == nil && group.prepared.requestID != "" && r != nil && r.bestEffortRecent != nil {
 				r.bestEffortRecent.SetDefault(group.key, struct{}{})
 			}
 			for _, req := range group.reqs {
@@ -615,6 +637,7 @@ func (r *usageLogRepository) flushBestEffortBatch(db *sql.DB, batch []usageLogBe
 		}
 		return
 	}
+	populateBestEffortLogIDs(ctx, db, groupOrder)
 	for _, group := range groupOrder {
 		if group.prepared.requestID != "" && r != nil && r.bestEffortRecent != nil {
 			r.bestEffortRecent.SetDefault(group.key, struct{}{})
@@ -623,6 +646,62 @@ func (r *usageLogRepository) flushBestEffortBatch(db *sql.DB, batch []usageLogBe
 			sendUsageLogBestEffortResult(req.resultCh, nil)
 		}
 	}
+}
+
+func populateBestEffortLogIDs(ctx context.Context, db *sql.DB, groups []*usageLogBestEffortGroup) {
+	// This helper is kept separate from the insert statement so the existing
+	// batched SQL remains cheap. One lookup per batch gives callers the concrete
+	// usage_log id needed to attach message bodies, including idempotent retries.
+	if len(groups) == 0 {
+		return
+	}
+	var query strings.Builder
+	query.WriteString("SELECT id, request_id, api_key_id, created_at FROM usage_logs WHERE (request_id, api_key_id) IN (")
+	args := make([]any, 0, len(groups)*2)
+	for i, group := range groups {
+		if i > 0 {
+			query.WriteString(",")
+		}
+		base := i*2 + 1
+		query.WriteString(fmt.Sprintf("($%d,$%d)", base, base+1))
+		args = append(args, group.prepared.requestID, group.apiKeyID)
+	}
+	query.WriteString(")")
+	rows, err := db.QueryContext(ctx, query.String(), args...)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	byKey := make(map[string]usageLogBatchState, len(groups))
+	for rows.Next() {
+		var id, apiKeyID int64
+		var requestID string
+		var createdAt time.Time
+		if err := rows.Scan(&id, &requestID, &apiKeyID, &createdAt); err != nil {
+			return
+		}
+		byKey[usageLogBatchKey(requestID, apiKeyID)] = usageLogBatchState{ID: id, CreatedAt: createdAt}
+	}
+	for _, group := range groups {
+		state, ok := byKey[usageLogBatchKey(group.prepared.requestID, group.apiKeyID)]
+		if !ok {
+			continue
+		}
+		for _, req := range group.reqs {
+			if req.log != nil {
+				req.log.ID = state.ID
+				req.log.CreatedAt = state.CreatedAt
+			}
+		}
+	}
+}
+
+func populateBestEffortLogID(ctx context.Context, db *sql.DB, reqs []usageLogBestEffortRequest) {
+	if len(reqs) == 0 {
+		return
+	}
+	group := &usageLogBestEffortGroup{prepared: reqs[0].prepared, apiKeyID: reqs[0].apiKeyID, reqs: reqs}
+	populateBestEffortLogIDs(ctx, db, []*usageLogBestEffortGroup{group})
 }
 
 func sendUsageLogBestEffortResult(ch chan error, err error) {

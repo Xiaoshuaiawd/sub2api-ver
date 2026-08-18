@@ -10,6 +10,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -874,6 +875,21 @@ type ImageConcurrencyConfig struct {
 	MaxWaitingRequests int `mapstructure:"max_waiting_requests"`
 }
 
+// GatewayMessageStorageConfig bounds request/response body capture and its
+// asynchronous PostgreSQL persistence. Capture failures are deliberately
+// best-effort and must never affect the gateway response.
+type GatewayMessageStorageConfig struct {
+	Enabled           bool   `mapstructure:"enabled"`
+	RetentionDays     int    `mapstructure:"retention_days"`
+	MaxBodyBytes      int64  `mapstructure:"max_body_bytes"`
+	MemoryBudgetBytes int64  `mapstructure:"memory_budget_bytes"`
+	SpoolDirectory    string `mapstructure:"spool_directory"`
+	SpoolBudgetBytes  int64  `mapstructure:"spool_budget_bytes"`
+	WorkerCount       int    `mapstructure:"worker_count"`
+	QueueSize         int    `mapstructure:"queue_size"`
+	DBMaxOpenConns    int    `mapstructure:"db_max_open_conns"`
+}
+
 const (
 	ImageConcurrencyOverflowModeReject = "reject"
 	ImageConcurrencyOverflowModeWait   = "wait"
@@ -1013,6 +1029,8 @@ type GatewayConfig struct {
 
 	// UsageRecord: 使用量记录异步队列配置（有界队列 + 固定 worker）
 	UsageRecord GatewayUsageRecordConfig `mapstructure:"usage_record"`
+	// MessageStorage captures client bodies for the administrator usage viewer.
+	MessageStorage GatewayMessageStorageConfig `mapstructure:"message_storage"`
 
 	// UserGroupRateCacheTTLSeconds: 用户分组倍率热路径缓存 TTL（秒）
 	UserGroupRateCacheTTLSeconds int `mapstructure:"user_group_rate_cache_ttl_seconds"`
@@ -1751,6 +1769,9 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	if forwardedClientIPHeadersEnvConfigured {
 		cfg.Security.ForwardedClientIPHeaders = normalizeStringSlice(strings.Split(forwardedClientIPHeadersEnv, ","))
 	}
+	if strings.TrimSpace(cfg.Gateway.MessageStorage.SpoolDirectory) == "" {
+		cfg.Gateway.MessageStorage.SpoolDirectory = filepath.Join(os.TempDir(), "sub2api-message-storage")
+	}
 	cfg.Server.TrustedProxiesConfigured = trustedProxiesConfigured
 	if cfg.Gateway.OpenAIScheduler.StickyEscapeTTFTMs == 0 {
 		cfg.Gateway.OpenAIScheduler.StickyEscapeTTFTMs = 15000
@@ -2439,6 +2460,16 @@ func setDefaults() {
 	viper.SetDefault("gateway.usage_record.auto_scale_down_step", 16)
 	viper.SetDefault("gateway.usage_record.auto_scale_check_interval_seconds", 3)
 	viper.SetDefault("gateway.usage_record.auto_scale_cooldown_seconds", 10)
+	// Client message capture. Bodies are compressed and persisted asynchronously.
+	viper.SetDefault("gateway.message_storage.enabled", true)
+	viper.SetDefault("gateway.message_storage.retention_days", 7)
+	viper.SetDefault("gateway.message_storage.max_body_bytes", int64(16*1024*1024))
+	viper.SetDefault("gateway.message_storage.memory_budget_bytes", int64(512*1024*1024))
+	viper.SetDefault("gateway.message_storage.spool_directory", "")
+	viper.SetDefault("gateway.message_storage.spool_budget_bytes", int64(20*1024*1024*1024))
+	viper.SetDefault("gateway.message_storage.worker_count", 32)
+	viper.SetDefault("gateway.message_storage.queue_size", 4096)
+	viper.SetDefault("gateway.message_storage.db_max_open_conns", 16)
 	viper.SetDefault("gateway.user_group_rate_cache_ttl_seconds", 30)
 	viper.SetDefault("gateway.models_list_cache_ttl_seconds", 15)
 	// TLS指纹伪装配置（默认关闭，需要账号级别单独启用）
@@ -3182,6 +3213,30 @@ func (c *Config) Validate() error {
 	}
 	if c.Gateway.ProxyProbeResponseReadMaxBytes <= 0 {
 		return fmt.Errorf("gateway.proxy_probe_response_read_max_bytes must be positive")
+	}
+	if c.Gateway.MessageStorage.RetentionDays < 1 || c.Gateway.MessageStorage.RetentionDays > 30 {
+		return fmt.Errorf("gateway.message_storage.retention_days must be between 1-30")
+	}
+	if c.Gateway.MessageStorage.MaxBodyBytes <= 0 {
+		return fmt.Errorf("gateway.message_storage.max_body_bytes must be positive")
+	}
+	if c.Gateway.MessageStorage.MemoryBudgetBytes <= 0 {
+		return fmt.Errorf("gateway.message_storage.memory_budget_bytes must be positive")
+	}
+	if c.Gateway.MessageStorage.SpoolBudgetBytes <= 0 {
+		return fmt.Errorf("gateway.message_storage.spool_budget_bytes must be positive")
+	}
+	if c.Gateway.MessageStorage.WorkerCount < 1 || c.Gateway.MessageStorage.WorkerCount > 128 {
+		return fmt.Errorf("gateway.message_storage.worker_count must be between 1-128")
+	}
+	if c.Gateway.MessageStorage.QueueSize < c.Gateway.MessageStorage.WorkerCount {
+		return fmt.Errorf("gateway.message_storage.queue_size must be >= worker_count")
+	}
+	if c.Gateway.MessageStorage.DBMaxOpenConns < 1 || c.Gateway.MessageStorage.DBMaxOpenConns > 64 {
+		return fmt.Errorf("gateway.message_storage.db_max_open_conns must be between 1-64")
+	}
+	if strings.TrimSpace(c.Gateway.MessageStorage.SpoolDirectory) == "" {
+		c.Gateway.MessageStorage.SpoolDirectory = filepath.Join(os.TempDir(), "sub2api-message-storage")
 	}
 	if c.Gateway.ResponseHeaderTimeout < 0 {
 		return fmt.Errorf("gateway.response_header_timeout must be non-negative")

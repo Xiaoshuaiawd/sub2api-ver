@@ -265,7 +265,8 @@ const (
 	SettingKeyPanelRateLimitSettings = "panel_rate_limit_settings"
 
 	// 操作审计日志设置
-	SettingKeyAuditLogRetentionDays = "audit_log_retention_days" // 审计日志保留天数（<=0 永久保留），默认 180
+	SettingKeyAuditLogRetentionDays       = "audit_log_retention_days" // 审计日志保留天数（<=0 永久保留），默认 180
+	SettingKeyMessageStorageRetentionDays = "message_storage_retention_days"
 
 	// LinuxDo Connect OAuth 登录设置
 	SettingKeyLinuxDoConnectEnabled      = "linuxdo_connect_enabled"

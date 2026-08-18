@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -25,6 +26,55 @@ type UsageHandler struct {
 	apiKeyService  *service.APIKeyService
 	adminService   service.AdminService
 	cleanupService *service.UsageCleanupService
+}
+
+// MessageDetail returns message metadata and optionally the captured bodies.
+// GET /api/v1/admin/usage/:id/message
+func (h *UsageHandler) MessageDetail(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.BadRequest(c, "Invalid usage log id")
+		return
+	}
+	includeBodies := true
+	if raw := strings.TrimSpace(c.Query("include_bodies")); raw != "" {
+		includeBodies, err = strconv.ParseBool(raw)
+		if err != nil {
+			response.BadRequest(c, "Invalid include_bodies value, use true or false")
+			return
+		}
+	}
+	detail, err := h.usageService.GetMessageDetail(c.Request.Context(), id, includeBodies)
+	if errors.Is(err, service.ErrMessageCaptureNotFound) {
+		response.NotFound(c, "Message body is not available")
+		return
+	}
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	middleware.SetAuditAction(c, "admin.usage.message.read")
+	response.Success(c, detail)
+}
+
+func (h *UsageHandler) MessageStorageSettings(c *gin.Context) {
+	response.Success(c, gin.H{"retention_days": h.usageService.MessageStorageRetentionDays()})
+}
+
+func (h *UsageHandler) UpdateMessageStorageSettings(c *gin.Context) {
+	var req struct {
+		RetentionDays int `json:"retention_days"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.RetentionDays < 1 || req.RetentionDays > 30 {
+		response.BadRequest(c, "retention_days must be between 1-30")
+		return
+	}
+	if err := h.usageService.UpdateMessageStorageRetentionDays(c.Request.Context(), req.RetentionDays); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	middleware.SetAuditAction(c, "admin.usage.message_storage.update")
+	response.Success(c, gin.H{"retention_days": req.RetentionDays})
 }
 
 // NewUsageHandler creates a new admin usage handler

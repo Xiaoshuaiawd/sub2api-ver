@@ -60,6 +60,11 @@ type UsageService struct {
 	userRepo             UserRepository
 	entClient            *dbent.Client
 	authCacheInvalidator APIKeyAuthCacheInvalidator
+	messageStorage       *MessageStorageService
+}
+
+func (s *UsageService) SetMessageStorage(messageStorage *MessageStorageService) {
+	s.messageStorage = messageStorage
 }
 
 // NewUsageService 创建使用统计服务实例
@@ -135,6 +140,13 @@ func (s *UsageService) Create(ctx context.Context, req CreateUsageLogRequest) (*
 			return nil, fmt.Errorf("commit transaction: %w", err)
 		}
 	}
+	if inserted && s.messageStorage != nil {
+		if capture := MessageCaptureFromContext(ctx); capture != nil {
+			if artifact, ok := capture.ClaimArtifact(); ok {
+				_ = s.messageStorage.Enqueue(ctx, usageLog.ID, req.RequestID, artifact)
+			}
+		}
+	}
 
 	s.invalidateUsageCaches(ctx, req.UserID, balanceUpdated)
 
@@ -155,6 +167,27 @@ func (s *UsageService) GetByID(ctx context.Context, id int64) (*UsageLog, error)
 		return nil, fmt.Errorf("get usage log: %w", err)
 	}
 	return log, nil
+}
+
+func (s *UsageService) GetMessageDetail(ctx context.Context, id int64, includeBodies bool) (*MessageCaptureDetail, error) {
+	if s.messageStorage == nil {
+		return nil, ErrMessageCaptureNotFound
+	}
+	return s.messageStorage.GetDetail(ctx, id, includeBodies)
+}
+
+func (s *UsageService) MessageStorageRetentionDays() int {
+	if s.messageStorage == nil {
+		return 7
+	}
+	return s.messageStorage.RetentionDays()
+}
+
+func (s *UsageService) UpdateMessageStorageRetentionDays(ctx context.Context, days int) error {
+	if s.messageStorage == nil {
+		return errors.New("message storage is unavailable")
+	}
+	return s.messageStorage.UpdateRetentionDays(ctx, days)
 }
 
 // ListByUser 获取用户的使用日志列表
@@ -441,7 +474,33 @@ func (s *UsageService) ListWithFilters(ctx context.Context, params pagination.Pa
 	if err != nil {
 		return nil, nil, fmt.Errorf("list usage logs with filters: %w", err)
 	}
+	if s.messageStorage != nil && len(logs) > 0 {
+		ids := make([]int64, len(logs))
+		for i := range logs {
+			ids[i] = logs[i].ID
+		}
+		if summaries, summaryErr := s.messageStorage.GetSummaries(ctx, ids); summaryErr == nil {
+			for i := range logs {
+				if summary, ok := summaries[logs[i].ID]; ok {
+					logs[i].RequestBodyState = summary.RequestState
+					logs[i].ResponseBodyState = summary.ResponseState
+					logs[i].RequestBodyBytes = summary.RequestRawBytes
+					logs[i].ResponseBodyBytes = summary.ResponseRawBytes
+					logs[i].MessageStorageStatus = aggregateMessageStorageState(summary.RequestState, summary.ResponseState)
+				}
+			}
+		}
+	}
 	return logs, result, nil
+}
+
+func aggregateMessageStorageState(requestState, responseState string) string {
+	for _, state := range []string{BodyStateFailed, BodyStateTooLarge, BodyStatePartial, BodyStatePending, BodyStateExpired, BodyStateAvailable} {
+		if requestState == state || responseState == state {
+			return state
+		}
+	}
+	return ""
 }
 
 // GetGlobalStats returns global usage stats for a time range.

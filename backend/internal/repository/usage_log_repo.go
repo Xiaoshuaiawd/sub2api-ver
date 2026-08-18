@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -139,15 +140,36 @@ func appendUsageLogModelQueryFilter(query string, args []any, model string, sour
 }
 
 type usageLogRepository struct {
-	client *dbent.Client
-	sql    sqlExecutor
-	db     *sql.DB
+	client         *dbent.Client
+	sql            sqlExecutor
+	db             *sql.DB
+	messageStorage *service.MessageStorageService
 
 	createBatchOnce     sync.Once
 	createBatchCh       chan usageLogCreateRequest
 	bestEffortBatchOnce sync.Once
 	bestEffortBatchCh   chan usageLogBestEffortRequest
 	bestEffortRecent    *gocache.Cache
+}
+
+// SetMessageStorage connects the best-effort usage-log writer to the optional
+// message capture pipeline. It is installed during application wiring before
+// traffic is accepted.
+func (r *usageLogRepository) SetMessageStorage(storage *service.MessageStorageService) {
+	r.messageStorage = storage
+}
+
+func (r *usageLogRepository) enqueueMessageCapture(ctx context.Context, log *service.UsageLog) {
+	if r == nil || r.messageStorage == nil || log == nil || log.ID <= 0 {
+		return
+	}
+	capture := service.MessageCaptureFromContext(ctx)
+	if capture == nil {
+		return
+	}
+	if artifact, ok := capture.ClaimArtifact(); ok {
+		_ = r.messageStorage.Enqueue(ctx, log.ID, log.RequestID, artifact)
+	}
 }
 
 func NewUsageLogRepository(client *dbent.Client, sqlDB *sql.DB) service.UsageLogRepository {

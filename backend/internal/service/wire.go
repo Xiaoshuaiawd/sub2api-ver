@@ -791,6 +791,28 @@ func ProvideAPIKeyService(
 	return svc
 }
 
+func ProvideMessageStorageService(repo MessageStorageRepository, usageLogRepo UsageLogRepository, cfg *config.Config, settingService *SettingService) *MessageStorageService {
+	svc := NewMessageStorageService(repo, cfg)
+	svc.SetSettingService(context.Background(), settingService)
+	if observer, ok := usageLogRepo.(interface{ SetMessageStorage(*MessageStorageService) }); ok {
+		observer.SetMessageStorage(svc)
+	}
+	svc.Start()
+	return svc
+}
+
+func ProvideUsageService(
+	usageRepo UsageLogRepository,
+	userRepo UserRepository,
+	entClient *dbent.Client,
+	authCacheInvalidator APIKeyAuthCacheInvalidator,
+	messageStorage *MessageStorageService,
+) *UsageService {
+	svc := NewUsageService(usageRepo, userRepo, entClient, authCacheInvalidator)
+	svc.SetMessageStorage(messageStorage)
+	return svc
+}
+
 // ProviderSet is the Wire provider set for all services
 var ProviderSet = wire.NewSet(
 	// Core services
@@ -806,7 +828,8 @@ var ProviderSet = wire.NewSet(
 	NewProxyService,
 	NewRedeemService,
 	NewPromoService,
-	NewUsageService,
+	ProvideUsageService,
+	ProvideMessageStorageService,
 	NewDashboardService,
 	ProvidePricingService,
 	NewBillingService,

@@ -96,6 +96,45 @@ func TestLoadHTTPIngressSafetyDefaults(t *testing.T) {
 	require.Equal(t, 16384, cfg.APIKeyAuth.InvalidAbuse.Capacity)
 }
 
+func TestLoadDefaultGatewayMessageStorageConfig(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.True(t, cfg.Gateway.MessageStorage.Enabled)
+	require.Equal(t, 7, cfg.Gateway.MessageStorage.RetentionDays)
+	require.Equal(t, int64(16*1024*1024), cfg.Gateway.MessageStorage.MaxBodyBytes)
+	require.Equal(t, int64(512*1024*1024), cfg.Gateway.MessageStorage.MemoryBudgetBytes)
+	require.Equal(t, int64(20*1024*1024*1024), cfg.Gateway.MessageStorage.SpoolBudgetBytes)
+	require.Equal(t, 32, cfg.Gateway.MessageStorage.WorkerCount)
+	require.Equal(t, 4096, cfg.Gateway.MessageStorage.QueueSize)
+	require.Equal(t, 16, cfg.Gateway.MessageStorage.DBMaxOpenConns)
+	require.Contains(t, cfg.Gateway.MessageStorage.SpoolDirectory, "sub2api-message-storage")
+}
+
+func TestValidateGatewayMessageStorageConfig(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{"retention", func(c *Config) { c.Gateway.MessageStorage.RetentionDays = 31 }},
+		{"body_limit", func(c *Config) { c.Gateway.MessageStorage.MaxBodyBytes = 0 }},
+		{"memory_budget", func(c *Config) { c.Gateway.MessageStorage.MemoryBudgetBytes = 0 }},
+		{"spool_budget", func(c *Config) { c.Gateway.MessageStorage.SpoolBudgetBytes = 0 }},
+		{"worker_count", func(c *Config) { c.Gateway.MessageStorage.WorkerCount = 129 }},
+		{"queue_size", func(c *Config) { c.Gateway.MessageStorage.QueueSize = 1 }},
+		{"db_connections", func(c *Config) { c.Gateway.MessageStorage.DBMaxOpenConns = 65 }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetViperWithJWTSecret(t)
+			cfg, err := Load()
+			require.NoError(t, err)
+			tt.mutate(cfg)
+			require.Error(t, cfg.Validate())
+		})
+	}
+}
+
 func TestNormalizeForwardedClientIPHeaders(t *testing.T) {
 	headers, err := NormalizeForwardedClientIPHeaders([]string{
 		" x-cdn-client-ip ",

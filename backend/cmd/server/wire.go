@@ -100,6 +100,7 @@ func provideCleanup(
 	emailQueue *service.EmailQueueService,
 	billingCache *service.BillingCacheService,
 	usageRecordWorkerPool *service.UsageRecordWorkerPool,
+	messageStorage *service.MessageStorageService,
 	openAIProxyPolicy *service.OpenAIProxyPolicyService,
 	subscriptionService *service.SubscriptionService,
 	oauth *service.OAuthService,
@@ -288,6 +289,12 @@ func provideCleanup(
 				}
 				return nil
 			}},
+			{"MessageStorageService", func() error {
+				if messageStorage != nil {
+					return messageStorage.Stop(ctx)
+				}
+				return nil
+			}},
 			{"OAuthService", func() error {
 				oauth.Stop()
 				return nil
@@ -335,12 +342,12 @@ func provideCleanup(
 				return nil
 			}},
 			{"ChannelMonitorV2Aggregator", func() error {
-			if channelMonitorV2Aggregator != nil {
-				channelMonitorV2Aggregator.Stop()
-			}
-			return nil
-		}},
-		{"ChannelMonitorRunner", func() error {
+				if channelMonitorV2Aggregator != nil {
+					channelMonitorV2Aggregator.Stop()
+				}
+				return nil
+			}},
+			{"ChannelMonitorRunner", func() error {
 				if channelMonitorRunner != nil {
 					channelMonitorRunner.Stop()
 				}
