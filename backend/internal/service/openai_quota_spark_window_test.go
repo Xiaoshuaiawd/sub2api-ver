@@ -262,6 +262,7 @@ func TestResetCreditAgentIdentityUsesAssertionAndRecoversInvalidTaskOnce(t *test
 
 	invalidator := &agentIdentityWSInvalidationRecorder{}
 	svc := NewOpenAIQuotaService(repo, nil, nil, newQuotaRedirectingFactory(srv))
+	svc.httpUpstream = newAgentIdentityDirectTestUpstream()
 	svc.agentIdentityWS = invalidator
 
 	result, err := svc.ResetCredit(context.Background(), account.ID)
@@ -469,6 +470,7 @@ func TestQueryUsageAgentIdentityRecoversInvalidTaskOnce(t *testing.T) {
 
 	invalidator := &agentIdentityWSInvalidationRecorder{}
 	svc := NewOpenAIQuotaService(repo, nil, nil, newQuotaRedirectingFactory(srv))
+	svc.httpUpstream = newAgentIdentityDirectTestUpstream()
 	svc.agentIdentityWS = invalidator
 	usage, err := svc.QueryUsage(context.Background(), account.ID)
 	require.NoError(t, err)
