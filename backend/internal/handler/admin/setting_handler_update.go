@@ -272,6 +272,10 @@ type UpdateSettingsRequest struct {
 	PaymentVisibleMethodWxpayEnabled  *bool   `json:"payment_visible_method_wxpay_enabled"`
 
 	// OpenAI account scheduling
+	OpenAIDefaultProxyEnabled       *bool                             `json:"openai_default_proxy_enabled"`
+	OpenAIDefaultProxyURL           *string                           `json:"openai_default_proxy_url"`
+	OpenAIDefaultProxyFailurePolicy *service.OpenAIProxyFailurePolicy `json:"openai_default_proxy_failure_policy"`
+
 	OpenAILowUpstreamRatePriorityEnabled               *bool    `json:"openai_low_upstream_rate_priority_enabled"`
 	OpenAIOAuthSchedulingRateMultiplier                *float64 `json:"openai_oauth_scheduling_rate_multiplier"`
 	OpenAIAdvancedSchedulerEnabled                     *bool    `json:"openai_advanced_scheduler_enabled"`
@@ -500,6 +504,25 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	previousAuthSourceDefaults, err := h.settingService.GetAuthSourceDefaultSettings(c.Request.Context())
 	if err != nil {
 		response.ErrorFrom(c, err)
+		return
+	}
+	openAIProxySettings := service.OpenAIProxySettings{
+		Enabled:       previousSettings.OpenAIDefaultProxyEnabled,
+		ProxyURL:      previousSettings.OpenAIDefaultProxyURL,
+		FailurePolicy: previousSettings.OpenAIDefaultProxyFailurePolicy,
+	}
+	if req.OpenAIDefaultProxyEnabled != nil {
+		openAIProxySettings.Enabled = *req.OpenAIDefaultProxyEnabled
+	}
+	if req.OpenAIDefaultProxyURL != nil {
+		openAIProxySettings.ProxyURL = *req.OpenAIDefaultProxyURL
+	}
+	if req.OpenAIDefaultProxyFailurePolicy != nil {
+		openAIProxySettings.FailurePolicy = *req.OpenAIDefaultProxyFailurePolicy
+	}
+	openAIProxySettings, err = service.NormalizeOpenAIProxySettings(openAIProxySettings)
+	if err != nil {
+		response.BadRequest(c, err.Error())
 		return
 	}
 
@@ -1792,6 +1815,9 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.PaymentVisibleMethodWxpayEnabled
 		}(),
+		OpenAIDefaultProxyEnabled:       openAIProxySettings.Enabled,
+		OpenAIDefaultProxyURL:           openAIProxySettings.ProxyURL,
+		OpenAIDefaultProxyFailurePolicy: openAIProxySettings.FailurePolicy,
 		OpenAILowUpstreamRatePriorityEnabled: func() bool {
 			if req.OpenAILowUpstreamRatePriorityEnabled != nil {
 				return *req.OpenAILowUpstreamRatePriorityEnabled
@@ -2297,6 +2323,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		PaymentVisibleMethodWxpaySource:                        updatedSettings.PaymentVisibleMethodWxpaySource,
 		PaymentVisibleMethodAlipayEnabled:                      updatedSettings.PaymentVisibleMethodAlipayEnabled,
 		PaymentVisibleMethodWxpayEnabled:                       updatedSettings.PaymentVisibleMethodWxpayEnabled,
+		OpenAIDefaultProxyEnabled:                              updatedSettings.OpenAIDefaultProxyEnabled,
+		OpenAIDefaultProxyURL:                                  service.RedactOpenAIProxyURL(updatedSettings.OpenAIDefaultProxyURL),
+		OpenAIDefaultProxyFailurePolicy:                        updatedSettings.OpenAIDefaultProxyFailurePolicy,
+		OpenAIDefaultProxyStatus:                               openAIProxyStatusToDTO(h.settingService.OpenAIProxyStatus()),
 		OpenAILowUpstreamRatePriorityEnabled:                   updatedSettings.OpenAILowUpstreamRatePriorityEnabled,
 		OpenAIOAuthSchedulingRateMultiplier:                    updatedSettings.OpenAIOAuthSchedulingRateMultiplier,
 		OpenAIAdvancedSchedulerEnabled:                         updatedSettings.OpenAIAdvancedSchedulerEnabled,
