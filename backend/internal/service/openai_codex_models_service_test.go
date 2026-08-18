@@ -2144,7 +2144,9 @@ func TestFetchCodexModelsManifestAcceptsConfiguredLimitAboveLegacyBoundary(t *te
 	chatgptCodexModelsURL = server.URL
 	defer func() { chatgptCodexModelsURL = original }()
 
-	s := &OpenAIGatewayService{cfg: &config.Config{}}
+	s := newCodexModelsAPIKeyTestService(&codexModelsHTTPUpstreamStub{do: func(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+		return server.Client().Do(req)
+	}})
 	s.cfg.Gateway.ModelsListReadMaxBytes = 16 << 20
 	manifest, err := s.FetchCodexModelsManifest(context.Background(), newCodexModelsTestAccount(), "0.144.0", "")
 	require.NoError(t, err)

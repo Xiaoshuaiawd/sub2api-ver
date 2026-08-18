@@ -680,6 +680,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					accountReleaseFunc()
 				}
 			}()
+			if channelMapping.Mapped {
+				return h.gatewayService.ForwardWithOriginalModel(c.Request.Context(), c, account, attemptBody, reqModel)
+			}
 			return h.gatewayService.Forward(c.Request.Context(), c, account, attemptBody)
 		}()
 		var cyberBlockBodyHTTP []byte
