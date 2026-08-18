@@ -203,6 +203,7 @@ func TestForwardAlphaSearchPATBackfillsMissingChatGPTAccountMetadata(t *testing.
 		Body:       io.NopCloser(strings.NewReader(`{"output":"search result"}`)),
 	}}
 	oauthService := NewOpenAIOAuthService(nil, nil)
+	oauthService.httpUpstream = newAgentIdentityDirectTestUpstream()
 	service := &OpenAIGatewayService{
 		cfg:                 &config.Config{},
 		httpUpstream:        upstream,
