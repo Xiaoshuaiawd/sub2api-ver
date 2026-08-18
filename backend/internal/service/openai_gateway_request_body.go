@@ -626,16 +626,24 @@ func appendOpenAIResponsesRequestPathSuffix(baseURL, suffix string) string {
 	return trimmedBase + trimmedSuffix
 }
 
-func (s *OpenAIGatewayService) replaceModelInResponseBody(body []byte, fromModel, toModel string) []byte {
+func (s *OpenAIGatewayService) replaceModelInResponseBody(body []byte, _ string, toModel string) []byte {
 	// 使用 gjson/sjson 精确替换 model 字段，避免全量 JSON 反序列化
-	if m := gjson.GetBytes(body, "model"); m.Exists() && m.Str == fromModel {
-		newBody, err := sjson.SetBytes(body, "model", toModel)
+	updated := body
+	if m := gjson.GetBytes(updated, "model"); m.Exists() && m.Type == gjson.String {
+		newBody, err := sjson.SetBytes(updated, "model", toModel)
 		if err != nil {
 			return body
 		}
-		return newBody
+		updated = newBody
 	}
-	return body
+	if m := gjson.GetBytes(updated, "response.model"); m.Exists() && m.Type == gjson.String {
+		newBody, err := sjson.SetBytes(updated, "response.model", toModel)
+		if err != nil {
+			return body
+		}
+		updated = newBody
+	}
+	return updated
 }
 
 func getOpenAIReasoningEffortFromReqBody(reqBody map[string]any, requestedModel string) (value string, present bool) {

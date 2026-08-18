@@ -302,7 +302,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			juiceLines = append(juiceLines, line)
 			return
 		}
-		if needModelReplace && upstreamModel != "" && strings.Contains(line, upstreamModel) {
+		if needModelReplace && strings.Contains(line, `"model"`) {
 			line = s.replaceModelInSSELine(line, upstreamModel, originalModel)
 		}
 		if clientDisconnected {

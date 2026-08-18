@@ -701,7 +701,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			}
 			// Replace model in response if needed.
 			// Fast path: most events do not contain model field values.
-			if needModelReplace && mappedModel != "" && strings.Contains(line, mappedModel) {
+			if needModelReplace && strings.Contains(line, `"model"`) {
 				line = s.replaceModelInSSELine(line, mappedModel, originalModel)
 			}
 			startsClientOutput := forceFlushFailedEvent || openAIStreamDataStartsClientOutput(data, eventType)
@@ -1096,7 +1096,7 @@ func effectiveOpenAISSEEventType(payload []byte, eventType string) string {
 	return strings.TrimSpace(eventType)
 }
 
-func (s *OpenAIGatewayService) replaceModelInSSELine(line, fromModel, toModel string) string {
+func (s *OpenAIGatewayService) replaceModelInSSELine(line, _ string, toModel string) string {
 	data, ok := extractOpenAISSEDataLine(line)
 	if !ok {
 		return line
@@ -1106,23 +1106,27 @@ func (s *OpenAIGatewayService) replaceModelInSSELine(line, fromModel, toModel st
 	}
 
 	// 使用 gjson 精确检查 model 字段，避免全量 JSON 反序列化
-	if m := gjson.Get(data, "model"); m.Exists() && m.Str == fromModel {
-		newData, err := sjson.Set(data, "model", toModel)
+	updatedData := data
+	if m := gjson.Get(updatedData, "model"); m.Exists() && m.Type == gjson.String {
+		newData, err := sjson.Set(updatedData, "model", toModel)
 		if err != nil {
 			return line
 		}
-		return "data: " + newData
+		updatedData = newData
 	}
 
 	// 检查嵌套的 response.model 字段
-	if m := gjson.Get(data, "response.model"); m.Exists() && m.Str == fromModel {
-		newData, err := sjson.Set(data, "response.model", toModel)
+	if m := gjson.Get(updatedData, "response.model"); m.Exists() && m.Type == gjson.String {
+		newData, err := sjson.Set(updatedData, "response.model", toModel)
 		if err != nil {
 			return line
 		}
-		return "data: " + newData
+		updatedData = newData
 	}
 
+	if updatedData != data {
+		return "data: " + updatedData
+	}
 	return line
 }
 
