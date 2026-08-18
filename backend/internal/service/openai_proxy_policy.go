@@ -161,10 +161,9 @@ type openAIProxyReader interface {
 }
 
 type openAIProxySnapshot struct {
-	settings  OpenAIProxySettings
-	proxies   map[int64]Proxy
-	byURL     map[string]int64
-	expiresAt time.Time
+	settings OpenAIProxySettings
+	proxies  map[int64]Proxy
+	byURL    map[string]int64
 }
 
 type OpenAIProxyPolicyService struct {
@@ -186,6 +185,7 @@ type OpenAIProxyPolicyService struct {
 	healthMu            sync.RWMutex
 	health              OpenAIProxyHealthStatus
 	healthWG            sync.WaitGroup
+	refreshWG           sync.WaitGroup
 	metrics             openAIProxyMetrics
 }
 
@@ -251,7 +251,7 @@ func newOpenAIProxyPolicyService(settingRepo openAIProxySettingReader, proxyRepo
 		healthClientFactory: newOpenAIProxyHealthClient,
 	}
 	service.health = OpenAIProxyHealthStatus{InstanceID: instanceID}
-	service.snapshot.Store(buildOpenAIProxySnapshot(DefaultOpenAIProxySettings(), nil, time.Now().Add(ttl)))
+	service.snapshot.Store(buildOpenAIProxySnapshot(DefaultOpenAIProxySettings(), nil))
 	return service
 }
 
@@ -269,6 +269,7 @@ func NewOpenAIProxyPolicyService(settingRepo SettingRepository, proxyRepo ProxyR
 			}
 		})
 	}
+	service.startSnapshotRefreshWorker(ctx)
 	service.startHealthWorker(ctx)
 	return service
 }
@@ -280,6 +281,7 @@ func (s *OpenAIProxyPolicyService) Stop() {
 	if s.cancel != nil {
 		s.cancel()
 	}
+	s.refreshWG.Wait()
 	s.healthWG.Wait()
 }
 
@@ -305,6 +307,28 @@ func newOpenAIProxyHealthClient(rawProxyURL string) (*http.Client, error) {
 		return nil, err
 	}
 	return &http.Client{Transport: transport, Timeout: defaultOpenAIProxyHealthTimeout}, nil
+}
+
+func (s *OpenAIProxyPolicyService) startSnapshotRefreshWorker(ctx context.Context) {
+	if s == nil || s.ttl <= 0 {
+		return
+	}
+	s.refreshWG.Add(1)
+	go func() {
+		defer s.refreshWG.Done()
+		ticker := time.NewTicker(s.ttl)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := s.Refresh(ctx); err != nil && ctx.Err() == nil {
+					slog.Warn("refresh OpenAI proxy policy snapshot failed; retaining last snapshot", "error", err)
+				}
+			}
+		}
+	}()
 }
 
 func (s *OpenAIProxyPolicyService) startHealthWorker(ctx context.Context) {
@@ -501,8 +525,7 @@ func (s *OpenAIProxyPolicyService) Refresh(ctx context.Context) error {
 		return fmt.Errorf("load OpenAI proxy fallback chain: %w", err)
 	}
 
-	now := s.now()
-	s.snapshot.Store(buildOpenAIProxySnapshot(parseOpenAIProxySettings(values), proxies, now.Add(s.ttl)))
+	s.snapshot.Store(buildOpenAIProxySnapshot(parseOpenAIProxySettings(values), proxies))
 	return nil
 }
 
@@ -522,28 +545,21 @@ func (s *OpenAIProxyPolicyService) SettingsUpdated(ctx context.Context) {
 
 func (s *OpenAIProxyPolicyService) Resolve(ctx context.Context, primaryProxyURL string) OpenAIProxyPlan {
 	if s == nil {
-		return buildOpenAIProxySnapshot(DefaultOpenAIProxySettings(), nil, time.Time{}).resolve(primaryProxyURL, time.Now())
+		return buildOpenAIProxySnapshot(DefaultOpenAIProxySettings(), nil).resolve(primaryProxyURL, time.Now())
 	}
 	snapshot := s.snapshot.Load()
 	if snapshot == nil {
-		snapshot = buildOpenAIProxySnapshot(DefaultOpenAIProxySettings(), nil, s.now().Add(s.ttl))
+		snapshot = buildOpenAIProxySnapshot(DefaultOpenAIProxySettings(), nil)
 		s.snapshot.Store(snapshot)
-	}
-	if !snapshot.expiresAt.After(s.now()) {
-		if err := s.Refresh(ctx); err != nil {
-			slog.Warn("refresh expired OpenAI proxy policy failed; retaining last snapshot", "error", err)
-		}
-		snapshot = s.snapshot.Load()
 	}
 	return snapshot.resolve(primaryProxyURL, s.now())
 }
 
-func buildOpenAIProxySnapshot(settings OpenAIProxySettings, proxies []Proxy, expiresAt time.Time) *openAIProxySnapshot {
+func buildOpenAIProxySnapshot(settings OpenAIProxySettings, proxies []Proxy) *openAIProxySnapshot {
 	snapshot := &openAIProxySnapshot{
-		settings:  settings,
-		proxies:   make(map[int64]Proxy, len(proxies)),
-		byURL:     make(map[string]int64, len(proxies)),
-		expiresAt: expiresAt,
+		settings: settings,
+		proxies:  make(map[int64]Proxy, len(proxies)),
+		byURL:    make(map[string]int64, len(proxies)),
 	}
 	for _, configuredProxy := range proxies {
 		snapshot.proxies[configuredProxy.ID] = configuredProxy

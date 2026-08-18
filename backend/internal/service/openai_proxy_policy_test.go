@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -58,7 +59,7 @@ func TestOpenAIProxyPolicyResolveOrdersAndDeduplicatesCandidates(t *testing.T) {
 func newOpenAIProxyPolicyForTest(settings OpenAIProxySettings, proxies []Proxy, now time.Time) *OpenAIProxyPolicyService {
 	policy := newOpenAIProxyPolicyService(nil, nil, nil, time.Hour)
 	policy.now = func() time.Time { return now }
-	policy.snapshot.Store(buildOpenAIProxySnapshot(settings, proxies, now.Add(time.Hour)))
+	policy.snapshot.Store(buildOpenAIProxySnapshot(settings, proxies))
 	return policy
 }
 
@@ -115,11 +116,11 @@ type openAIProxySettingRepoStub struct {
 	SettingRepository
 	values map[string]string
 	err    error
-	calls  int
+	calls  atomic.Int64
 }
 
 func (s *openAIProxySettingRepoStub) GetMultiple(context.Context, []string) (map[string]string, error) {
-	s.calls++
+	s.calls.Add(1)
 	return s.values, s.err
 }
 
@@ -196,7 +197,7 @@ func TestOpenAIProxyPolicyRefreshFailureRetainsLastGoodSnapshot(t *testing.T) {
 	require.Equal(t, []string{"socks5h://node-proxy:1080"}, policy.Resolve(context.Background(), "").URLs())
 }
 
-func TestOpenAIProxyPolicyResolveRefreshesExpiredSnapshot(t *testing.T) {
+func TestOpenAIProxyPolicyResolveExpiredSnapshotDoesNotReadRepositories(t *testing.T) {
 	now := time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC)
 	settingsRepo := &openAIProxySettingRepoStub{values: map[string]string{
 		SettingKeyOpenAIDefaultProxyEnabled:       "true",
@@ -207,12 +208,30 @@ func TestOpenAIProxyPolicyResolveRefreshesExpiredSnapshot(t *testing.T) {
 	policy := newOpenAIProxyPolicyService(settingsRepo, proxyRepo, nil, time.Minute)
 	policy.now = func() time.Time { return now }
 	require.NoError(t, policy.Refresh(context.Background()))
-	require.Equal(t, 1, settingsRepo.calls)
+	require.Equal(t, int64(1), settingsRepo.calls.Load())
 
 	now = now.Add(2 * time.Minute)
 	policy.Resolve(context.Background(), "")
 
-	require.Equal(t, 2, settingsRepo.calls)
+	require.Equal(t, int64(1), settingsRepo.calls.Load())
+}
+
+func TestOpenAIProxyPolicySnapshotRefreshWorkerRefreshesOnTTL(t *testing.T) {
+	settingsRepo := &openAIProxySettingRepoStub{values: map[string]string{
+		SettingKeyOpenAIDefaultProxyEnabled:       "true",
+		SettingKeyOpenAIDefaultProxyURL:           DefaultOpenAIDefaultProxyURL,
+		SettingKeyOpenAIDefaultProxyFailurePolicy: "fail_closed",
+	}}
+	policy := newOpenAIProxyPolicyService(settingsRepo, &openAIProxyRepoStub{}, nil, 10*time.Millisecond)
+	require.NoError(t, policy.Refresh(context.Background()))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	policy.startSnapshotRefreshWorker(ctx)
+	require.Eventually(t, func() bool {
+		return settingsRepo.calls.Load() >= 2
+	}, time.Second, 5*time.Millisecond)
+	cancel()
+	policy.refreshWG.Wait()
 }
 
 func TestSettingServiceUpdateRefreshesAndPublishesOpenAIProxyPolicy(t *testing.T) {
