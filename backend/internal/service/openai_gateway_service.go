@@ -446,6 +446,7 @@ type OpenAIGatewayService struct {
 	channelService        *ChannelService
 	balanceNotifyService  *BalanceNotifyService
 	settingService        *SettingService
+	openAIProxyPolicy     OpenAIProxyPolicyProvider
 	userPlatformQuotaRepo UserPlatformQuotaRepository
 	liveAttestation       liveattestation.Provider
 	liveAttestationCipher SecretEncryptor
@@ -548,6 +549,7 @@ func NewOpenAIGatewayService(
 		channelService:        channelService,
 		balanceNotifyService:  balanceNotifyService,
 		settingService:        settingService,
+		openAIProxyPolicy:     openAIProxyPolicyFromSettingService(settingService),
 		userPlatformQuotaRepo: userPlatformQuotaRepo,
 		liveAttestation:       liveattestation.NewProvider(),
 		liveAttestationCipher: newLiveAttestationCipher(cfg),
@@ -563,6 +565,13 @@ func NewOpenAIGatewayService(
 	}
 	svc.logOpenAIWSModeBootstrap()
 	return svc
+}
+
+func openAIProxyPolicyFromSettingService(settings *SettingService) OpenAIProxyPolicyProvider {
+	if settings == nil {
+		return nil
+	}
+	return settings.openAIProxyPolicy
 }
 
 // ResolveChannelMapping 解析渠道级模型映射（代理到 ChannelService）

@@ -631,10 +631,14 @@ type openAIWSConnPool struct {
 	closeOnce    sync.Once
 }
 
-func newOpenAIWSConnPool(cfg *config.Config) *openAIWSConnPool {
+func newOpenAIWSConnPool(cfg *config.Config, policies ...OpenAIProxyPolicyProvider) *openAIWSConnPool {
+	var policy OpenAIProxyPolicyProvider
+	if len(policies) > 0 {
+		policy = policies[0]
+	}
 	pool := &openAIWSConnPool{
 		cfg:          cfg,
-		clientDialer: newDefaultOpenAIWSClientDialer(),
+		clientDialer: newDefaultOpenAIWSClientDialer(policy),
 		workerStopCh: make(chan struct{}),
 	}
 	pool.startBackgroundWorkers()
