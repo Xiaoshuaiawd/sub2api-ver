@@ -5,13 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyurl"
 	openaiwsv2 "github.com/Wei-Shaw/sub2api/internal/service/openai_ws_v2"
 	coderws "github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
@@ -72,9 +73,14 @@ type openAIWSTransportMetricsDialer interface {
 	SnapshotTransportMetrics() OpenAIWSTransportMetricsSnapshot
 }
 
-func newDefaultOpenAIWSClientDialer() openAIWSClientDialer {
+func newDefaultOpenAIWSClientDialer(policies ...OpenAIProxyPolicyProvider) openAIWSClientDialer {
+	var policy OpenAIProxyPolicyProvider
+	if len(policies) > 0 {
+		policy = policies[0]
+	}
 	return &coderOpenAIWSClientDialer{
 		proxyClients: make(map[string]*openAIWSProxyClientEntry),
+		policy:       policy,
 	}
 }
 
@@ -83,6 +89,31 @@ type coderOpenAIWSClientDialer struct {
 	proxyClients map[string]*openAIWSProxyClientEntry
 	proxyHits    atomic.Int64
 	proxyMisses  atomic.Int64
+	policy       OpenAIProxyPolicyProvider
+	dialOnce     func(context.Context, string, http.Header, string) (openAIWSClientConn, int, http.Header, error)
+}
+
+type openAIWSProxyExhaustedError struct {
+	source OpenAIProxyCandidateSource
+	err    error
+}
+
+func newOpenAIWSProxyExhaustedError(source OpenAIProxyCandidateSource, err error) error {
+	return &openAIWSProxyExhaustedError{source: source, err: err}
+}
+
+func (e *openAIWSProxyExhaustedError) Error() string {
+	if e == nil {
+		return "OpenAI WebSocket proxy candidates exhausted"
+	}
+	return fmt.Sprintf("OpenAI WebSocket transport failed after %s candidate", e.source)
+}
+
+func (e *openAIWSProxyExhaustedError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
 }
 
 // openAIWSHandshakeError keeps a bounded, non-logged HTTP error body so the
@@ -122,6 +153,45 @@ func (d *coderOpenAIWSClientDialer) Dial(
 	if targetURL == "" {
 		return nil, 0, nil, errors.New("ws url is empty")
 	}
+	if d == nil {
+		return nil, 0, nil, errors.New("openai ws dialer is nil")
+	}
+	attempt := d.dialOnce
+	if attempt == nil {
+		attempt = d.dialSingle
+	}
+	if d.policy == nil {
+		return attempt(ctx, targetURL, headers, proxyURL)
+	}
+
+	plan := d.policy.Resolve(ctx, proxyURL)
+	if len(plan.Candidates) == 0 {
+		return nil, 0, nil, errors.New("OpenAI WebSocket proxy policy returned no candidates")
+	}
+	var lastErr error
+	for _, candidate := range plan.Candidates {
+		if candidate.Source == OpenAIProxyCandidateDirect {
+			slog.Warn("OpenAI WebSocket falling back to direct egress")
+		}
+		conn, status, responseHeaders, err := attempt(ctx, targetURL, headers, candidate.URL)
+		if err == nil || status != 0 {
+			return conn, status, responseHeaders, err
+		}
+		lastErr = err
+		if contextErr := ctx.Err(); contextErr != nil {
+			return nil, 0, nil, contextErr
+		}
+	}
+	lastSource := plan.Candidates[len(plan.Candidates)-1].Source
+	return nil, 0, nil, newOpenAIWSProxyExhaustedError(lastSource, lastErr)
+}
+
+func (d *coderOpenAIWSClientDialer) dialSingle(
+	ctx context.Context,
+	targetURL string,
+	headers http.Header,
+	proxyURL string,
+) (openAIWSClientConn, int, http.Header, error) {
 
 	wrapped := &coderOpenAIWSClientConn{}
 	opts := &coderws.DialOptions{
@@ -170,13 +240,12 @@ func (d *coderOpenAIWSClientDialer) proxyHTTPClient(proxy string) (*http.Client,
 	if d == nil {
 		return nil, errors.New("openai ws dialer is nil")
 	}
-	normalizedProxy := strings.TrimSpace(proxy)
+	normalizedProxy, parsedProxyURL, err := proxyurl.Parse(proxy)
+	if err != nil {
+		return nil, err
+	}
 	if normalizedProxy == "" {
 		return nil, errors.New("proxy url is empty")
-	}
-	parsedProxyURL, err := url.Parse(normalizedProxy)
-	if err != nil {
-		return nil, fmt.Errorf("invalid proxy url: %w", err)
 	}
 	now := time.Now().UnixNano()
 
