@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -240,6 +241,25 @@ func TestHTTPUpstreamOpenAIFailClosedExhaustionDoesNotAttemptDirect(t *testing.T
 	require.Nil(t, resp)
 	require.Error(t, err)
 	require.Equal(t, []string{"http://account:8080", "socks5h://warp:1080"}, attempted)
+}
+
+func TestHTTPUpstreamOpenAIExhaustionHidesProxyCredentials(t *testing.T) {
+	const proxyURL = "http://user:secret@account:8080"
+	upstream := &httpUpstreamService{
+		openAIProxyPolicy: stubOpenAIProxyPolicy{plan: openAIProxyTestPlan(
+			service.OpenAIProxyCandidate{URL: proxyURL, Source: service.OpenAIProxyCandidateAccount},
+		)},
+		doAttempt: func(_ *http.Request, attemptedProxyURL string, _ int64, _ int) (*http.Response, error) {
+			return nil, fmt.Errorf("dial %s failed", attemptedProxyURL)
+		},
+	}
+
+	resp, err := upstream.Do(openAIProxyTestRequest(t, nil), proxyURL, 7, 1)
+
+	require.Nil(t, resp)
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "secret")
+	require.ErrorContains(t, errors.Unwrap(err), "secret")
 }
 
 func TestHTTPUpstreamOpenAIFallbackDirectAttemptsDirectLast(t *testing.T) {
