@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -16,6 +17,8 @@ import (
 const DefaultOpenAIDefaultProxyURL = "socks5h://warp-proxy:1080"
 
 const defaultOpenAIProxySnapshotTTL = 30 * time.Second
+
+var ErrOpenAIProxyRequestNotReplayable = errors.New("OpenAI proxy fallback requires a replayable request body")
 
 type OpenAIProxyFailurePolicy string
 
