@@ -41,11 +41,24 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	reqStream bool,
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
+	return s.forwardGrokResponsesWithResponseModel(ctx, c, account, body, originalModel, originalModel, reqStream, startTime)
+}
+
+func (s *OpenAIGatewayService) forwardGrokResponsesWithResponseModel(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	body []byte,
+	requestModel string,
+	responseModel string,
+	reqStream bool,
+	startTime time.Time,
+) (*OpenAIForwardResult, error) {
 	if account.Type != AccountTypeOAuth && account.Type != AccountTypeAPIKey {
 		return nil, fmt.Errorf("grok account type %s is not supported by Responses forwarding", account.Type)
 	}
 
-	upstreamModel := account.GetMappedModel(originalModel)
+	upstreamModel := account.GetMappedModel(requestModel)
 	if strings.TrimSpace(upstreamModel) == "" {
 		upstreamModel = grokDefaultResponsesModel
 	}
@@ -202,7 +215,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 		if hasGrokResponsesClientToolMapping(clientToolMapping) {
 			resp.Body = newGrokResponsesClientToolStreamBody(resp.Body, clientToolMapping, maxLineSize)
 		}
-		streamResult, err := s.handleStreamingResponse(ctx, resp, c, account, startTime, originalModel, upstreamModel)
+		streamResult, err := s.handleStreamingResponse(ctx, resp, c, account, startTime, responseModel, upstreamModel)
 		if err != nil {
 			return nil, err
 		}
@@ -213,7 +226,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 		imageCount = streamResult.imageCount
 		imageOutputSizes = streamResult.imageOutputSizes
 	} else {
-		nonStreamResult, err := s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, upstreamModel)
+		nonStreamResult, err := s.handleNonStreamingResponse(ctx, resp, c, account, responseModel, upstreamModel)
 		if err != nil {
 			return nil, err
 		}
@@ -227,12 +240,12 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	if usage == nil {
 		usage = &OpenAIUsage{}
 	}
-	reasoningEffort := extractOpenAIReasoningEffortFromBody(patchedBody, originalModel)
+	reasoningEffort := extractOpenAIReasoningEffortFromBody(patchedBody, requestModel)
 	result := &OpenAIForwardResult{
 		RequestID:       firstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id")),
 		ResponseID:      responseID,
 		Usage:           *usage,
-		Model:           originalModel,
+		Model:           responseModel,
 		UpstreamModel:   upstreamModel,
 		ReasoningEffort: reasoningEffort,
 		Stream:          reqStream,

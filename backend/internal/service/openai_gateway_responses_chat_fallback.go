@@ -23,6 +23,7 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	c *gin.Context,
 	account *Account,
 	body []byte,
+	responseModel string,
 ) (*OpenAIForwardResult, error) {
 	startTime := time.Now()
 
@@ -35,6 +36,9 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	if originalModel == "" {
 		writeOpenAIResponsesFallbackError(c, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return nil, fmt.Errorf("missing model in request")
+	}
+	if strings.TrimSpace(responseModel) == "" {
+		responseModel = originalModel
 	}
 
 	clientStream := responsesReq.Stream
@@ -112,9 +116,9 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	}
 
 	if clientStream {
-		return s.streamChatCompletionsAsResponses(c, resp, originalModel, customTools, toolSearch, namespaceTools, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
+		return s.streamChatCompletionsAsResponses(c, resp, responseModel, customTools, toolSearch, namespaceTools, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
 	}
-	return s.bufferChatCompletionsAsResponses(c, resp, originalModel, customTools, toolSearch, namespaceTools, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
+	return s.bufferChatCompletionsAsResponses(c, resp, responseModel, customTools, toolSearch, namespaceTools, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
 }
 
 func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(

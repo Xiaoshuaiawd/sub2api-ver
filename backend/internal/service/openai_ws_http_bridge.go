@@ -285,16 +285,12 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	clientDisconnected := false
 	mappedModel := ""
 	needModelReplace := false
-	var mappedModelBytes []byte
 	if originalModel != "" {
 		mappedModel = strings.TrimSpace(gjson.GetBytes(body, "model").String())
 		if mappedModel == "" {
 			mappedModel = normalizeOpenAIModelForUpstream(account, account.GetMappedModel(originalModel))
 		}
 		needModelReplace = mappedModel != "" && mappedModel != originalModel
-		if needModelReplace {
-			mappedModelBytes = []byte(mappedModel)
-		}
 	}
 
 	resultWithUsage := func() *OpenAIForwardResult {
@@ -381,7 +377,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		}
 		imageCounter.AddSSEData(upstreamMessage)
 
-		if needModelReplace && len(mappedModelBytes) > 0 && openAIWSEventMayContainModel(eventType) && strings.Contains(trimmedData, mappedModel) {
+		if needModelReplace && openAIWSEventMayContainModel(eventType) {
 			upstreamMessage = replaceOpenAIWSMessageModel(upstreamMessage, mappedModel, originalModel)
 		}
 		if s.toolCorrector != nil && openAIWSEventMayContainToolCalls(eventType) && openAIWSMessageLikelyContainsToolCalls(upstreamMessage) {

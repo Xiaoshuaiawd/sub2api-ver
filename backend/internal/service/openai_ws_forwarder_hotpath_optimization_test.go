@@ -93,6 +93,11 @@ func TestReplaceOpenAIWSMessageModel_OptimizedStillCorrect(t *testing.T) {
 
 	responseOnly := []byte(`{"type":"response.completed","response":{"model":"gpt-5.1"}}`)
 	require.Equal(t, `{"type":"response.completed","response":{"model":"custom-model"}}`, string(replaceOpenAIWSMessageModel(responseOnly, "gpt-5.1", "custom-model")))
+	require.Equal(t, `{"type":"response.completed","response":{"model":"custom-model"}}`, string(replaceOpenAIWSMessageModel(
+		[]byte(`{"type":"response.completed","response":{"model":"upstream-reported-model"}}`),
+		"gpt-5.1",
+		"custom-model",
+	)))
 
 	both := []byte(`{"model":"gpt-5.1","response":{"model":"gpt-5.1"}}`)
 	require.Equal(t, `{"model":"custom-model","response":{"model":"custom-model"}}`, string(replaceOpenAIWSMessageModel(both, "gpt-5.1", "custom-model")))

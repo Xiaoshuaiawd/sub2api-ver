@@ -40,6 +40,7 @@ func (s *OpenAIGatewayService) forwardResponsesViaNativeAnthropic(
 	account *Account,
 	body []byte,
 	defaultMappedModel string,
+	responseModel string,
 ) (*OpenAIForwardResult, error) {
 	startTime := time.Now()
 
@@ -60,6 +61,9 @@ func (s *OpenAIGatewayService) forwardResponsesViaNativeAnthropic(
 	if strings.TrimSpace(originalModel) == "" {
 		writeResponsesError(c, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return nil, fmt.Errorf("missing model in request")
+	}
+	if strings.TrimSpace(responseModel) == "" {
+		responseModel = originalModel
 	}
 	clientStream := responsesReq.Stream
 
@@ -138,9 +142,9 @@ func (s *OpenAIGatewayService) forwardResponsesViaNativeAnthropic(
 	}
 
 	if clientStream {
-		return s.handleResponsesStreamingFromNativeAnthropic(resp, c, originalModel, billingModel, upstreamModel, reasoningEffort, startTime, clientToolMapping)
+		return s.handleResponsesStreamingFromNativeAnthropic(resp, c, responseModel, billingModel, upstreamModel, reasoningEffort, startTime, clientToolMapping)
 	}
-	return s.handleResponsesBufferedFromNativeAnthropic(resp, c, originalModel, billingModel, upstreamModel, reasoningEffort, startTime, clientToolMapping)
+	return s.handleResponsesBufferedFromNativeAnthropic(resp, c, responseModel, billingModel, upstreamModel, reasoningEffort, startTime, clientToolMapping)
 }
 
 // handleResponsesBufferedFromNativeAnthropic reads Anthropic SSE events, assembles
