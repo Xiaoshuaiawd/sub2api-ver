@@ -294,6 +294,12 @@ curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/install
 
 Deploy with Docker Compose, including PostgreSQL and Redis containers.
 
+For a distributed deployment that shares PostgreSQL and Redis while giving each
+Sub2API node its own Cloudflare WARP egress, use the pinned Compose overlay and
+rollout guide in [deploy/WARP_EGRESS.md](deploy/WARP_EGRESS.md). The proxy policy
+applies only to OpenAI/ChatGPT/Codex upstream traffic; it does not replace the
+host or container default route.
+
 #### Prerequisites
 
 - Docker 20.10+
