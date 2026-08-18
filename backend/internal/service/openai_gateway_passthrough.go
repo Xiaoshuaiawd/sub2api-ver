@@ -36,7 +36,11 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	reasoningEffort *string,
 	reqStream bool,
 	startTime time.Time,
+	responseModel string,
 ) (*OpenAIForwardResult, error) {
+	if strings.TrimSpace(responseModel) == "" {
+		responseModel = reqModel
+	}
 	upstreamPassthroughModel := ""
 	if isOpenAIResponsesCompactPath(c) {
 		compactMappedModel := resolveOpenAICompactForwardModel(account, reqModel)
@@ -275,7 +279,11 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	imageCount := 0
 	var imageOutputSizes []string
 	if reqStream {
-		result, err := s.handleStreamingResponsePassthrough(ctx, resp, c, account, startTime, reqModel, upstreamPassthroughModel)
+		responseUpstreamModel := upstreamPassthroughModel
+		if responseUpstreamModel == "" && responseModel != reqModel {
+			responseUpstreamModel = policyModel
+		}
+		result, err := s.handleStreamingResponsePassthrough(ctx, resp, c, account, startTime, responseModel, responseUpstreamModel)
 		if err != nil {
 			return nil, err
 		}
@@ -286,7 +294,11 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		imageCount = result.imageCount
 		imageOutputSizes = result.imageOutputSizes
 	} else {
-		result, err := s.handleNonStreamingResponsePassthrough(ctx, resp, c, reqModel, upstreamPassthroughModel)
+		responseUpstreamModel := upstreamPassthroughModel
+		if responseUpstreamModel == "" && responseModel != reqModel {
+			responseUpstreamModel = policyModel
+		}
+		result, err := s.handleNonStreamingResponsePassthrough(ctx, resp, c, responseModel, responseUpstreamModel)
 		if err != nil {
 			return nil, err
 		}
@@ -314,7 +326,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		ResponseID:                    responseID,
 		ResponseStatus:                responseStatus,
 		Usage:                         *usage,
-		Model:                         reqModel,
+		Model:                         responseModel,
 		UpstreamModel:                 upstreamPassthroughModel,
 		UpstreamResponseModel:         observedUpstreamResponseModel(c),
 		UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
@@ -324,6 +336,9 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		OpenAIWSMode:                  false,
 		Duration:                      time.Since(startTime),
 		FirstTokenMs:                  firstTokenMs,
+	}
+	if forwardResult.UpstreamModel == "" && responseModel != reqModel {
+		forwardResult.UpstreamModel = policyModel
 	}
 	if imageCount > 0 {
 		forwardResult.ImageCount = imageCount
