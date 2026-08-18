@@ -221,6 +221,28 @@ vi.mock("vue-i18n", async () => {
     "admin.settings.openaiExperimentalScheduler.upstreamCostWeight": "计费倍率",
     "admin.settings.openaiExperimentalScheduler.previousResponseWeight": "previous_response 粘性",
     "admin.settings.openaiExperimentalScheduler.sessionStickyWeight": "session_hash 粘性",
+    "admin.settings.gatewayForwarding.openaiProxyTitle": "OpenAI 默认出口代理",
+    "admin.settings.gatewayForwarding.openaiProxyDescription": "仅用于 OpenAI、ChatGPT 与 Codex 上游请求。账号代理优先于该节点默认代理。",
+    "admin.settings.gatewayForwarding.openaiProxyEnabled": "启用节点默认代理",
+    "admin.settings.gatewayForwarding.openaiProxyEnabledHint": "开启后，没有账号代理或账号代理链失败的请求将使用当前节点代理。",
+    "admin.settings.gatewayForwarding.openaiProxyURL": "代理地址",
+    "admin.settings.gatewayForwarding.openaiProxyURLPlaceholder": "socks5h://warp-proxy:1080",
+    "admin.settings.gatewayForwarding.openaiProxyURLConfiguredPlaceholder": "代理凭证已配置，输入新地址可替换",
+    "admin.settings.gatewayForwarding.openaiProxyURLHint": "支持 HTTP、HTTPS、SOCKS5 与 SOCKS5H。",
+    "admin.settings.gatewayForwarding.openaiProxyFailurePolicy": "代理失败策略",
+    "admin.settings.gatewayForwarding.openaiProxyFailClosed": "失败时阻断请求",
+    "admin.settings.gatewayForwarding.openaiProxyFailClosedHint": "所有代理候选不可用时返回错误，不会直连上游。",
+    "admin.settings.gatewayForwarding.openaiProxyFallbackDirect": "失败后允许直连",
+    "admin.settings.gatewayForwarding.openaiProxyFallbackDirectHint": "所有代理候选不可用时改为节点直连。",
+    "admin.settings.gatewayForwarding.openaiProxyFallbackDirectWarning": "允许直连会暴露当前节点公网 IP，仅在接受此风险时启用。",
+    "admin.settings.gatewayForwarding.openaiProxyStatusTitle": "当前节点状态",
+    "admin.settings.gatewayForwarding.openaiProxyHealthy": "正常",
+    "admin.settings.gatewayForwarding.openaiProxyUnhealthy": "异常",
+    "admin.settings.gatewayForwarding.openaiProxyPending": "等待检测",
+    "admin.settings.gatewayForwarding.openaiProxyInstance": "节点",
+    "admin.settings.gatewayForwarding.openaiProxyEgressIP": "出口 IP",
+    "admin.settings.gatewayForwarding.openaiProxyCheckedAt": "检测时间",
+    "admin.settings.gatewayForwarding.openaiProxyUnavailable": "暂无",
     "admin.settings.upstreamBillingProbe.title": "上游倍率自动探测",
     "admin.settings.upstreamBillingProbe.description": "定期获取 OpenAI API Key 所连接上游 Sub2API 站点声明的计费倍率。",
     "admin.settings.upstreamBillingProbe.enabled": "启用全局自动探测",
@@ -475,6 +497,24 @@ const baseSettingsResponse = {
   enable_client_dateline_normalization: true,
   antigravity_user_agent_version: "",
   openai_codex_user_agent: "",
+  openai_default_proxy_enabled: true,
+  openai_default_proxy_url: "socks5h://warp-proxy:1080",
+  openai_default_proxy_failure_policy: "fail_closed",
+  openai_default_proxy_status: {
+    instance_id: "node-a",
+    healthy: true,
+    egress_ip: "198.51.100.10",
+    checked_at: "2026-08-18T01:02:03Z",
+    error: "",
+    metrics: {
+      attempts_by_source: { account: 0, backup: 0, node: 0, direct: 0 },
+      candidate_switches: 0,
+      fail_closed_exhaustions: 0,
+      direct_fallbacks: 0,
+      http_transport_failures: 0,
+      websocket_transport_failures: 0,
+    },
+  },
   payment_enabled: true,
   payment_min_amount: 1,
   payment_max_amount: 10000,
@@ -1133,6 +1173,121 @@ describe("admin SettingsView payment visible method controls", () => {
         rewrite_message_cache_control: true,
       }),
     );
+  });
+
+  it("loads and saves the OpenAI default proxy policy", async () => {
+    getSettings.mockResolvedValue({
+      ...baseSettingsResponse,
+      openai_default_proxy_enabled: true,
+      openai_default_proxy_url: "socks5h://warp-proxy:1080",
+      openai_default_proxy_failure_policy: "fail_closed",
+      openai_default_proxy_status: {
+        ...baseSettingsResponse.openai_default_proxy_status,
+        instance_id: "node-warp-2",
+        checked_at: "2026-08-18T02:03:04Z",
+      },
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+    await openGatewayTab(wrapper);
+
+    const toggle = wrapper.get(
+      '[data-testid="openai-default-proxy-toggle"]',
+    );
+    const proxyURL = wrapper.get('[data-testid="openai-default-proxy-url"]');
+    const failurePolicy = wrapper.get(
+      '[data-testid="openai-proxy-failure-policy"]',
+    );
+
+    expect((toggle.element as HTMLInputElement).checked).toBe(true);
+    expect((proxyURL.element as HTMLInputElement).value).toBe(
+      "socks5h://warp-proxy:1080",
+    );
+    expect((failurePolicy.element as HTMLSelectElement).value).toBe(
+      "fail_closed",
+    );
+    expect(wrapper.text()).toContain(
+      "所有代理候选不可用时返回错误，不会直连上游。",
+    );
+    expect(wrapper.get('[data-testid="openai-proxy-health-status"]').text()).toContain(
+      "node-warp-2",
+    );
+    expect(wrapper.get('[data-testid="openai-proxy-health-status"]').text()).toContain(
+      "2026-08-18T02:03:04Z",
+    );
+
+    await failurePolicy.setValue("fallback_direct");
+    expect(wrapper.text()).toContain(
+      "允许直连会暴露当前节点公网 IP",
+    );
+    await toggle.setValue(false);
+
+    expect((proxyURL.element as HTMLInputElement).disabled).toBe(true);
+    expect((failurePolicy.element as HTMLSelectElement).disabled).toBe(true);
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        openai_default_proxy_enabled: false,
+        openai_default_proxy_failure_policy: "fallback_direct",
+      }),
+    );
+  });
+
+  it("does not render or resend an unchanged redacted proxy credential", async () => {
+    getSettings.mockResolvedValue({
+      ...baseSettingsResponse,
+      openai_default_proxy_url: "http://proxy-user:xxxxx@proxy.internal:8080",
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+    await openGatewayTab(wrapper);
+
+    const proxyURL = wrapper.get('[data-testid="openai-default-proxy-url"]');
+    expect((proxyURL.element as HTMLInputElement).value).toBe("");
+    expect(wrapper.html()).not.toContain("proxy-user:xxxxx");
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    const payload = updateSettings.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(payload).not.toHaveProperty("openai_default_proxy_url");
+  });
+
+  it("sends a replacement proxy URL after the administrator edits it", async () => {
+    getSettings.mockResolvedValue({
+      ...baseSettingsResponse,
+      openai_default_proxy_url: "http://proxy-user:xxxxx@proxy.internal:8080",
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+    await openGatewayTab(wrapper);
+
+    await wrapper
+      .get('[data-testid="openai-default-proxy-url"]')
+      .setValue("socks5h://replacement-proxy:1080");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        openai_default_proxy_url: "socks5h://replacement-proxy:1080",
+      }),
+    );
+  });
+
+  it("warns in both locales that direct fallback exposes the node IP", () => {
+    expect(
+      zhSettings.settings.gatewayForwarding.openaiProxyFallbackDirectWarning,
+    ).toContain("节点公网 IP");
+    expect(
+      enSettings.settings.gatewayForwarding.openaiProxyFallbackDirectWarning,
+    ).toContain("node's public IP");
   });
 
   it("submits Claude OAuth system prompt injection gateway settings", async () => {

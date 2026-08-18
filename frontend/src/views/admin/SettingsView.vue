@@ -5661,6 +5661,158 @@
                 </p>
               </div>
 
+              <!-- OpenAI default proxy -->
+              <section
+                class="space-y-5 border-t border-gray-100 pt-5 dark:border-dark-700"
+                aria-labelledby="openai-default-proxy-title"
+              >
+                <div class="flex items-start justify-between gap-6">
+                  <div>
+                    <h3
+                      id="openai-default-proxy-title"
+                      class="text-sm font-semibold text-gray-900 dark:text-white"
+                    >
+                      {{ t("admin.settings.gatewayForwarding.openaiProxyTitle") }}
+                    </h3>
+                    <p class="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.gatewayForwarding.openaiProxyDescription") }}
+                    </p>
+                  </div>
+                  <Toggle
+                    v-model="form.openai_default_proxy_enabled"
+                    data-testid="openai-default-proxy-toggle"
+                    :aria-label="t('admin.settings.gatewayForwarding.openaiProxyEnabled')"
+                  />
+                </div>
+
+                <div class="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <label
+                      for="openai-default-proxy-url"
+                      class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      {{ t("admin.settings.gatewayForwarding.openaiProxyURL") }}
+                    </label>
+                    <input
+                      id="openai-default-proxy-url"
+                      v-model="form.openai_default_proxy_url"
+                      type="text"
+                      class="input w-full font-mono text-sm"
+                      data-testid="openai-default-proxy-url"
+                      autocomplete="off"
+                      spellcheck="false"
+                      :disabled="!form.openai_default_proxy_enabled"
+                      :placeholder="openAIProxyURLPlaceholder"
+                      :aria-describedby="'openai-default-proxy-url-hint'"
+                      @input="markOpenAIProxyURLDirty"
+                    />
+                    <p
+                      id="openai-default-proxy-url-hint"
+                      class="mt-1.5 text-xs leading-5 text-gray-500 dark:text-gray-400"
+                    >
+                      {{ t("admin.settings.gatewayForwarding.openaiProxyURLHint") }}
+                    </p>
+                  </div>
+
+                  <div>
+                    <label
+                      for="openai-proxy-failure-policy"
+                      class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      {{ t("admin.settings.gatewayForwarding.openaiProxyFailurePolicy") }}
+                    </label>
+                    <Select
+                      id="openai-proxy-failure-policy"
+                      v-model="form.openai_default_proxy_failure_policy"
+                      :options="openAIProxyFailurePolicyOptions"
+                      :disabled="!form.openai_default_proxy_enabled"
+                      :aria-label="t('admin.settings.gatewayForwarding.openaiProxyFailurePolicy')"
+                      data-testid="openai-proxy-failure-policy"
+                    />
+                    <p class="mt-1.5 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                      {{
+                        t(
+                          form.openai_default_proxy_failure_policy === "fallback_direct"
+                            ? "admin.settings.gatewayForwarding.openaiProxyFallbackDirectHint"
+                            : "admin.settings.gatewayForwarding.openaiProxyFailClosedHint",
+                        )
+                      }}
+                    </p>
+                  </div>
+                </div>
+
+                <p
+                  v-if="
+                    form.openai_default_proxy_enabled &&
+                    form.openai_default_proxy_failure_policy === 'fallback_direct'
+                  "
+                  class="border-l-2 border-amber-500 pl-3 text-xs leading-5 text-amber-700 dark:text-amber-300"
+                  role="alert"
+                  data-testid="openai-proxy-direct-warning"
+                >
+                  {{ t("admin.settings.gatewayForwarding.openaiProxyFallbackDirectWarning") }}
+                </p>
+
+                <div
+                  class="border-t border-gray-100 pt-4 dark:border-dark-700"
+                  data-testid="openai-proxy-health-status"
+                >
+                  <div class="flex flex-wrap items-center justify-between gap-2">
+                    <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      {{ t("admin.settings.gatewayForwarding.openaiProxyStatusTitle") }}
+                    </h4>
+                    <span
+                      class="inline-flex items-center gap-2 text-xs font-medium"
+                      :class="openAIProxyHealthTone"
+                    >
+                      <span class="h-2 w-2 rounded-full bg-current" aria-hidden="true" />
+                      {{ openAIProxyHealthLabel }}
+                    </span>
+                  </div>
+                  <dl class="mt-3 grid gap-3 text-xs sm:grid-cols-3">
+                    <div>
+                      <dt class="text-gray-500 dark:text-gray-400">
+                        {{ t("admin.settings.gatewayForwarding.openaiProxyInstance") }}
+                      </dt>
+                      <dd class="mt-1 break-all font-mono text-gray-800 dark:text-gray-200">
+                        {{
+                          form.openai_default_proxy_status.instance_id ||
+                          t("admin.settings.gatewayForwarding.openaiProxyUnavailable")
+                        }}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt class="text-gray-500 dark:text-gray-400">
+                        {{ t("admin.settings.gatewayForwarding.openaiProxyEgressIP") }}
+                      </dt>
+                      <dd class="mt-1 break-all font-mono text-gray-800 dark:text-gray-200">
+                        {{
+                          form.openai_default_proxy_status.egress_ip ||
+                          t("admin.settings.gatewayForwarding.openaiProxyUnavailable")
+                        }}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt class="text-gray-500 dark:text-gray-400">
+                        {{ t("admin.settings.gatewayForwarding.openaiProxyCheckedAt") }}
+                      </dt>
+                      <dd class="mt-1 break-all font-mono text-gray-800 dark:text-gray-200">
+                        {{
+                          form.openai_default_proxy_status.checked_at ||
+                          t("admin.settings.gatewayForwarding.openaiProxyUnavailable")
+                        }}
+                      </dd>
+                    </div>
+                  </dl>
+                  <p
+                    v-if="form.openai_default_proxy_status.error"
+                    class="mt-3 text-xs leading-5 text-red-600 dark:text-red-400"
+                  >
+                    {{ form.openai_default_proxy_status.error }}
+                  </p>
+                </div>
+              </section>
+
               <!-- OpenAI Codex UA -->
               <div>
                 <label
@@ -8638,6 +8790,9 @@
             type="submit"
             :disabled="saving || loadFailed"
             class="btn btn-primary"
+            :data-testid="
+              activeTab === 'gateway' ? 'save-gateway-settings' : undefined
+            "
           >
             <svg
               v-if="saving"
@@ -9718,6 +9873,24 @@ const form = reactive<SettingsForm>({
   antigravity_user_agent_version: "",
   openai_codex_user_agent: "",
   openai_codex_client_version: "",
+  openai_default_proxy_enabled: true,
+  openai_default_proxy_url: "socks5h://warp-proxy:1080",
+  openai_default_proxy_failure_policy: "fail_closed",
+  openai_default_proxy_status: {
+    instance_id: "",
+    healthy: false,
+    egress_ip: "",
+    checked_at: "",
+    error: "",
+    metrics: {
+      attempts_by_source: { account: 0, backup: 0, node: 0, direct: 0 },
+      candidate_switches: 0,
+      fail_closed_exhaustions: 0,
+      direct_fallbacks: 0,
+      http_transport_failures: 0,
+      websocket_transport_failures: 0,
+    },
+  },
   // 只读展示：自动同步任务写入的官方最新稳定版，不参与提交（提交载荷按字段显式构造）
   openai_codex_client_version_synced: "",
   openai_codex_version_auto_sync_enabled: true,
@@ -9751,6 +9924,65 @@ const form = reactive<SettingsForm>({
   // Allow user view error requests
   allow_user_view_error_requests: false,
 });
+
+const openAIProxyURLDirty = ref(false);
+const openAIProxyURLHasStoredCredentials = ref(false);
+
+const openAIProxyFailurePolicyOptions = computed(() => [
+  {
+    value: "fail_closed",
+    label: t("admin.settings.gatewayForwarding.openaiProxyFailClosed"),
+  },
+  {
+    value: "fallback_direct",
+    label: t("admin.settings.gatewayForwarding.openaiProxyFallbackDirect"),
+  },
+]);
+
+const openAIProxyURLPlaceholder = computed(() =>
+  openAIProxyURLHasStoredCredentials.value
+    ? t("admin.settings.gatewayForwarding.openaiProxyURLConfiguredPlaceholder")
+    : t("admin.settings.gatewayForwarding.openaiProxyURLPlaceholder"),
+);
+
+const openAIProxyHealthLabel = computed(() => {
+  if (!form.openai_default_proxy_status.checked_at) {
+    return t("admin.settings.gatewayForwarding.openaiProxyPending");
+  }
+  return t(
+    form.openai_default_proxy_status.healthy
+      ? "admin.settings.gatewayForwarding.openaiProxyHealthy"
+      : "admin.settings.gatewayForwarding.openaiProxyUnhealthy",
+  );
+});
+
+const openAIProxyHealthTone = computed(() => {
+  if (!form.openai_default_proxy_status.checked_at) {
+    return "text-gray-500 dark:text-gray-400";
+  }
+  return form.openai_default_proxy_status.healthy
+    ? "text-emerald-600 dark:text-emerald-400"
+    : "text-red-600 dark:text-red-400";
+});
+
+function loadOpenAIProxyURL(rawValue: unknown): void {
+  const value = typeof rawValue === "string" ? rawValue.trim() : "";
+  let hasCredentials = false;
+  try {
+    const parsed = new URL(value);
+    hasCredentials = parsed.username !== "" || parsed.password !== "";
+  } catch {
+    hasCredentials = false;
+  }
+  form.openai_default_proxy_url = hasCredentials ? "" : value;
+  openAIProxyURLHasStoredCredentials.value = hasCredentials;
+  openAIProxyURLDirty.value = false;
+}
+
+function markOpenAIProxyURLDirty(): void {
+  openAIProxyURLDirty.value = true;
+  openAIProxyURLHasStoredCredentials.value = false;
+}
 
 // 人机验证 UI 状态：单卡片「总开关 + 服务商单选」，落库仍是三个独立
 // enabled 键（与上游一致），由下面的映射保证同一时间至多一家启用。
@@ -10711,10 +10943,12 @@ async function loadSettings() {
       settings.payment_load_balance_strategy || "round-robin";
     // Only assign non-null values from backend (null means unconfigured, keep defaults)
     for (const [key, value] of Object.entries(settings)) {
+      if (key === "openai_default_proxy_url") continue;
       if (value !== null && value !== undefined) {
         (form as Record<string, unknown>)[key] = value;
       }
     }
+    loadOpenAIProxyURL(settings.openai_default_proxy_url);
     syncCaptchaProviderSelection();
     if (!form.claude_oauth_system_prompt_blocks?.trim()) {
       form.claude_oauth_system_prompt_blocks =
@@ -11289,6 +11523,9 @@ async function saveSettings() {
         form.enable_client_dateline_normalization,
       antigravity_user_agent_version:
         form.antigravity_user_agent_version?.trim() || "",
+      openai_default_proxy_enabled: form.openai_default_proxy_enabled,
+      openai_default_proxy_failure_policy:
+        form.openai_default_proxy_failure_policy,
       openai_codex_user_agent:
         form.openai_codex_user_agent?.trim() || "",
       openai_codex_client_version:
@@ -11435,6 +11672,10 @@ async function saveSettings() {
       };
     }
 
+    if (openAIProxyURLDirty.value) {
+      payload.openai_default_proxy_url = form.openai_default_proxy_url.trim();
+    }
+
     payload.default_platform_quotas = sanitizePlatformQuotasMap(form.default_platform_quotas);
     payload.account_scheduling_thresholds = sanitizeAccountSchedulingThresholdsMap(
       form.account_scheduling_thresholds,
@@ -11446,10 +11687,12 @@ async function saveSettings() {
     );
     for (const [key, value] of Object.entries(updated)) {
       if (key === "openai_fast_policy_settings") continue;
+      if (key === "openai_default_proxy_url") continue;
       if (value !== null && value !== undefined) {
         (form as Record<string, unknown>)[key] = value;
       }
     }
+    loadOpenAIProxyURL(updated.openai_default_proxy_url);
     Object.assign(authSourceDefaults, buildAuthSourceDefaultsState(updated));
     form.default_platform_quotas = normalizePlatformQuotasMap(updated.default_platform_quotas);
     form.account_scheduling_thresholds = normalizeAccountSchedulingThresholdsMap(

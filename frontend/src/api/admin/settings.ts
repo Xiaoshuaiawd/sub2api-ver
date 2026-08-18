@@ -16,6 +16,33 @@ export interface DefaultSubscriptionSetting {
   validity_days: number;
 }
 
+export type OpenAIProxyFailurePolicy = "fail_closed" | "fallback_direct";
+
+export interface OpenAIProxyAttemptsBySource {
+  account: number;
+  backup: number;
+  node: number;
+  direct: number;
+}
+
+export interface OpenAIProxyMetrics {
+  attempts_by_source: OpenAIProxyAttemptsBySource;
+  candidate_switches: number;
+  fail_closed_exhaustions: number;
+  direct_fallbacks: number;
+  http_transport_failures: number;
+  websocket_transport_failures: number;
+}
+
+export interface OpenAIProxyStatus {
+  instance_id: string;
+  healthy: boolean;
+  egress_ip: string;
+  checked_at: string;
+  error: string;
+  metrics: OpenAIProxyMetrics;
+}
+
 // ── 平台限额类型 ──────────────────────────────────────────────────
 export type PlatformType = "anthropic" | "openai" | "gemini" | "antigravity" | "grok"
 export type QuotaWindowType = "daily" | "weekly" | "monthly"
@@ -630,6 +657,10 @@ export interface SystemSettings {
   rewrite_message_cache_control: boolean;
   enable_client_dateline_normalization: boolean;
   antigravity_user_agent_version: string;
+  openai_default_proxy_enabled: boolean;
+  openai_default_proxy_url: string;
+  openai_default_proxy_failure_policy: OpenAIProxyFailurePolicy;
+  openai_default_proxy_status: OpenAIProxyStatus;
   openai_codex_user_agent: string;
   openai_codex_client_version: string;
   openai_codex_client_version_synced: string;
@@ -943,6 +974,9 @@ export interface UpdateSettingsRequest {
   rewrite_message_cache_control?: boolean;
   enable_client_dateline_normalization?: boolean;
   antigravity_user_agent_version?: string;
+  openai_default_proxy_enabled?: boolean;
+  openai_default_proxy_url?: string;
+  openai_default_proxy_failure_policy?: OpenAIProxyFailurePolicy;
   openai_codex_user_agent?: string;
   openai_codex_client_version?: string;
   openai_codex_version_auto_sync_enabled?: boolean;
