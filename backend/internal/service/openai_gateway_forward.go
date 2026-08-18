@@ -1089,7 +1089,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	if err != nil {
 		return nil, err
 	}
-	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
+	if account.Platform == PlatformOpenAI || account.IsCNProvider() {
+		req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
+	}
 
 	// Build authentication for this request. Agent Identity signs a fresh
 	// assertion here; OAuth/PAT/API-key keep their existing Bearer behavior.
