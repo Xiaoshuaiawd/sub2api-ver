@@ -86,6 +86,11 @@ func (s *SettingService) UpdateSettingsWithAuthSourceDefaultsOmitting(ctx contex
 // it omitted, so in that case the caches are rebuilt from storage rather than
 // from the request struct.
 func (s *SettingService) refreshCachedSettingsAfterWrite(ctx context.Context, settings *SystemSettings, omitted OmittedSettingKeys) {
+	defer func() {
+		if s.openAIProxyPolicy != nil {
+			s.openAIProxyPolicy.SettingsUpdated(ctx)
+		}
+	}()
 	if len(omitted) == 0 {
 		s.refreshCachedSettings(settings)
 		return

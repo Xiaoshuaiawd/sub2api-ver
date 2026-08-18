@@ -120,6 +120,7 @@ type SettingService struct {
 	settingRepo                 SettingRepository
 	defaultSubGroupReader       DefaultSubscriptionGroupReader
 	proxyRepo                   ProxyRepository // for resolving websearch provider proxy URLs
+	openAIProxyPolicy           *OpenAIProxyPolicyService
 	cfg                         *config.Config
 	onUpdate                    func() // Callback when settings are updated (for cache invalidation)
 	version                     string // Application version
@@ -296,6 +297,10 @@ func (s *SettingService) SetDefaultSubscriptionGroupReader(reader DefaultSubscri
 // SetProxyRepository injects a proxy repo for resolving websearch provider proxy URLs.
 func (s *SettingService) SetProxyRepository(repo ProxyRepository) {
 	s.proxyRepo = repo
+}
+
+func (s *SettingService) SetOpenAIProxyPolicyService(policy *OpenAIProxyPolicyService) {
+	s.openAIProxyPolicy = policy
 }
 
 func (s *SettingService) LoadForwardedClientIPSettings(ctx context.Context) error {

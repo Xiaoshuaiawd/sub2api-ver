@@ -4,7 +4,9 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
@@ -21,6 +23,239 @@ func TestNormalizeOpenAIProxySettings(t *testing.T) {
 	require.True(t, got.Enabled)
 	require.Equal(t, "socks5h://warp-proxy:1080", got.ProxyURL)
 	require.Equal(t, OpenAIProxyFailurePolicyFallbackDirect, got.FailurePolicy)
+}
+
+func TestOpenAIProxyPolicyResolveOrdersAndDeduplicatesCandidates(t *testing.T) {
+	now := time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC)
+	backupID := int64(2)
+	policy := newOpenAIProxyPolicyForTest(OpenAIProxySettings{
+		Enabled:       true,
+		ProxyURL:      DefaultOpenAIDefaultProxyURL,
+		FailurePolicy: OpenAIProxyFailurePolicyFallbackDirect,
+	}, []Proxy{
+		{ID: 1, Protocol: "http", Host: "primary", Port: 8080, Status: StatusActive, FallbackMode: FallbackModeProxy, BackupProxyID: &backupID},
+		{ID: 2, Protocol: "socks5", Host: "backup", Port: 1080, Status: StatusActive},
+	}, now)
+
+	plan := policy.Resolve(context.Background(), "http://primary:8080")
+
+	require.Equal(t, []string{
+		"http://primary:8080",
+		"socks5h://backup:1080",
+		DefaultOpenAIDefaultProxyURL,
+		"",
+	}, plan.URLs())
+	require.Equal(t, []OpenAIProxyCandidateSource{
+		OpenAIProxyCandidateAccount,
+		OpenAIProxyCandidateBackup,
+		OpenAIProxyCandidateNode,
+		OpenAIProxyCandidateDirect,
+	}, plan.Sources())
+}
+
+func newOpenAIProxyPolicyForTest(settings OpenAIProxySettings, proxies []Proxy, now time.Time) *OpenAIProxyPolicyService {
+	policy := newOpenAIProxyPolicyService(nil, nil, nil, time.Hour)
+	policy.now = func() time.Time { return now }
+	policy.snapshot.Store(buildOpenAIProxySnapshot(settings, proxies, now.Add(time.Hour)))
+	return policy
+}
+
+func TestOpenAIProxyPolicyResolveUsesNodeProxyWithoutAccountProxy(t *testing.T) {
+	policy := newOpenAIProxyPolicyForTest(DefaultOpenAIProxySettings(), nil, time.Now())
+
+	plan := policy.Resolve(context.Background(), "")
+
+	require.Equal(t, []string{DefaultOpenAIDefaultProxyURL}, plan.URLs())
+}
+
+func TestOpenAIProxyPolicyResolveDisabledPreservesExistingRouting(t *testing.T) {
+	settings := DefaultOpenAIProxySettings()
+	settings.Enabled = false
+	policy := newOpenAIProxyPolicyForTest(settings, nil, time.Now())
+
+	require.Equal(t, []string{"http://account:8080"}, policy.Resolve(context.Background(), "http://account:8080").URLs())
+	require.Equal(t, []string{""}, policy.Resolve(context.Background(), "").URLs())
+}
+
+func TestOpenAIProxyPolicyResolveFailClosedNeverAppendsDirect(t *testing.T) {
+	policy := newOpenAIProxyPolicyForTest(DefaultOpenAIProxySettings(), nil, time.Now())
+
+	plan := policy.Resolve(context.Background(), "http://account:8080")
+
+	require.Equal(t, []string{"http://account:8080", DefaultOpenAIDefaultProxyURL}, plan.URLs())
+}
+
+func TestOpenAIProxyPolicyResolveSkipsUnavailableBackupsAndStopsCycles(t *testing.T) {
+	now := time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC)
+	expiredAt := now.Add(-time.Minute)
+	id2, id3, id4 := int64(2), int64(3), int64(4)
+	policy := newOpenAIProxyPolicyForTest(DefaultOpenAIProxySettings(), []Proxy{
+		{ID: 1, Protocol: "http", Host: "primary", Port: 8080, Status: StatusActive, FallbackMode: FallbackModeProxy, BackupProxyID: &id2},
+		{ID: 2, Protocol: "http", Host: "expired", Port: 8080, Status: StatusActive, ExpiresAt: &expiredAt, FallbackMode: FallbackModeProxy, BackupProxyID: &id3},
+		{ID: 3, Protocol: "http", Host: "disabled", Port: 8080, Status: StatusDisabled, FallbackMode: FallbackModeProxy, BackupProxyID: &id4},
+		{ID: 4, Protocol: "http", Host: "healthy", Port: 8080, Status: StatusActive, FallbackMode: FallbackModeProxy, BackupProxyID: &id2},
+	}, now)
+
+	plan := policy.Resolve(context.Background(), "http://primary:8080")
+
+	require.Equal(t, []string{"http://primary:8080", "http://healthy:8080", DefaultOpenAIDefaultProxyURL}, plan.URLs())
+}
+
+func TestOpenAIProxyPolicyResolveDeduplicatesNodeProxy(t *testing.T) {
+	policy := newOpenAIProxyPolicyForTest(DefaultOpenAIProxySettings(), nil, time.Now())
+
+	plan := policy.Resolve(context.Background(), "socks5://warp-proxy:1080")
+
+	require.Equal(t, []string{DefaultOpenAIDefaultProxyURL}, plan.URLs())
+}
+
+type openAIProxySettingRepoStub struct {
+	SettingRepository
+	values map[string]string
+	err    error
+	calls  int
+}
+
+func (s *openAIProxySettingRepoStub) GetMultiple(context.Context, []string) (map[string]string, error) {
+	s.calls++
+	return s.values, s.err
+}
+
+type openAIProxyRepoStub struct {
+	ProxyRepository
+	values []Proxy
+	err    error
+	calls  int
+}
+
+type openAIProxySettingsBusStub struct {
+	publishCalls int
+	publishErr   error
+	handler      func()
+}
+
+func (s *openAIProxySettingsBusStub) Publish(context.Context) error {
+	s.publishCalls++
+	return s.publishErr
+}
+
+func (s *openAIProxySettingsBusStub) Subscribe(_ context.Context, handler func()) {
+	s.handler = handler
+}
+
+type openAIProxyWritableSettingRepo struct {
+	SettingRepository
+	values map[string]string
+	getErr error
+}
+
+func (s *openAIProxyWritableSettingRepo) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
+	values := make(map[string]string, len(keys))
+	for _, key := range keys {
+		if value, ok := s.values[key]; ok {
+			values[key] = value
+		}
+	}
+	return values, nil
+}
+
+func (s *openAIProxyWritableSettingRepo) SetMultiple(_ context.Context, values map[string]string) error {
+	if s.values == nil {
+		s.values = make(map[string]string)
+	}
+	for key, value := range values {
+		s.values[key] = value
+	}
+	return nil
+}
+
+func (s *openAIProxyRepoStub) ListAllForFallback(context.Context) ([]Proxy, error) {
+	s.calls++
+	return s.values, s.err
+}
+
+func TestOpenAIProxyPolicyRefreshFailureRetainsLastGoodSnapshot(t *testing.T) {
+	settingsRepo := &openAIProxySettingRepoStub{values: map[string]string{
+		SettingKeyOpenAIDefaultProxyEnabled:       "true",
+		SettingKeyOpenAIDefaultProxyURL:           "socks5://node-proxy:1080",
+		SettingKeyOpenAIDefaultProxyFailurePolicy: "fail_closed",
+	}}
+	proxyRepo := &openAIProxyRepoStub{}
+	policy := newOpenAIProxyPolicyService(settingsRepo, proxyRepo, nil, time.Minute)
+	require.NoError(t, policy.Refresh(context.Background()))
+	require.Equal(t, []string{"socks5h://node-proxy:1080"}, policy.Resolve(context.Background(), "").URLs())
+
+	settingsRepo.err = errors.New("database unavailable")
+	require.Error(t, policy.Refresh(context.Background()))
+
+	require.Equal(t, []string{"socks5h://node-proxy:1080"}, policy.Resolve(context.Background(), "").URLs())
+}
+
+func TestOpenAIProxyPolicyResolveRefreshesExpiredSnapshot(t *testing.T) {
+	now := time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC)
+	settingsRepo := &openAIProxySettingRepoStub{values: map[string]string{
+		SettingKeyOpenAIDefaultProxyEnabled:       "true",
+		SettingKeyOpenAIDefaultProxyURL:           DefaultOpenAIDefaultProxyURL,
+		SettingKeyOpenAIDefaultProxyFailurePolicy: "fail_closed",
+	}}
+	proxyRepo := &openAIProxyRepoStub{}
+	policy := newOpenAIProxyPolicyService(settingsRepo, proxyRepo, nil, time.Minute)
+	policy.now = func() time.Time { return now }
+	require.NoError(t, policy.Refresh(context.Background()))
+	require.Equal(t, 1, settingsRepo.calls)
+
+	now = now.Add(2 * time.Minute)
+	policy.Resolve(context.Background(), "")
+
+	require.Equal(t, 2, settingsRepo.calls)
+}
+
+func TestSettingServiceUpdateRefreshesAndPublishesOpenAIProxyPolicy(t *testing.T) {
+	settingsRepo := &openAIProxyWritableSettingRepo{values: map[string]string{
+		SettingKeyOpenAIDefaultProxyEnabled:       "true",
+		SettingKeyOpenAIDefaultProxyURL:           DefaultOpenAIDefaultProxyURL,
+		SettingKeyOpenAIDefaultProxyFailurePolicy: "fail_closed",
+	}}
+	proxyRepo := &openAIProxyRepoStub{}
+	bus := &openAIProxySettingsBusStub{publishErr: errors.New("Redis unavailable")}
+	policy := newOpenAIProxyPolicyService(settingsRepo, proxyRepo, bus, time.Minute)
+	require.NoError(t, policy.Refresh(context.Background()))
+	settingService := NewSettingService(settingsRepo, &config.Config{})
+	settingService.SetOpenAIProxyPolicyService(policy)
+	settings := settingService.parseSettings(settingsRepo.values)
+	settings.OpenAIDefaultProxyURL = "socks5://replacement:1080"
+
+	err := settingService.UpdateSettings(context.Background(), settings)
+
+	require.NoError(t, err)
+	require.Equal(t, 1, bus.publishCalls)
+	require.Equal(t, []string{"socks5h://replacement:1080"}, policy.Resolve(context.Background(), "").URLs())
+}
+
+func TestSettingServiceUpdatePublishesWhenLocalOpenAIProxyRefreshFails(t *testing.T) {
+	settingsRepo := &openAIProxyWritableSettingRepo{values: map[string]string{
+		SettingKeyOpenAIDefaultProxyEnabled:       "true",
+		SettingKeyOpenAIDefaultProxyURL:           DefaultOpenAIDefaultProxyURL,
+		SettingKeyOpenAIDefaultProxyFailurePolicy: "fail_closed",
+	}}
+	proxyRepo := &openAIProxyRepoStub{}
+	bus := &openAIProxySettingsBusStub{}
+	policy := newOpenAIProxyPolicyService(settingsRepo, proxyRepo, bus, time.Minute)
+	require.NoError(t, policy.Refresh(context.Background()))
+	settingService := NewSettingService(settingsRepo, &config.Config{})
+	settingService.SetOpenAIProxyPolicyService(policy)
+	settings := settingService.parseSettings(settingsRepo.values)
+	settings.OpenAIDefaultProxyURL = "socks5://replacement:1080"
+	settingsRepo.getErr = errors.New("database unavailable")
+
+	err := settingService.UpdateSettings(context.Background(), settings)
+
+	require.NoError(t, err)
+	require.Equal(t, 1, bus.publishCalls)
+	require.Equal(t, []string{DefaultOpenAIDefaultProxyURL}, policy.Resolve(context.Background(), "").URLs())
 }
 
 func TestNormalizeOpenAIProxySettingsRejectsInvalidValues(t *testing.T) {
