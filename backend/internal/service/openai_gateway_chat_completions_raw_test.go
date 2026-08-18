@@ -123,6 +123,56 @@ func TestForwardAsRawChatCompletions_ForcesStreamUsageUpstreamAndPassesUsageDown
 	require.Contains(t, rec.Body.String(), "data: [DONE]")
 }
 
+func TestSendCCUpstreamRequestUsesHTTPProfileByPlatform(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name     string
+		platform string
+		want     HTTPUpstreamProfile
+	}{
+		{name: "Grok keeps default profile", platform: PlatformGrok, want: HTTPUpstreamProfileDefault},
+		{name: "Kimi uses OpenAI profile", platform: PlatformKimi, want: HTTPUpstreamProfileOpenAI},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       http.NoBody,
+			}}
+			svc := &OpenAIGatewayService{httpUpstream: upstream}
+			account := &Account{
+				ID:          102,
+				Platform:    tt.platform,
+				Type:        AccountTypeAPIKey,
+				Concurrency: 1,
+			}
+
+			resp, err := svc.sendCCUpstreamRequest(
+				context.Background(),
+				c,
+				account,
+				"https://upstream.example/v1/chat/completions",
+				[]byte(`{"model":"test-model"}`),
+				false,
+				"test-token",
+				"",
+				"",
+			)
+
+			require.NoError(t, err)
+			require.NotNil(t, resp)
+			require.NotNil(t, upstream.lastReq)
+			require.Equal(t, tt.want, HTTPUpstreamProfileFromContext(upstream.lastReq.Context()))
+		})
+	}
+}
+
 func TestForwardAsChatCompletions_OpenAICompatibleGrokRawMissingUsageFailsBeforeWrite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

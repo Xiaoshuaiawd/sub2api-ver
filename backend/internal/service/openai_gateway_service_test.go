@@ -3110,6 +3110,7 @@ func TestOpenAIBuildUpstreamRequestCompactForcesJSONAcceptForOAuth(t *testing.T)
 
 	svc := &OpenAIGatewayService{}
 	account := &Account{
+		Platform:    PlatformOpenAI,
 		Type:        AccountTypeOAuth,
 		Credentials: map[string]any{"chatgpt_account_id": "chatgpt-acc"},
 	}
@@ -3122,6 +3123,51 @@ func TestOpenAIBuildUpstreamRequestCompactForcesJSONAcceptForOAuth(t *testing.T)
 	require.Empty(t, req.Header.Get("OpenAI-Beta"), "Codex OAuth HTTP must not synthesize the legacy responses beta header")
 	require.NotEmpty(t, req.Header.Get("Session_Id"))
 	require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(req.Context()))
+}
+
+func TestOpenAIBuildUpstreamRequestUsesHTTPProfileByPlatform(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name     string
+		platform string
+		want     HTTPUpstreamProfile
+	}{
+		{name: "Gemini keeps default profile", platform: PlatformGemini, want: HTTPUpstreamProfileDefault},
+		{name: "Kimi uses OpenAI profile", platform: PlatformKimi, want: HTTPUpstreamProfileOpenAI},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader([]byte(`{"model":"test-model"}`)))
+
+			svc := &OpenAIGatewayService{cfg: &config.Config{
+				Security: config.SecurityConfig{
+					URLAllowlist: config.URLAllowlistConfig{Enabled: false},
+				},
+			}}
+			account := &Account{
+				Platform: tt.platform,
+				Type:     AccountTypeAPIKey,
+			}
+
+			req, err := svc.buildUpstreamRequest(
+				c.Request.Context(),
+				c,
+				account,
+				[]byte(`{"model":"test-model"}`),
+				"test-token",
+				false,
+				"",
+				false,
+			)
+
+			require.NoError(t, err)
+			require.Equal(t, tt.want, HTTPUpstreamProfileFromContext(req.Context()))
+		})
+	}
 }
 
 func TestOpenAIBuildUpstreamRequestOAuthMessagesBridgeUsesSessionOnly(t *testing.T) {
