@@ -2,33 +2,34 @@ package repository
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/service"
-	"github.com/imroc/req/v3"
+	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
+)
+
+const (
+	openAIOAuthErrorBodyLimit   = 4 << 10
+	openAIOAuthSuccessBodyLimit = 1 << 20
 )
 
 // NewOpenAIOAuthClient creates a new OpenAI OAuth client
-func NewOpenAIOAuthClient() service.OpenAIOAuthClient {
-	return &openaiOAuthService{tokenURL: openai.TokenURL}
+func NewOpenAIOAuthClient(httpUpstream service.HTTPUpstream) service.OpenAIOAuthClient {
+	return &openaiOAuthService{tokenURL: openai.TokenURL, httpUpstream: httpUpstream}
 }
 
 type openaiOAuthService struct {
-	tokenURL string
+	tokenURL     string
+	httpUpstream service.HTTPUpstream
 }
 
 func (s *openaiOAuthService) ExchangeCode(ctx context.Context, code, codeVerifier, redirectURI, proxyURL, clientID string) (*openai.TokenResponse, error) {
-	client, err := createOpenAIReqClient(proxyURL)
-	if err != nil {
-		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_OAUTH_CLIENT_INIT_FAILED", "create HTTP client: %v", err)
-	}
-
 	if redirectURI == "" {
 		redirectURI = openai.DefaultRedirectURI
 	}
@@ -44,29 +45,7 @@ func (s *openaiOAuthService) ExchangeCode(ctx context.Context, code, codeVerifie
 	formData.Set("redirect_uri", redirectURI)
 	formData.Set("code_verifier", codeVerifier)
 
-	var tokenResp openai.TokenResponse
-
-	authUA, authOriginator := service.CodexCanonicalAuthIdentity()
-	resp, err := client.R().
-		SetContext(ctx).
-		SetHeader("User-Agent", authUA).
-		SetHeader("originator", authOriginator).
-		SetFormDataFromValues(formData).
-		SetSuccessResult(&tokenResp).
-		Post(s.tokenURL)
-
-	if err != nil {
-		if shouldReturnOpenAINoProxyHint(ctx, proxyURL, err) {
-			return nil, newOpenAINoProxyHintError(err)
-		}
-		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_OAUTH_REQUEST_FAILED", "request failed: %v", err)
-	}
-
-	if !resp.IsSuccessState() {
-		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_OAUTH_TOKEN_EXCHANGE_FAILED", "token exchange failed: status %d, body: %s", resp.StatusCode, resp.String())
-	}
-
-	return &tokenResp, nil
+	return s.postTokenForm(ctx, formData, proxyURL, "OPENAI_OAUTH_TOKEN_EXCHANGE_FAILED", "token exchange")
 }
 
 func (s *openaiOAuthService) RefreshToken(ctx context.Context, refreshToken, proxyURL string) (*openai.TokenResponse, error) {
@@ -83,63 +62,57 @@ func (s *openaiOAuthService) RefreshTokenWithClientID(ctx context.Context, refre
 }
 
 func (s *openaiOAuthService) refreshTokenWithClientID(ctx context.Context, refreshToken, proxyURL, clientID string) (*openai.TokenResponse, error) {
-	client, err := createOpenAIReqClient(proxyURL)
-	if err != nil {
-		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_OAUTH_CLIENT_INIT_FAILED", "create HTTP client: %v", err)
-	}
-
 	formData := url.Values{}
 	formData.Set("grant_type", "refresh_token")
 	formData.Set("refresh_token", refreshToken)
 	formData.Set("client_id", clientID)
 	formData.Set("scope", openai.RefreshScopes)
 
-	var tokenResp openai.TokenResponse
+	return s.postTokenForm(ctx, formData, proxyURL, "OPENAI_OAUTH_TOKEN_REFRESH_FAILED", "token refresh")
+}
 
-	authUA, authOriginator := service.CodexCanonicalAuthIdentity()
-	resp, err := client.R().
-		SetContext(ctx).
-		SetHeader("User-Agent", authUA).
-		SetHeader("originator", authOriginator).
-		SetFormDataFromValues(formData).
-		SetSuccessResult(&tokenResp).
-		Post(s.tokenURL)
+func (s *openaiOAuthService) postTokenForm(
+	ctx context.Context,
+	formData url.Values,
+	proxyURL string,
+	statusReason string,
+	statusAction string,
+) (*openai.TokenResponse, error) {
+	if s.httpUpstream == nil {
+		return nil, infraerrors.New(http.StatusInternalServerError, "OPENAI_OAUTH_CLIENT_INIT_FAILED", "OpenAI OAuth HTTP upstream is not configured")
+	}
 
+	reqCtx := service.WithHTTPUpstreamProfile(ctx, service.HTTPUpstreamProfileOpenAI)
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, s.tokenURL, strings.NewReader(formData.Encode()))
 	if err != nil {
-		if shouldReturnOpenAINoProxyHint(ctx, proxyURL, err) {
-			return nil, newOpenAINoProxyHintError(err)
-		}
+		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_OAUTH_REQUEST_FAILED", "build request failed: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	authUA, authOriginator := service.CodexCanonicalAuthIdentity()
+	req.Header.Set("User-Agent", authUA)
+	req.Header.Set("originator", authOriginator)
+
+	resp, err := s.httpUpstream.Do(req, proxyURL, 0, 1)
+	if err != nil {
 		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_OAUTH_REQUEST_FAILED", "request failed: %v", err)
 	}
+	if resp == nil {
+		return nil, infraerrors.New(http.StatusBadGateway, "OPENAI_OAUTH_REQUEST_FAILED", "request failed: empty upstream response")
+	}
+	defer func() { _ = resp.Body.Close() }()
 
-	if !resp.IsSuccessState() {
-		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_OAUTH_TOKEN_REFRESH_FAILED", "token refresh failed: status %d, body: %s", resp.StatusCode, resp.String())
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, openAIOAuthErrorBodyLimit))
+		message := logredact.RedactText(string(body))
+		if message == "" {
+			message = http.StatusText(resp.StatusCode)
+		}
+		return nil, infraerrors.Newf(http.StatusBadGateway, statusReason, "%s failed: status %d, body: %s", statusAction, resp.StatusCode, message)
 	}
 
+	var tokenResp openai.TokenResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, openAIOAuthSuccessBodyLimit)).Decode(&tokenResp); err != nil {
+		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_OAUTH_REQUEST_FAILED", "decode token response failed: %v", err)
+	}
 	return &tokenResp, nil
-}
-
-func createOpenAIReqClient(proxyURL string) (*req.Client, error) {
-	return getSharedReqClient(reqClientOptions{
-		ProxyURL: proxyURL,
-		Timeout:  120 * time.Second,
-	})
-}
-
-func shouldReturnOpenAINoProxyHint(ctx context.Context, proxyURL string, err error) bool {
-	if strings.TrimSpace(proxyURL) != "" || err == nil {
-		return false
-	}
-	if ctx != nil && ctx.Err() != nil {
-		return false
-	}
-	return !errors.Is(err, context.Canceled)
-}
-
-func newOpenAINoProxyHintError(cause error) error {
-	return infraerrors.New(
-		http.StatusBadGateway,
-		"OPENAI_OAUTH_PROXY_REQUIRED",
-		"OpenAI OAuth request failed: no proxy is configured and this server could not reach OpenAI directly. Select a proxy that can access OpenAI, then retry; if the authorization code has expired, regenerate the authorization URL.",
-	).WithCause(cause)
 }

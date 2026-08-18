@@ -9,6 +9,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyurl"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/servertiming"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/imroc/req/v3"
 )
@@ -93,13 +94,83 @@ func buildReqClientKey(opts reqClientOptions) string {
 	)
 }
 
-// CreatePrivacyReqClient creates an HTTP client for OpenAI privacy settings API
-// This is exported for use by OpenAIPrivacyService
-// Uses Chrome TLS fingerprint impersonation to bypass Cloudflare checks
-func CreatePrivacyReqClient(proxyURL string) (*req.Client, error) {
-	return getSharedReqClient(reqClientOptions{
-		ProxyURL:    proxyURL,
-		Timeout:     30 * time.Second,
-		Impersonate: true, // Enable browser TLS fingerprint impersonation (Firefox, see getSharedReqClient)
+type openAIPrivacyRoundTripper struct {
+	policy          service.OpenAIProxyPolicyProvider
+	primaryProxyURL string
+	transportFor    func(proxyURL string) (http.RoundTripper, error)
+}
+
+func (r *openAIPrivacyRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	if r.policy == nil {
+		return nil, fmt.Errorf("OpenAI privacy proxy policy is not configured")
+	}
+	if r.transportFor == nil {
+		return nil, fmt.Errorf("OpenAI privacy transport factory is not configured")
+	}
+	plan := r.policy.Resolve(request.Context(), r.primaryProxyURL)
+	return executeOpenAIProxyAttempts(request, plan, 0, 1, func(attempt *http.Request, proxyURL string, _ int64, _ int) (*http.Response, error) {
+		transport, err := r.transportFor(proxyURL)
+		if err != nil {
+			return nil, err
+		}
+		return transport.RoundTrip(attempt)
 	})
+}
+
+type openAIPrivacyTransportPool struct {
+	base       *req.Transport
+	transports sync.Map
+}
+
+func (p *openAIPrivacyTransportPool) get(proxyURL string) (http.RoundTripper, error) {
+	normalized, parsed, err := proxyurl.Parse(proxyURL)
+	if err != nil {
+		return nil, err
+	}
+	key := normalized
+	if key == "" {
+		key = directProxyKey
+	}
+	if cached, ok := p.transports.Load(key); ok {
+		if transport, ok := cached.(*req.Transport); ok {
+			return transport, nil
+		}
+	}
+
+	transport := p.base.Clone()
+	if parsed == nil {
+		transport.SetProxy(nil)
+	} else {
+		transport.SetProxy(http.ProxyURL(parsed))
+	}
+	actual, _ := p.transports.LoadOrStore(key, transport)
+	if cached, ok := actual.(*req.Transport); ok {
+		return cached, nil
+	}
+	return transport, nil
+}
+
+// NewPrivacyClientFactory creates Firefox-impersonated ChatGPT clients whose
+// requests use the shared OpenAI proxy policy at RoundTrip time.
+// 指纹与 getSharedReqClient 保持一致：req 内置的 Chrome 伪装会被 chatgpt.com 的 Cloudflare
+// 以 403 cf-mitigated=challenge 拒绝，导致账号检查、订阅与隐私设置调用全部失败。
+func NewPrivacyClientFactory(policy service.OpenAIProxyPolicyProvider) service.PrivacyClientFactory {
+	baseClient := req.C().SetTimeout(30 * time.Second).ImpersonateFirefox()
+	pool := &openAIPrivacyTransportPool{base: baseClient.GetTransport().Clone()}
+
+	return func(primaryProxyURL string) (*req.Client, error) {
+		if _, _, err := proxyurl.Parse(primaryProxyURL); err != nil {
+			return nil, err
+		}
+		client := baseClient.Clone()
+		router := &openAIPrivacyRoundTripper{
+			policy:          policy,
+			primaryProxyURL: primaryProxyURL,
+			transportFor:    pool.get,
+		}
+		client.GetTransport().WrapRoundTripFunc(func(http.RoundTripper) req.HttpRoundTripFunc {
+			return router.RoundTrip
+		})
+		return instrumentReqClient(client), nil
+	}
 }

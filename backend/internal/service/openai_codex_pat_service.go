@@ -6,10 +6,9 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/httpclient"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyurl"
 )
 
 const openAICodexPATWhoamiURLDefault = "https://auth.openai.com/api/accounts/v1/user-auth-credential/whoami"
@@ -43,16 +42,15 @@ func (s *OpenAIOAuthService) ValidateCodexPersonalAccessToken(ctx context.Contex
 		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_CODEX_PAT_INVALID_PREFIX", "Codex personal access token must start with at-")
 	}
 
-	client, err := httpclient.GetClient(httpclient.Options{
-		ProxyURL:              proxyURL,
-		Timeout:               20 * time.Second,
-		ResponseHeaderTimeout: 15 * time.Second,
-	})
-	if err != nil {
+	if _, _, err := proxyurl.Parse(proxyURL); err != nil {
 		return nil, infraerrors.Newf(http.StatusBadRequest, "OPENAI_CODEX_PAT_PROXY_INVALID", "invalid proxy configuration: %v", err)
 	}
+	if s == nil || s.httpUpstream == nil {
+		return nil, infraerrors.New(http.StatusInternalServerError, "OPENAI_CODEX_PAT_UPSTREAM_NOT_CONFIGURED", "Codex personal access token validation upstream is not configured")
+	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, openAICodexPATWhoamiURL, nil)
+	reqCtx := WithHTTPUpstreamProfile(WithHTTPUpstreamRedirectsDisabled(ctx), HTTPUpstreamProfileOpenAI)
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, openAICodexPATWhoamiURL, nil)
 	if err != nil {
 		return nil, infraerrors.Newf(http.StatusInternalServerError, "OPENAI_CODEX_PAT_REQUEST_FAILED", "failed to build validation request: %v", err)
 	}
@@ -60,7 +58,7 @@ func (s *OpenAIOAuthService) ValidateCodexPersonalAccessToken(ctx context.Contex
 	req.Header.Set("accept", "application/json")
 	ApplyCodexCanonicalAuthIdentity(req.Header)
 
-	resp, err := client.Do(req)
+	resp, err := s.httpUpstream.Do(req, proxyURL, 0, 1)
 	if err != nil {
 		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_PAT_VALIDATE_FAILED", "failed to validate Codex personal access token: %v", err)
 	}
