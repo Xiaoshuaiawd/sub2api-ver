@@ -157,9 +157,12 @@ type openAIHTTP2FallbackState struct {
 // 7. 代理变更时清空旧连接池，避免复用错误代理
 // 8. 账号并发数与连接池上限对应（账号隔离策略下）
 type httpUpstreamService struct {
-	cfg     *config.Config                  // 全局配置
-	mu      sync.RWMutex                    // 保护 clients map 的读写锁
-	clients map[string]*upstreamClientEntry // 客户端缓存池，key 由隔离策略决定
+	cfg               *config.Config                  // 全局配置
+	mu                sync.RWMutex                    // 保护 clients map 的读写锁
+	clients           map[string]*upstreamClientEntry // 客户端缓存池，key 由隔离策略决定
+	openAIProxyPolicy service.OpenAIProxyPolicyProvider
+	doAttempt         func(*http.Request, string, int64, int) (*http.Response, error)
+	doTLSAttempt      func(*http.Request, string, int64, int, *tlsfingerprint.Profile) (*http.Response, error)
 	// OpenAI 走 HTTP/HTTPS 代理时的 H2->H1 回退状态（key=标准化 proxyKey）
 	openAIHTTP2Fallbacks sync.Map
 }
@@ -173,9 +176,18 @@ type httpUpstreamService struct {
 // 返回:
 //   - service.HTTPUpstream 接口实现
 func NewHTTPUpstream(cfg *config.Config) service.HTTPUpstream {
+	return newHTTPUpstream(cfg, nil)
+}
+
+func ProvideHTTPUpstream(cfg *config.Config, policy *service.OpenAIProxyPolicyService) service.HTTPUpstream {
+	return newHTTPUpstream(cfg, policy)
+}
+
+func newHTTPUpstream(cfg *config.Config, policy service.OpenAIProxyPolicyProvider) *httpUpstreamService {
 	return &httpUpstreamService{
-		cfg:     cfg,
-		clients: make(map[string]*upstreamClientEntry),
+		cfg:               cfg,
+		clients:           make(map[string]*upstreamClientEntry),
+		openAIProxyPolicy: policy,
 	}
 }
 
@@ -196,6 +208,22 @@ func NewHTTPUpstream(cfg *config.Config) service.HTTPUpstream {
 //   - 调用方必须关闭 resp.Body，否则会导致 inFlight 计数泄漏
 //   - inFlight > 0 的客户端不会被淘汰，确保活跃请求不被中断
 func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+	profile := service.HTTPUpstreamProfileDefault
+	if req != nil {
+		profile = service.HTTPUpstreamProfileFromContext(req.Context())
+	}
+	attempt := s.doAttempt
+	if attempt == nil {
+		attempt = s.doSingleAttempt
+	}
+	if profile != service.HTTPUpstreamProfileOpenAI || s.openAIProxyPolicy == nil {
+		return attempt(req, proxyURL, accountID, accountConcurrency)
+	}
+	plan := s.openAIProxyPolicy.Resolve(req.Context(), proxyURL)
+	return executeOpenAIProxyAttempts(req, plan, accountID, accountConcurrency, attempt)
+}
+
+func (s *httpUpstreamService) doSingleAttempt(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
 	applyGrokCLIProxyHeaders(req)
 	if err := s.validateRequestHost(req); err != nil {
 		return nil, err
@@ -250,6 +278,24 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	if req != nil && req.URL != nil && strings.EqualFold(req.URL.Scheme, "http") {
 		return s.Do(req, proxyURL, accountID, accountConcurrency)
 	}
+	upstreamProfile := service.HTTPUpstreamProfileDefault
+	if req != nil {
+		upstreamProfile = service.HTTPUpstreamProfileFromContext(req.Context())
+	}
+	attempt := s.doTLSAttempt
+	if attempt == nil {
+		attempt = s.doSingleTLSAttempt
+	}
+	if upstreamProfile != service.HTTPUpstreamProfileOpenAI || s.openAIProxyPolicy == nil {
+		return attempt(req, proxyURL, accountID, accountConcurrency, profile)
+	}
+	plan := s.openAIProxyPolicy.Resolve(req.Context(), proxyURL)
+	return executeOpenAIProxyAttempts(req, plan, accountID, accountConcurrency, func(attemptReq *http.Request, candidateURL string, attemptAccountID int64, attemptConcurrency int) (*http.Response, error) {
+		return attempt(attemptReq, candidateURL, attemptAccountID, attemptConcurrency, profile)
+	})
+}
+
+func (s *httpUpstreamService) doSingleTLSAttempt(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
 	applyGrokCLIProxyHeaders(req)
 	upstreamProfile := service.HTTPUpstreamProfileDefault
 	if req != nil {
@@ -294,6 +340,85 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	})
 
 	return resp, nil
+}
+
+func executeOpenAIProxyAttempts(
+	req *http.Request,
+	plan service.OpenAIProxyPlan,
+	accountID int64,
+	accountConcurrency int,
+	attempt func(*http.Request, string, int64, int) (*http.Response, error),
+) (*http.Response, error) {
+	attemptRequests, err := prepareOpenAIProxyAttempts(req, plan)
+	if err != nil {
+		return nil, err
+	}
+	if len(attemptRequests) == 0 {
+		return nil, fmt.Errorf("OpenAI proxy policy returned no candidates")
+	}
+
+	var lastErr error
+	for index, candidate := range plan.Candidates {
+		if candidate.Source == service.OpenAIProxyCandidateDirect {
+			slog.Warn("OpenAI upstream falling back to direct egress", "account_id", accountID)
+		}
+		resp, attemptErr := attempt(attemptRequests[index], candidate.URL, accountID, accountConcurrency)
+		if resp != nil || attemptErr == nil {
+			closePreparedOpenAIProxyAttempts(attemptRequests, index+1)
+			return resp, attemptErr
+		}
+		lastErr = attemptErr
+		if contextErr := req.Context().Err(); contextErr != nil {
+			closePreparedOpenAIProxyAttempts(attemptRequests, index+1)
+			return nil, contextErr
+		}
+	}
+
+	lastSource := plan.Candidates[len(plan.Candidates)-1].Source
+	return nil, fmt.Errorf("OpenAI upstream transport failed after %s candidate: %w", lastSource, lastErr)
+}
+
+func prepareOpenAIProxyAttempts(req *http.Request, plan service.OpenAIProxyPlan) ([]*http.Request, error) {
+	if req == nil {
+		return nil, fmt.Errorf("nil upstream request")
+	}
+	if len(plan.Candidates) == 0 {
+		return nil, nil
+	}
+	if len(plan.Candidates) == 1 {
+		return []*http.Request{req}, nil
+	}
+	if req.Body != nil && req.Body != http.NoBody && req.GetBody == nil {
+		return nil, service.ErrOpenAIProxyRequestNotReplayable
+	}
+
+	attempts := make([]*http.Request, 0, len(plan.Candidates))
+	for index := range plan.Candidates {
+		clone := req.Clone(req.Context())
+		switch {
+		case index == 0:
+			clone.Body = req.Body
+		case req.GetBody != nil:
+			body, err := req.GetBody()
+			if err != nil {
+				closePreparedOpenAIProxyAttempts(attempts, 1)
+				return nil, fmt.Errorf("replay OpenAI upstream request body: %w", err)
+			}
+			clone.Body = body
+		default:
+			clone.Body = req.Body
+		}
+		attempts = append(attempts, clone)
+	}
+	return attempts, nil
+}
+
+func closePreparedOpenAIProxyAttempts(attempts []*http.Request, from int) {
+	for index := from; index < len(attempts); index++ {
+		if attempts[index] != nil && attempts[index].Body != nil && attempts[index].Body != http.NoBody {
+			_ = attempts[index].Body.Close()
+		}
+	}
 }
 
 func httpClientForUpstreamRequest(client *http.Client, req *http.Request) *http.Client {
