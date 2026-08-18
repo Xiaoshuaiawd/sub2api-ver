@@ -393,7 +393,30 @@ func executeOpenAIProxyAttempts(
 	if metrics != nil && plan.IsFailClosed() {
 		metrics.RecordFailClosedExhaustion()
 	}
-	return nil, fmt.Errorf("OpenAI upstream transport failed after %s candidate: %w", lastSource, lastErr)
+	return nil, newOpenAIHTTPProxyExhaustedError(lastSource, lastErr)
+}
+
+type openAIHTTPProxyExhaustedError struct {
+	source service.OpenAIProxyCandidateSource
+	err    error
+}
+
+func newOpenAIHTTPProxyExhaustedError(source service.OpenAIProxyCandidateSource, err error) error {
+	return &openAIHTTPProxyExhaustedError{source: source, err: err}
+}
+
+func (e *openAIHTTPProxyExhaustedError) Error() string {
+	if e == nil {
+		return "OpenAI HTTP proxy candidates exhausted"
+	}
+	return fmt.Sprintf("OpenAI HTTP transport failed after %s candidate", e.source)
+}
+
+func (e *openAIHTTPProxyExhaustedError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
 }
 
 func openAIProxyMetricsRecorder(policy service.OpenAIProxyPolicyProvider) service.OpenAIProxyMetricsRecorder {
