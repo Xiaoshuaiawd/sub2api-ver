@@ -102,7 +102,7 @@ func TestOpenAIStreamErrorFrameDoesNotStartClientOutput(t *testing.T) {
 	}
 }
 
-// 回归用例（真实上游降载序列）：created → in_progress → error 帧 → response.failed。
+// 回归用例：在 response.created 前收到 in_progress → error 帧 → response.failed。
 // 期望仍然走 pre-output failover（同账号重试 + 请求级瞬时标记），且不向客户端写出任何字节。
 func TestOpenAIStreamCapacityShedErrorFramePrecedingFailedStillFailsOver(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -118,9 +118,6 @@ func TestOpenAIStreamCapacityShedErrorFramePrecedingFailedStillFailsOver(t *test
 	resp := &http.Response{
 		StatusCode: http.StatusOK,
 		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
-			"event: response.created",
-			`data: {"type":"response.created","response":{"id":"resp_1"},"sequence_number":0}`,
-			"",
 			"event: response.in_progress",
 			`data: {"type":"response.in_progress","response":{"id":"resp_1"},"sequence_number":1}`,
 			"",
