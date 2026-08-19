@@ -23,6 +23,117 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+type openAIWSBridgeFlushWriter struct {
+	gin.ResponseWriter
+	createdFlushed chan struct{}
+	once           sync.Once
+}
+
+func (w *openAIWSBridgeFlushWriter) Flush() {
+	w.ResponseWriter.Flush()
+	w.once.Do(func() { close(w.createdFlushed) })
+}
+
+func TestOpenAIGatewayService_Forward_HTTPIngressBridgeFlushesCreatedBeforeDelta(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	allowDelta := make(chan struct{})
+	createdSent := make(chan struct{})
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, err)
+		defer func() { _ = conn.Close() }()
+
+		var request map[string]any
+		require.NoError(t, conn.ReadJSON(&request))
+		require.NoError(t, conn.WriteJSON(map[string]any{
+			"type":     "response.created",
+			"response": map[string]any{"id": "resp_http_ws_bridge", "model": "gpt-5.1"},
+		}))
+		close(createdSent)
+		<-allowDelta
+		require.NoError(t, conn.WriteJSON(map[string]any{
+			"type": "response.output_text.delta", "delta": "OK",
+		}))
+		require.NoError(t, conn.WriteJSON(map[string]any{
+			"type": "response.completed",
+			"response": map[string]any{
+				"id": "resp_http_ws_bridge", "model": "gpt-5.1",
+				"usage": map[string]any{"input_tokens": 1, "output_tokens": 1},
+			},
+		}))
+	}))
+	defer wsServer.Close()
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+	flushWriter := &openAIWSBridgeFlushWriter{ResponseWriter: c.Writer, createdFlushed: make(chan struct{})}
+	c.Writer = flushWriter
+
+	cfg := &config.Config{}
+	cfg.Security.URLAllowlist.Enabled = false
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+	cfg.Gateway.OpenAIWS.Enabled = true
+	cfg.Gateway.OpenAIWS.APIKeyEnabled = true
+	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+	cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 30
+	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 10
+
+	httpUpstream := &httpUpstreamRecorder{}
+	svc := &OpenAIGatewayService{
+		cfg:              cfg,
+		httpUpstream:     httpUpstream,
+		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
+		toolCorrector:    NewCodexToolCorrector(),
+	}
+	account := &Account{
+		ID: 9912, Name: "openai-http-ws-bridge", Platform: PlatformOpenAI,
+		Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1,
+		Credentials: map[string]any{"api_key": "sk-test", "base_url": wsServer.URL},
+		Extra:       map[string]any{"responses_websockets_v2_enabled": true},
+	}
+
+	type forwardOutcome struct {
+		result *OpenAIForwardResult
+		err    error
+	}
+	outcomeCh := make(chan forwardOutcome, 1)
+	go func() {
+		result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.1","stream":true,"input":"hello"}`))
+		outcomeCh <- forwardOutcome{result: result, err: err}
+	}()
+
+	select {
+	case <-createdSent:
+	case <-time.After(3 * time.Second):
+		t.Fatal("upstream did not send response.created")
+	}
+	createdWasFlushed := false
+	select {
+	case <-flushWriter.createdFlushed:
+		createdWasFlushed = true
+	case <-time.After(250 * time.Millisecond):
+	}
+	time.Sleep(200 * time.Millisecond)
+	close(allowDelta)
+	outcome := <-outcomeCh
+
+	require.True(t, createdWasFlushed, "response.created must be flushed before the first model delta")
+	require.NoError(t, outcome.err)
+	require.NotNil(t, outcome.result)
+	require.True(t, outcome.result.OpenAIWSMode)
+	require.NotNil(t, outcome.result.FirstTokenMs)
+	require.GreaterOrEqual(t, outcome.result.Duration.Milliseconds()-int64(*outcome.result.FirstTokenMs), int64(150),
+		"HTTP bridge first response latency must be recorded at response.created, before the delayed model delta")
+	require.Nil(t, httpUpstream.lastReq, "bridge must not issue an HTTP upstream request")
+	require.Contains(t, rec.Body.String(), `"type":"response.created"`)
+	require.Contains(t, rec.Body.String(), `data: {"delta":"OK","type":"response.output_text.delta"`)
+	require.NotContains(t, rec.Body.String(), "[DONE]")
+}
+
 func TestOpenAIGatewayService_Forward_WSv2_SuccessAndBindSticky(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

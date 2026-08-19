@@ -688,7 +688,7 @@ func TestOpenAIGatewayService_Forward_WSv2FallbackWhenResponseAlreadyWrittenRetu
 	require.Nil(t, upstream.lastReq, "已写下游响应时，不应再回退 HTTP")
 }
 
-func TestOpenAIGatewayService_Forward_WSv2StreamEarlyCloseFallbackHTTP(t *testing.T) {
+func TestOpenAIGatewayService_Forward_WSv2StreamCloseAfterCreatedDoesNotReplay(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
@@ -708,8 +708,7 @@ func TestOpenAIGatewayService_Forward_WSv2StreamEarlyCloseFallbackHTTP(t *testin
 			return
 		}
 
-		// 仅发送 response.created（非 token 事件）后立即关闭，
-		// 模拟线上“上游早期内部错误断连”的场景。
+		// response.created 已是下游首响应边界；其后断连不能透明重放。
 		if err := conn.WriteJSON(map[string]any{
 			"type": "response.created",
 			"response": map[string]any{
@@ -777,8 +776,8 @@ func TestOpenAIGatewayService_Forward_WSv2StreamEarlyCloseFallbackHTTP(t *testin
 	result, err := svc.Forward(context.Background(), c, account, body)
 	require.Error(t, err)
 	require.Nil(t, result)
-	require.Nil(t, upstream.lastReq, "WS 早期断连后不应再回退 HTTP")
-	require.Empty(t, rec.Body.String(), "未产出 token 前上游断连时不应写入下游半截流")
+	require.Nil(t, upstream.lastReq, "response.created 已提交后不应再回退 HTTP")
+	require.Contains(t, rec.Body.String(), `"type":"response.created"`)
 }
 
 func TestOpenAIGatewayService_Forward_WSv2RetryFiveTimesThenFallbackHTTP(t *testing.T) {
