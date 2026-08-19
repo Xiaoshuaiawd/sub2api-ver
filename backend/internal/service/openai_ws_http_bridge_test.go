@@ -287,17 +287,19 @@ func TestProxyOpenAIWSHTTPBridgeTurnRequiresTerminalEvent(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {
-		name         string
-		body         string
-		wantFailover bool
-		wantWrites   int
+		name           string
+		body           string
+		wantFailover   bool
+		wantWrites     int
+		wantFirstToken bool
 	}{
 		{name: "done_without_events_fails_over", body: "data: [DONE]\n\n", wantFailover: true},
 		{
 			name: "created_then_done_is_truncated_not_success",
 			body: "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_truncated\"}}\n\n" +
 				"data: [DONE]\n\n",
-			wantWrites: 1,
+			wantWrites:     1,
+			wantFirstToken: true,
 		},
 	}
 	for _, tt := range tests {
@@ -332,6 +334,9 @@ func TestProxyOpenAIWSHTTPBridgeTurnRequiresTerminalEvent(t *testing.T) {
 				require.NotNil(t, result)
 				require.Error(t, err)
 				require.False(t, errors.As(err, &failoverErr))
+				if tt.wantFirstToken {
+					require.NotNil(t, result.FirstTokenMs)
+				}
 			}
 			require.Len(t, writes, tt.wantWrites)
 		})

@@ -4413,6 +4413,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_ClientDisconnect
 		require.Equal(t, "resp_ingress_disconnect", result.RequestID)
 		require.Equal(t, 2, result.Usage.InputTokens)
 		require.Equal(t, 1, result.Usage.OutputTokens)
+		require.NotNil(t, result.FirstTokenMs)
 		require.NotNil(t, result.ServiceTier)
 		require.Equal(t, "flex", *result.ServiceTier)
 	case <-time.After(2 * time.Second):

@@ -865,7 +865,7 @@ func (c *errorOnWriteFrameConn) Close() error {
 	return nil
 }
 
-func TestRelay_NoSemanticOutputTerminalSequence_FirstTokenMsNil(t *testing.T) {
+func TestRelay_ResponseCreatedRecordsFirstTokenWithoutSemanticOutput(t *testing.T) {
 	t.Parallel()
 
 	for _, terminalEvent := range []string{"response.completed", "response.done"} {
@@ -911,11 +911,71 @@ func TestRelay_NoSemanticOutputTerminalSequence_FirstTokenMsNil(t *testing.T) {
 
 			require.Nil(t, relayExit)
 			require.Equal(t, terminalEvent, turn.TerminalEventType)
-			require.Nil(t, turn.FirstTokenMs)
+			require.NotNil(t, turn.FirstTokenMs)
 			require.Equal(t, terminalEvent, result.TerminalEventType)
-			require.Nil(t, result.FirstTokenMs)
+			require.NotNil(t, result.FirstTokenMs)
 			require.Equal(t, int64(5), result.UpstreamToClientFrames)
 		})
+	}
+}
+
+func TestRelay_ResponseCreatedRecordsFirstTokenBeforeDelayedDelta(t *testing.T) {
+	clientConn := newPassthroughTestFrameConn(nil, false)
+	upstreamConn := newPassthroughTestFrameConn(nil, false)
+	base := time.Unix(0, 0)
+	var elapsedMs atomic.Int64
+	nowFn := func() time.Time {
+		return base.Add(time.Duration(elapsedMs.Load()) * time.Millisecond)
+	}
+	type relayOutcome struct {
+		result RelayResult
+		exit   *RelayExit
+	}
+	outcomeCh := make(chan relayOutcome, 1)
+	var turn RelayTurnResult
+	go func() {
+		result, relayExit := Relay(
+			context.Background(),
+			clientConn,
+			upstreamConn,
+			[]byte(`{"type":"response.create","model":"gpt-5.3-codex","input":[]}`),
+			RelayOptions{
+				Now:            nowFn,
+				OnTurnComplete: func(current RelayTurnResult) { turn = current },
+			},
+		)
+		outcomeCh <- relayOutcome{result: result, exit: relayExit}
+	}()
+
+	require.Eventually(t, func() bool { return len(upstreamConn.Writes()) == 1 }, time.Second, 10*time.Millisecond)
+	elapsedMs.Store(10)
+	upstreamConn.readCh <- passthroughTestFrame{
+		msgType: coderws.MessageText,
+		payload: []byte(`{"type":"response.created","response":{"id":"resp_delayed"}}`),
+	}
+	require.Eventually(t, func() bool { return len(clientConn.Writes()) == 1 }, time.Second, 10*time.Millisecond)
+	elapsedMs.Store(200)
+	upstreamConn.readCh <- passthroughTestFrame{
+		msgType: coderws.MessageText,
+		payload: []byte(`{"type":"response.output_text.delta","response_id":"resp_delayed","delta":"hello"}`),
+	}
+	require.Eventually(t, func() bool { return len(clientConn.Writes()) == 2 }, time.Second, 10*time.Millisecond)
+	elapsedMs.Store(300)
+	upstreamConn.readCh <- passthroughTestFrame{
+		msgType: coderws.MessageText,
+		payload: []byte(`{"type":"response.completed","response":{"id":"resp_delayed","usage":{"input_tokens":1,"output_tokens":1}}}`),
+	}
+	_ = upstreamConn.Close()
+
+	select {
+	case outcome := <-outcomeCh:
+		require.Nil(t, outcome.exit)
+		require.NotNil(t, outcome.result.FirstTokenMs)
+		require.Equal(t, 10, *outcome.result.FirstTokenMs)
+		require.NotNil(t, turn.FirstTokenMs)
+		require.Less(t, int64(*turn.FirstTokenMs), turn.Duration.Milliseconds())
+	case <-time.After(time.Second):
+		t.Fatal("relay did not finish")
 	}
 }
 
