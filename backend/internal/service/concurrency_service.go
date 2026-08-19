@@ -221,6 +221,7 @@ const (
 	defaultExtraWaitSlots = 20
 
 	defaultAccountLoadBatchCacheTTL = 200 * time.Millisecond
+	maxSaturatedLoadBatchCacheTTL   = 200 * time.Millisecond
 	accountLoadBatchFetchTimeout    = 3 * time.Second
 	maxAccountLoadBatchCacheEntries = 256
 	apiKeyConcurrencyFetchTimeout   = 3 * time.Second
@@ -606,7 +607,11 @@ func (s *ConcurrencyService) getAccountsLoadBatch(ctx context.Context, accounts 
 			return nil, fetchErr
 		}
 		cached := cloneAccountLoadMap(loadMap)
-		s.storeCachedAccountLoadBatch(key, cached, now.Add(ttl))
+		cacheTTL := ttl
+		if cacheTTL > maxSaturatedLoadBatchCacheTTL && accountLoadBatchFullySaturated(accounts, loadMap) {
+			cacheTTL = maxSaturatedLoadBatchCacheTTL
+		}
+		s.storeCachedAccountLoadBatch(key, cached, now.Add(cacheTTL))
 		return cached, nil
 	})
 	if err != nil {
@@ -702,6 +707,19 @@ func cloneAccountLoadMap(loadMap map[int64]*AccountLoadInfo) map[int64]*AccountL
 		clone[accountID] = &copied
 	}
 	return clone
+}
+
+func accountLoadBatchFullySaturated(accounts []AccountWithConcurrency, loadMap map[int64]*AccountLoadInfo) bool {
+	if len(accounts) == 0 {
+		return false
+	}
+	for _, account := range accounts {
+		loadInfo := loadMap[account.ID]
+		if loadInfo == nil || loadInfo.LoadRate < 100 {
+			return false
+		}
+	}
+	return true
 }
 
 // GetUsersLoadBatch returns load info for multiple users.

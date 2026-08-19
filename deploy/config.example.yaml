@@ -572,7 +572,9 @@ gateway:
     load_batch_enabled: true
     # Tiny in-process TTL for batch load reads in milliseconds (0 disables)
     # 调度批量负载读取的进程内短缓存 TTL（毫秒，0 表示禁用）
-    load_batch_cache_ttl_ms: 200
+    # Fully saturated batches are capped at 200ms to notice released slots quickly.
+    # 全批次满载时自动封顶 200ms，以便及时感知已释放的槽位。
+    load_batch_cache_ttl_ms: 1000
     # Slot cleanup interval (duration)
     # 并发槽位清理周期（时间段）
     slot_cleanup_interval: 30s

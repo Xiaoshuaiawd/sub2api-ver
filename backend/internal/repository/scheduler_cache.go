@@ -8,28 +8,34 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/redis/go-redis/v9"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
-	schedulerBucketSetKey          = "sched:buckets"
-	schedulerOutboxWatermarkKey    = "sched:outbox:watermark"
-	schedulerAccountPrefix         = "sched:acc:"
-	schedulerAccountMetaPrefix     = "sched:meta:"
-	schedulerAccountLastUsedPrefix = "sched:acc:last_used:"
-	schedulerActivePrefix          = "sched:active:"
-	schedulerReadyPrefix           = "sched:ready:"
-	schedulerVersionPrefix         = "sched:ver:"
-	schedulerEpochPrefix           = "sched:epoch:"
-	schedulerRetiredPrefix         = "sched:retired:"
-	schedulerSnapshotPrefix        = "sched:"
-	schedulerLockPrefix            = "sched:lock:"
+	schedulerBucketSetKey           = "sched:buckets"
+	schedulerOutboxWatermarkKey     = "sched:outbox:watermark"
+	schedulerAccountPrefix          = "sched:acc:"
+	schedulerAccountMetaPrefix      = "sched:meta:"
+	schedulerAccountMetaRevisionKey = "sched:meta:revision"
+	schedulerAccountLastUsedPrefix  = "sched:acc:last_used:"
+	schedulerActivePrefix           = "sched:active:"
+	schedulerReadyPrefix            = "sched:ready:"
+	schedulerVersionPrefix          = "sched:ver:"
+	schedulerEpochPrefix            = "sched:epoch:"
+	schedulerRetiredPrefix          = "sched:retired:"
+	schedulerSnapshotPrefix         = "sched:"
+	schedulerLockPrefix             = "sched:lock:"
 
 	defaultSchedulerSnapshotMGetChunkSize  = 128
 	defaultSchedulerSnapshotWriteChunkSize = 256
+	defaultSchedulerSnapshotL1MaxEntries   = 64
+	defaultSchedulerLastUsedL1TTL          = time.Second
+	defaultSchedulerSnapshotL1LoadTimeout  = 5 * time.Second
 	schedulerLastUsedUpdateChunkSize       = 256
 
 	// snapshotGraceTTLSeconds 旧快照过期的宽限期（秒）。
@@ -59,6 +65,16 @@ for index = 1, #ARGV do
     end
 end
 return updated
+`)
+
+var setSchedulerAccountScript = redis.NewScript(`
+redis.call('SET', KEYS[1], ARGV[1])
+local current = redis.call('GET', KEYS[2])
+if current == false or current ~= ARGV[2] then
+    redis.call('SET', KEYS[2], ARGV[2])
+    return redis.call('INCR', KEYS[3])
+end
+return tonumber(redis.call('GET', KEYS[3])) or 0
 `)
 
 var (
@@ -223,6 +239,17 @@ type schedulerCache struct {
 	rdb            *redis.Client
 	mgetChunkSize  int
 	writeChunkSize int
+
+	snapshotL1Mu sync.RWMutex
+	snapshotL1   map[string]schedulerSnapshotL1Entry
+	snapshotL1SF singleflight.Group
+}
+
+type schedulerSnapshotL1Entry struct {
+	version             string
+	metadataRevision    string
+	accounts            []*service.Account
+	lastUsedRefreshedAt time.Time
 }
 
 func NewSchedulerCache(rdb *redis.Client) service.SchedulerCache {
@@ -240,30 +267,91 @@ func newSchedulerCacheWithChunkSizes(rdb *redis.Client, mgetChunkSize, writeChun
 		rdb:            rdb,
 		mgetChunkSize:  mgetChunkSize,
 		writeChunkSize: writeChunkSize,
+		snapshotL1:     make(map[string]schedulerSnapshotL1Entry),
 	}
 }
 
 func (c *schedulerCache) GetSnapshot(ctx context.Context, bucket service.SchedulerBucket) ([]*service.Account, bool, error) {
 	readyKey := schedulerBucketKey(schedulerReadyPrefix, bucket)
-	readyVal, err := c.rdb.Get(ctx, readyKey).Result()
-	if err == redis.Nil {
-		return nil, false, nil
-	}
+	activeKey := schedulerBucketKey(schedulerActivePrefix, bucket)
+	state, err := c.rdb.MGet(ctx, readyKey, activeKey, schedulerAccountMetaRevisionKey).Result()
 	if err != nil {
 		return nil, false, err
 	}
+	if len(state) != 3 {
+		return nil, false, fmt.Errorf("unexpected scheduler snapshot state length: %d", len(state))
+	}
+	readyVal, readyExists, err := schedulerCacheStringValue(state[0])
+	if err != nil {
+		return nil, false, err
+	}
+	if !readyExists {
+		c.deleteSnapshotL1(bucket)
+		return nil, false, nil
+	}
 	if readyVal != "1" {
+		c.deleteSnapshotL1(bucket)
 		return nil, false, nil
 	}
 
-	activeKey := schedulerBucketKey(schedulerActivePrefix, bucket)
-	activeVal, err := c.rdb.Get(ctx, activeKey).Result()
-	if err == redis.Nil {
+	activeVal, activeExists, err := schedulerCacheStringValue(state[1])
+	if err != nil {
+		return nil, false, err
+	}
+	if !activeExists {
+		c.deleteSnapshotL1(bucket)
 		return nil, false, nil
+	}
+	metadataRevision := "0"
+	if state[2] != nil {
+		metadataRevision, _, err = schedulerCacheStringValue(state[2])
 	}
 	if err != nil {
 		return nil, false, err
 	}
+	if cached, ok := c.getSnapshotL1(bucket, activeVal, metadataRevision); ok {
+		if time.Since(cached.lastUsedRefreshedAt) < defaultSchedulerLastUsedL1TTL {
+			return cloneSchedulerSnapshotAccounts(cached.accounts), true, nil
+		}
+		return c.refreshSnapshotL1LastUsed(ctx, bucket, cached)
+	}
+
+	resultCh := c.snapshotL1SF.DoChan(schedulerBucketKey("snapshot-l1:", bucket)+":"+activeVal+":"+metadataRevision, func() (any, error) {
+		if cached, ok := c.getSnapshotL1(bucket, activeVal, metadataRevision); ok {
+			return cached, nil
+		}
+		loadCtx, cancel := schedulerSnapshotL1Context(ctx)
+		defer cancel()
+		accounts, hit, loadErr := c.loadSnapshot(loadCtx, bucket, activeVal)
+		if loadErr != nil || !hit {
+			return schedulerSnapshotL1Entry{}, loadErr
+		}
+		entry := schedulerSnapshotL1Entry{
+			version:             activeVal,
+			metadataRevision:    metadataRevision,
+			accounts:            accounts,
+			lastUsedRefreshedAt: time.Now(),
+		}
+		c.storeSnapshotL1(bucket, entry)
+		return entry, nil
+	})
+	var loaded singleflight.Result
+	select {
+	case <-ctx.Done():
+		return nil, false, ctx.Err()
+	case loaded = <-resultCh:
+	}
+	if loaded.Err != nil {
+		return nil, false, loaded.Err
+	}
+	entry := loaded.Val.(schedulerSnapshotL1Entry)
+	if len(entry.accounts) == 0 {
+		return nil, false, nil
+	}
+	return cloneSchedulerSnapshotAccounts(entry.accounts), true, nil
+}
+
+func (c *schedulerCache) loadSnapshot(ctx context.Context, bucket service.SchedulerBucket, activeVal string) ([]*service.Account, bool, error) {
 
 	snapshotKey := schedulerSnapshotKey(bucket, activeVal)
 	ids, err := c.rdb.ZRange(ctx, snapshotKey, 0, -1).Result()
@@ -307,6 +395,204 @@ func (c *schedulerCache) GetSnapshot(ctx context.Context, bucket service.Schedul
 	}
 
 	return accounts, true, nil
+}
+
+func (c *schedulerCache) refreshSnapshotL1LastUsed(
+	ctx context.Context,
+	bucket service.SchedulerBucket,
+	cached schedulerSnapshotL1Entry,
+) ([]*service.Account, bool, error) {
+	resultCh := c.snapshotL1SF.DoChan(schedulerBucketKey("snapshot-l1-last-used:", bucket)+":"+cached.version+":"+cached.metadataRevision, func() (any, error) {
+		current, ok := c.getSnapshotL1(bucket, cached.version, cached.metadataRevision)
+		if !ok {
+			return schedulerSnapshotL1Entry{}, nil
+		}
+		if time.Since(current.lastUsedRefreshedAt) < defaultSchedulerLastUsedL1TTL {
+			return current, nil
+		}
+		keys := make([]string, 0, len(current.accounts))
+		for _, account := range current.accounts {
+			keys = append(keys, schedulerLastUsedKey(strconv.FormatInt(account.ID, 10)))
+		}
+		refreshCtx, cancel := schedulerSnapshotL1Context(ctx)
+		defer cancel()
+		lastUsedValues, fetchErr := c.mgetChunked(refreshCtx, keys)
+		if fetchErr != nil {
+			return schedulerSnapshotL1Entry{}, fetchErr
+		}
+		accounts := cloneSchedulerSnapshotAccounts(current.accounts)
+		for i, account := range accounts {
+			if err := applySchedulerLastUsed(account, lastUsedValues[i]); err != nil {
+				return schedulerSnapshotL1Entry{}, err
+			}
+		}
+		current.accounts = accounts
+		current.lastUsedRefreshedAt = time.Now()
+		c.storeSnapshotL1(bucket, current)
+		return current, nil
+	})
+	var result singleflight.Result
+	select {
+	case <-ctx.Done():
+		return nil, false, ctx.Err()
+	case result = <-resultCh:
+	}
+	if result.Err != nil {
+		return nil, false, result.Err
+	}
+	entry := result.Val.(schedulerSnapshotL1Entry)
+	if len(entry.accounts) == 0 {
+		return nil, false, nil
+	}
+	return cloneSchedulerSnapshotAccounts(entry.accounts), true, nil
+}
+
+func (c *schedulerCache) getSnapshotL1(bucket service.SchedulerBucket, version, metadataRevision string) (schedulerSnapshotL1Entry, bool) {
+	key := schedulerBucketKey("snapshot-l1:", bucket)
+	c.snapshotL1Mu.RLock()
+	entry, ok := c.snapshotL1[key]
+	c.snapshotL1Mu.RUnlock()
+	return entry, ok && entry.version == version && entry.metadataRevision == metadataRevision
+}
+
+func (c *schedulerCache) storeSnapshotL1(bucket service.SchedulerBucket, entry schedulerSnapshotL1Entry) {
+	key := schedulerBucketKey("snapshot-l1:", bucket)
+	c.snapshotL1Mu.Lock()
+	if c.snapshotL1 == nil {
+		c.snapshotL1 = make(map[string]schedulerSnapshotL1Entry)
+	}
+	if current, exists := c.snapshotL1[key]; exists && schedulerSnapshotL1EntryNewer(current, entry) {
+		c.snapshotL1Mu.Unlock()
+		return
+	}
+	if _, exists := c.snapshotL1[key]; !exists && len(c.snapshotL1) >= defaultSchedulerSnapshotL1MaxEntries {
+		for cacheKey := range c.snapshotL1 {
+			delete(c.snapshotL1, cacheKey)
+			break
+		}
+	}
+	c.snapshotL1[key] = entry
+	c.snapshotL1Mu.Unlock()
+}
+
+func (c *schedulerCache) deleteSnapshotL1(bucket service.SchedulerBucket) {
+	key := schedulerBucketKey("snapshot-l1:", bucket)
+	c.snapshotL1Mu.Lock()
+	delete(c.snapshotL1, key)
+	c.snapshotL1Mu.Unlock()
+}
+
+func cloneSchedulerSnapshotAccounts(accounts []*service.Account) []*service.Account {
+	if len(accounts) == 0 {
+		return nil
+	}
+	cloned := make([]*service.Account, 0, len(accounts))
+	for _, account := range accounts {
+		if account == nil {
+			continue
+		}
+		cloned = append(cloned, cloneSchedulerSnapshotAccount(account))
+	}
+	return cloned
+}
+
+func cloneSchedulerSnapshotAccount(account *service.Account) *service.Account {
+	copy := *account
+	copy.Notes = cloneSchedulerSnapshotPointer(account.Notes)
+	copy.Credentials = cloneSchedulerSnapshotJSONMap(account.Credentials)
+	copy.Extra = cloneSchedulerSnapshotJSONMap(account.Extra)
+	copy.ProxyID = cloneSchedulerSnapshotPointer(account.ProxyID)
+	copy.ProxyFallbackOriginID = cloneSchedulerSnapshotPointer(account.ProxyFallbackOriginID)
+	copy.ProxyFallbackOriginName = cloneSchedulerSnapshotPointer(account.ProxyFallbackOriginName)
+	copy.RateMultiplier = cloneSchedulerSnapshotPointer(account.RateMultiplier)
+	copy.LoadFactor = cloneSchedulerSnapshotPointer(account.LoadFactor)
+	copy.LastUsedAt = cloneSchedulerSnapshotPointer(account.LastUsedAt)
+	copy.ExpiresAt = cloneSchedulerSnapshotPointer(account.ExpiresAt)
+	copy.RateLimitedAt = cloneSchedulerSnapshotPointer(account.RateLimitedAt)
+	copy.RateLimitResetAt = cloneSchedulerSnapshotPointer(account.RateLimitResetAt)
+	copy.OverloadUntil = cloneSchedulerSnapshotPointer(account.OverloadUntil)
+	copy.TempUnschedulableUntil = cloneSchedulerSnapshotPointer(account.TempUnschedulableUntil)
+	copy.SessionWindowStart = cloneSchedulerSnapshotPointer(account.SessionWindowStart)
+	copy.SessionWindowEnd = cloneSchedulerSnapshotPointer(account.SessionWindowEnd)
+	copy.ParentAccountID = cloneSchedulerSnapshotPointer(account.ParentAccountID)
+	copy.AccountGroups = append([]service.AccountGroup(nil), account.AccountGroups...)
+	copy.GroupIDs = append([]int64(nil), account.GroupIDs...)
+	return &copy
+}
+
+func cloneSchedulerSnapshotPointer[T any](value *T) *T {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
+}
+
+func cloneSchedulerSnapshotJSONMap(values map[string]any) map[string]any {
+	if values == nil {
+		return nil
+	}
+	cloned := make(map[string]any, len(values))
+	for key, value := range values {
+		cloned[key] = cloneSchedulerSnapshotJSONValue(value)
+	}
+	return cloned
+}
+
+func cloneSchedulerSnapshotJSONValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return cloneSchedulerSnapshotJSONMap(typed)
+	case []any:
+		cloned := make([]any, len(typed))
+		for i, item := range typed {
+			cloned[i] = cloneSchedulerSnapshotJSONValue(item)
+		}
+		return cloned
+	default:
+		return value
+	}
+}
+
+func schedulerSnapshotL1EntryNewer(current, candidate schedulerSnapshotL1Entry) bool {
+	if current.version == candidate.version && current.metadataRevision == candidate.metadataRevision {
+		return current.lastUsedRefreshedAt.After(candidate.lastUsedRefreshedAt)
+	}
+	currentVersion, currentVersionErr := strconv.ParseInt(current.version, 10, 64)
+	candidateVersion, candidateVersionErr := strconv.ParseInt(candidate.version, 10, 64)
+	if currentVersionErr == nil && candidateVersionErr == nil {
+		if currentVersion != candidateVersion {
+			return currentVersion > candidateVersion
+		}
+		currentRevision, currentRevisionErr := strconv.ParseInt(current.metadataRevision, 10, 64)
+		candidateRevision, candidateRevisionErr := strconv.ParseInt(candidate.metadataRevision, 10, 64)
+		if currentRevisionErr == nil && candidateRevisionErr == nil {
+			return currentRevision > candidateRevision
+		}
+	}
+	return false
+}
+
+func schedulerSnapshotL1Context(ctx context.Context) (context.Context, context.CancelFunc) {
+	base := context.Background()
+	if ctx != nil {
+		base = context.WithoutCancel(ctx)
+	}
+	return context.WithTimeout(base, defaultSchedulerSnapshotL1LoadTimeout)
+}
+
+func schedulerCacheStringValue(value any) (string, bool, error) {
+	if value == nil {
+		return "", false, nil
+	}
+	switch typed := value.(type) {
+	case string:
+		return typed, true, nil
+	case []byte:
+		return string(typed), true, nil
+	default:
+		return "", false, fmt.Errorf("unexpected scheduler cache string type: %T", value)
+	}
 }
 
 func (c *schedulerCache) CaptureBucketWriteToken(ctx context.Context, bucket service.SchedulerBucket) (service.SchedulerBucketWriteToken, error) {
@@ -589,14 +875,20 @@ func (c *schedulerCache) SetAccount(ctx context.Context, account *service.Accoun
 	if account == nil || account.ID <= 0 {
 		return nil
 	}
-	accountIDs, err := c.writeAccountIDs(ctx, []service.Account{*account})
+	fullPayload, metaPayload, err := marshalSchedulerCacheAccount(*account)
 	if err != nil {
-		return err
-	}
-	if len(accountIDs) == 0 {
+		slog.Warn("scheduler cache clears account with unencodable payload",
+			"account_id", account.ID,
+			"error", err,
+		)
 		return c.DeleteAccount(ctx, account.ID)
 	}
-	return nil
+	id := strconv.FormatInt(account.ID, 10)
+	return setSchedulerAccountScript.Run(ctx, c.rdb, []string{
+		schedulerAccountKey(id),
+		schedulerAccountMetaKey(id),
+		schedulerAccountMetaRevisionKey,
+	}, fullPayload, metaPayload).Err()
 }
 
 func (c *schedulerCache) DeleteAccount(ctx context.Context, accountID int64) error {
@@ -604,7 +896,11 @@ func (c *schedulerCache) DeleteAccount(ctx context.Context, accountID int64) err
 		return nil
 	}
 	id := strconv.FormatInt(accountID, 10)
-	return c.rdb.Del(ctx, schedulerAccountKey(id), schedulerAccountMetaKey(id), schedulerLastUsedKey(id)).Err()
+	pipe := c.rdb.TxPipeline()
+	pipe.Del(ctx, schedulerAccountKey(id), schedulerAccountMetaKey(id), schedulerLastUsedKey(id))
+	pipe.Incr(ctx, schedulerAccountMetaRevisionKey)
+	_, err := pipe.Exec(ctx)
+	return err
 }
 
 func (c *schedulerCache) UpdateLastUsed(ctx context.Context, updates map[int64]time.Time) error {

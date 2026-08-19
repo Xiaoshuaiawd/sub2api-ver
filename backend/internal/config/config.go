@@ -1412,7 +1412,7 @@ type GatewaySchedulingConfig struct {
 	// 默认 false，保持原有「优先级 → 负载率 → LRU」行为不变。
 	PreferSoonestReset bool `mapstructure:"prefer_soonest_reset"`
 
-	// 负载计算
+	// 负载计算；全批次满载时缓存 TTL 会自动封顶为 200ms，及时感知槽位释放。
 	LoadBatchEnabled    bool `mapstructure:"load_batch_enabled"`
 	LoadBatchCacheTTLMS int  `mapstructure:"load_batch_cache_ttl_ms"`
 	// 快照桶读取时的 MGET 分块大小
@@ -2430,7 +2430,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.scheduling.fallback_selection_mode", "last_used")
 	viper.SetDefault("gateway.scheduling.prefer_soonest_reset", false)
 	viper.SetDefault("gateway.scheduling.load_batch_enabled", true)
-	viper.SetDefault("gateway.scheduling.load_batch_cache_ttl_ms", 200)
+	viper.SetDefault("gateway.scheduling.load_batch_cache_ttl_ms", 1000)
 	viper.SetDefault("gateway.scheduling.snapshot_mget_chunk_size", 128)
 	viper.SetDefault("gateway.scheduling.snapshot_write_chunk_size", 256)
 	viper.SetDefault("gateway.scheduling.slot_cleanup_interval", 30*time.Second)
