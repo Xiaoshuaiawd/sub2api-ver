@@ -1,6 +1,6 @@
 <template>
   <div ref="rootRef" v-if="showUsageWindows">
-    <template v-if="proMode">
+    <template v-if="proMode && !(account.platform === 'openai' && account.type === 'oauth')">
       <div class="space-y-1" data-testid="pro-mode-usage">
         <UsageProgressBar
           v-for="window in proModeWindows"
@@ -130,22 +130,22 @@
 
     <!-- OpenAI OAuth accounts: single source from /usage API -->
     <template v-else-if="account.platform === 'openai' && account.type === 'oauth'">
-      <div v-if="hasOpenAIUsageFallback" class="space-y-1">
+      <div v-if="proMode || hasOpenAIUsageFallback" class="space-y-1">
         <UsageProgressBar
-          v-if="usageInfo?.five_hour"
+          v-if="proMode || usageInfo?.five_hour"
           label="5h"
-          :utilization="usageInfo.five_hour.utilization"
-          :resets-at="usageInfo.five_hour.resets_at"
-          :window-stats="usageInfo.five_hour.window_stats"
+          :utilization="proMode ? proModeWindows[0].utilization : (usageInfo?.five_hour?.utilization ?? 0)"
+          :resets-at="usageInfo?.five_hour?.resets_at"
+          :window-stats="proMode ? proModeWindows[0].stats : usageInfo?.five_hour?.window_stats"
           :show-now-when-idle="true"
           color="indigo"
         />
         <UsageProgressBar
-          v-if="usageInfo?.seven_day"
+          v-if="proMode || usageInfo?.seven_day"
           label="7d"
-          :utilization="usageInfo.seven_day.utilization"
-          :resets-at="usageInfo.seven_day.resets_at"
-          :window-stats="usageInfo.seven_day.window_stats"
+          :utilization="proMode ? proModeWindows[1].utilization : (usageInfo?.seven_day?.utilization ?? 0)"
+          :resets-at="usageInfo?.seven_day?.resets_at"
+          :window-stats="proMode ? proModeWindows[1].stats : usageInfo?.seven_day?.window_stats"
           :estimated-total-cost="openAISevenDayEstimatedTotalCost"
           :show-now-when-idle="true"
           color="emerald"
@@ -730,21 +730,30 @@ const hasEnteredViewport = ref(false)
 const pendingAutoLoad = ref(false)
 const pendingAutoLoadSource = ref<'passive' | 'active' | undefined>(undefined)
 
-const proModeWindows = computed(() => (['5h', '7d'] as const).map((label) => {
-  const usage = buildProModeUsage(props.account.id, label)
-  return {
-    label,
-    utilization: usage.utilization,
-    color: (label === '5h' ? 'indigo' : 'emerald') as 'indigo' | 'emerald',
-    stats: label === '7d'
-      ? {
-          requests: usage.requests,
-          tokens: 0,
-          cost: usage.cost
-        }
-      : null
-  }
-}))
+const proModeWindows = computed(() => {
+  const fiveHour = buildProModeUsage(props.account.id, '5h')
+  const sevenDay = buildProModeUsage(props.account.id, '7d')
+
+  return [
+    {
+      label: '5h',
+      utilization: fiveHour.utilization,
+      color: 'indigo' as const,
+      stats: {
+        requests: sevenDay.requests,
+        tokens: usageInfo.value?.five_hour?.window_stats?.tokens ?? props.todayStats?.tokens ?? 0,
+        cost: sevenDay.cost,
+        user_cost: sevenDay.cost
+      }
+    },
+    {
+      label: '7d',
+      utilization: sevenDay.utilization,
+      color: 'emerald' as const,
+      stats: null
+    }
+  ]
+})
 
 let desktopViewportMediaQuery: MediaQueryList | null = null
 let desktopViewportListener: ((event: MediaQueryListEvent) => void) | null = null
@@ -770,7 +779,10 @@ const showUsageWindows = computed(() => {
 })
 
 const shouldFetchUsage = computed(() => {
-  if (props.proMode) return false
+  if (
+    props.proMode &&
+    !(props.account.platform === 'openai' && props.account.type === 'oauth')
+  ) return false
   if (props.account.platform === 'anthropic') {
     return props.account.type === 'oauth' || props.account.type === 'setup-token'
   }
