@@ -76,6 +76,8 @@ const DataTableStub = {
         </div>
       </template>
       <div v-for="row in data" :key="row.id" data-test="account-rate">
+        <slot name="cell-platform_type" :row="row" />
+        <slot name="cell-usage" :row="row" />
         <slot name="cell-rate_multiplier" :row="row" />
       </div>
     </div>
@@ -100,7 +102,7 @@ function mountView() {
         HelpTooltip: HelpTooltipStub,
         Pagination: true,
         ConfirmDialog: true,
-        AccountTableActions: { template: '<div><slot name="beforeCreate" /><slot name="after" /></div>' },
+AccountTableActions: { template: '<div><slot name="before" /><slot name="beforeCreate" /><slot name="after" /></div>' },
         AccountTableFilters: {
           props: ['groups'],
           template: '<div data-test="account-filters" :data-group-count="groups.length"></div>'
@@ -119,12 +121,18 @@ function mountView() {
         CreateAccountModal: true,
         EditAccountModal: true,
         BulkEditAccountModal: true,
-        PlatformTypeBadge: true,
+        PlatformTypeBadge: {
+          props: ['planType'],
+          template: '<span data-test="plan-type">{{ planType }}</span>'
+        },
         AccountCapacityCell: true,
         AccountStatusIndicator: true,
         AccountTodayStatsCell: true,
         AccountGroupsCell: true,
-        AccountUsageCell: true,
+        AccountUsageCell: {
+          props: ['account', 'proMode'],
+          template: '<span data-test="usage-mode">{{ proMode ? "pro" : "real" }}</span>'
+        },
         Icon: true
       }
     }
@@ -232,8 +240,40 @@ describe('admin AccountsView usage windows hint', () => {
     const wrapper = mountView()
     await flushPromises()
 
-    expect(wrapper.get('[data-test="account-rate"]').text()).toBe('0.065x')
+    expect(wrapper.get('[data-test="account-rate"]').text()).toContain('0.065x')
     const indicator = wrapper.get('[data-testid="account-rate-sync-indicator"]')
     expect(indicator.attributes('title')).toBe('admin.accounts.upstreamBilling.syncedRateTooltip')
+  })
+
+  it('persists PRO mode and overrides every account plan and usage cell', async () => {
+    listAccounts.mockResolvedValueOnce({
+      items: [{
+        id: 11,
+        name: 'free-account',
+        platform: 'openai',
+        type: 'oauth',
+        status: 'active',
+        schedulable: true,
+        credentials: { plan_type: 'free' },
+        created_at: '2026-08-19T00:00:00Z',
+        updated_at: '2026-08-19T00:00:00Z'
+      }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="plan-type"]').text()).toBe('free')
+    expect(wrapper.get('[data-test="usage-mode"]').text()).toBe('real')
+
+    await wrapper.get('[data-testid="pro-mode-toggle"]').setValue(true)
+
+    expect(wrapper.get('[data-test="plan-type"]').text()).toBe('pro')
+    expect(wrapper.get('[data-test="usage-mode"]').text()).toBe('pro')
+    expect(localStorage.getItem('admin-accounts-pro-mode')).toBe('true')
   })
 })
