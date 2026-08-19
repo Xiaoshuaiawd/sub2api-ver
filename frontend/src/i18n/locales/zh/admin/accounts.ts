@@ -5,6 +5,8 @@ export default {
       createAccount: '添加账号',
       autoRefresh: '自动刷新',
       enableAutoRefresh: '启用自动刷新',
+      proMode: 'PRO 模式',
+      proModeHint: '仅改变当前浏览器中的账号列表展示：订阅统一显示为 PRO，用量稳定随机为 30%–60%。',
       refreshInterval5s: '5 秒',
       refreshInterval10s: '10 秒',
       refreshInterval15s: '15 秒',
