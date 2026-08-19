@@ -80,13 +80,19 @@ it('shows stable synthetic PRO windows without requesting upstream usage', () =>
           platform: 'openai',
           type: 'apikey'
         }),
+        todayStats: {
+          requests: 99,
+          tokens: 93_900_000,
+          cost: 8.47,
+          user_cost: 5.73
+        },
         proMode: true
       },
       global: {
         stubs: {
           UsageProgressBar: {
             props: ['label', 'utilization', 'windowStats', 'color'],
-            template: '<div data-test="pro-window">{{ label }}|{{ utilization }}|{{ windowStats ? windowStats.cost : "-" }}|{{ windowStats ? windowStats.requests : "-" }}</div>'
+            template: '<div data-test="pro-window">{{ label }}|{{ utilization }}|{{ windowStats ? windowStats.requests : "-" }}|{{ windowStats ? windowStats.tokens : "-" }}|{{ windowStats ? windowStats.cost : "-" }}|{{ windowStats ? windowStats.user_cost : "-" }}</div>'
           }
         }
       }
@@ -94,9 +100,67 @@ it('shows stable synthetic PRO windows without requesting upstream usage', () =>
 
     const windows = wrapper.findAll('[data-test="pro-window"]')
     expect(windows).toHaveLength(2)
-    expect(windows[0].text()).toMatch(/^5h\|[0-3]\|-\|-$/)
-    expect(windows[1].text()).toMatch(/^7d\|(?:3\d|4\d|5\d|60)\|\d+(?:\.\d+)?\|(?:1\d{3}|2[0-4]\d{2}|2500)$/)
+    expect(windows[0].text()).toMatch(
+      /^5h\|[0-3]\|(?:1\d{3}|2[0-4]\d{2}|2500)\|93900000\|(\d+(?:\.\d+)?)\|\1$/
+    )
+    expect(windows[1].text()).toMatch(/^7d\|(?:3\d|4\d|5\d|60)\|-\|-\|-\|-$/)
     expect(getUsage).not.toHaveBeenCalled()
+  })
+
+it('keeps the normal OpenAI usage structure while overriding PRO values', async () => {
+    getUsage.mockResolvedValue({
+      five_hour: {
+        utilization: 100,
+        resets_at: '2026-03-07T12:00:00Z',
+        remaining_seconds: 3600,
+        window_stats: {
+          requests: 211,
+          tokens: 106_540_000,
+          cost: 38.13,
+          user_cost: 19.06
+        }
+      },
+      seven_day: {
+        utilization: 100,
+        resets_at: '2026-03-13T12:00:00Z',
+        remaining_seconds: 3600
+      }
+    })
+
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: 315,
+          platform: 'openai',
+          type: 'oauth'
+        }),
+        proMode: true
+      },
+      global: {
+        stubs: {
+          UsageProgressBar: {
+            props: ['label', 'utilization', 'resetsAt', 'windowStats'],
+            template: '<div data-test="pro-openai-window">{{ label }}|{{ utilization }}|{{ resetsAt }}|{{ windowStats ? windowStats.requests : "-" }}|{{ windowStats ? windowStats.tokens : "-" }}|{{ windowStats ? windowStats.cost : "-" }}|{{ windowStats ? windowStats.user_cost : "-" }}</div>'
+          },
+          OpenAIQuotaResetCell: {
+            template: '<div data-test="quota-actions"><slot name="pre-actions" /></div>'
+          }
+        }
+      }
+    })
+
+    await flushPromises()
+
+    const windows = wrapper.findAll('[data-test="pro-openai-window"]')
+    expect(windows).toHaveLength(2)
+    expect(windows[0].text()).toMatch(
+      /^5h\|[0-3]\|2026-03-07T12:00:00Z\|(?:1\d{3}|2[0-4]\d{2}|2500)\|106540000\|(\d+(?:\.\d+)?)\|\1$/
+    )
+    expect(windows[1].text()).toMatch(
+      /^7d\|(?:3\d|4\d|5\d|60)\|2026-03-13T12:00:00Z\|-\|-\|-\|-$/
+    )
+    expect(wrapper.get('[data-test="quota-actions"]').exists()).toBe(true)
+    expect(getUsage).toHaveBeenCalledWith(315)
   })
 
   it('renders eligible Ollama Cloud state inside the unified usage cell', async () => {
