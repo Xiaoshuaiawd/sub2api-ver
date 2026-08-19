@@ -1,8 +1,20 @@
 <template>
   <div ref="rootRef" v-if="showUsageWindows">
+    <template v-if="proMode">
+      <div class="space-y-1" data-testid="pro-mode-usage">
+        <UsageProgressBar
+          v-for="window in proModeWindows"
+          :key="window.label"
+          :label="window.label"
+          :utilization="window.utilization"
+          :window-stats="window.stats"
+          :color="window.color"
+        />
+      </div>
+    </template>
     <!-- Anthropic OAuth and Setup Token accounts: fetch real usage data -->
     <template
-      v-if="
+      v-else-if="
         account.platform === 'anthropic' &&
         (account.type === 'oauth' || account.type === 'setup-token')
       "
@@ -644,6 +656,7 @@ import CNProviderQuotaCell from './CNProviderQuotaCell.vue'
 import CNProviderBalanceCell from './CNProviderBalanceCell.vue'
 import OllamaCloudUsageCell from './OllamaCloudUsageCell.vue'
 import { cnQuotaCellVisible as cnQuotaCellVisibleFn, cnBalanceCellVisible as cnBalanceCellVisibleFn } from './credentialsBuilder'
+import { buildProModeUsage } from '@/utils/proMode'
 
 // Module-level cache shared across all AccountUsageCell instances
 const _usageCache = new Map<number, { data: AccountUsageInfo; ts: number }>()
@@ -661,6 +674,7 @@ const props = withDefaults(
     batchedUsageError?: string | null
     batchedUsageLoading?: boolean
     requestBatchedUsage?: ((account: Account, options?: { force?: boolean }) => void) | null
+    proMode?: boolean
   }>(),
   {
     todayStats: null,
@@ -669,7 +683,8 @@ const props = withDefaults(
     batchedUsage: null,
     batchedUsageError: null,
     batchedUsageLoading: false,
-    requestBatchedUsage: null
+    requestBatchedUsage: null,
+    proMode: false
   }
 )
 
@@ -700,12 +715,27 @@ const hasEnteredViewport = ref(false)
 const pendingAutoLoad = ref(false)
 const pendingAutoLoadSource = ref<'passive' | 'active' | undefined>(undefined)
 
+const proModeWindows = computed(() => (['7d'] as const).map((label) => {
+  const usage = buildProModeUsage(props.account.id, label)
+  return {
+    label,
+    utilization: usage.utilization,
+    color: 'emerald' as const,
+    stats: {
+      requests: usage.requests,
+      tokens: 0,
+      cost: usage.cost
+    }
+  }
+}))
+
 let desktopViewportMediaQuery: MediaQueryList | null = null
 let desktopViewportListener: ((event: MediaQueryListEvent) => void) | null = null
 let visibilityObserver: IntersectionObserver | null = null
 
 // Show usage windows for OAuth and Setup Token accounts
 const showUsageWindows = computed(() => {
+  if (props.proMode) return true
   // Gemini: we can always compute local usage windows from DB logs (simulated quotas).
   if (props.account.platform === 'gemini') return true
   // CN providers: apikey 账号也有滚动用量窗口（coding plan）或余额（payg），
@@ -721,6 +751,7 @@ const showUsageWindows = computed(() => {
 })
 
 const shouldFetchUsage = computed(() => {
+  if (props.proMode) return false
   if (props.account.platform === 'anthropic') {
     return props.account.type === 'oauth' || props.account.type === 'setup-token'
   }
