@@ -18,8 +18,11 @@ describe('buildProModeUsage', () => {
 
       expect(fiveHour.utilization).toBeGreaterThanOrEqual(0)
       expect(fiveHour.utilization).toBeLessThanOrEqual(3)
+      expect(fiveHour.resetAfterHours).toBeNull()
       expect(usage.utilization).toBeGreaterThanOrEqual(30)
       expect(usage.utilization).toBeLessThanOrEqual(60)
+      expect(usage.resetAfterHours).toBeGreaterThanOrEqual(158)
+      expect(usage.resetAfterHours).toBeLessThanOrEqual(166)
       expect(usage.costPerPercent).toBeGreaterThanOrEqual(20)
       expect(usage.costPerPercent).toBeLessThanOrEqual(26)
       expect(usage.cost).toBeCloseTo(usage.utilization * usage.costPerPercent, 2)

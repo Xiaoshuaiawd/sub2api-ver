@@ -91,8 +91,8 @@ describe('AccountUsageCell', () => {
       global: {
         stubs: {
           UsageProgressBar: {
-            props: ['label', 'utilization', 'windowStats', 'color'],
-            template: '<div data-test="pro-window">{{ label }}|{{ utilization }}|{{ windowStats ? windowStats.requests : "-" }}|{{ windowStats ? windowStats.tokens : "-" }}|{{ windowStats ? windowStats.cost : "-" }}|{{ windowStats ? windowStats.user_cost : "-" }}</div>'
+            props: ['label', 'utilization', 'windowStats', 'color', 'resetsAt', 'showNowWhenIdle'],
+            template: '<div data-test="pro-window">{{ label }}|{{ utilization }}|{{ resetsAt || "" }}|{{ showNowWhenIdle === true ? "now" : "silent" }}|{{ windowStats ? windowStats.requests : "-" }}|{{ windowStats ? windowStats.tokens : "-" }}|{{ windowStats ? windowStats.cost : "-" }}|{{ windowStats ? windowStats.user_cost : "-" }}</div>'
           }
         }
       }
@@ -101,9 +101,15 @@ describe('AccountUsageCell', () => {
     const windows = wrapper.findAll('[data-test="pro-window"]')
     expect(windows).toHaveLength(2)
     expect(windows[0].text()).toMatch(
-      /^5h\|[0-3]\|(?:1\d{3}|2[0-4]\d{2}|2500)\|93900000\|(\d+(?:\.\d+)?)\|\1$/
+      /^5h\|[0-3]\|\|silent\|(?:1\d{3}|2[0-4]\d{2}|2500)\|93900000\|(\d+(?:\.\d+)?)\|\1$/
     )
-    expect(windows[1].text()).toMatch(/^7d\|(?:3\d|4\d|5\d|60)\|-\|-\|-\|-$/)
+    expect(windows[1].text()).toMatch(
+      /^7d\|(?:3\d|4\d|5\d|60)\|\d{4}-\d{2}-\d{2}T.+Z\|silent\|-\|-\|-\|-$/
+    )
+    const sevenDayResetAt = windows[1].text().split('|')[2]
+    const resetAfterHours = (Date.parse(sevenDayResetAt) - Date.now()) / 3_600_000
+    expect(resetAfterHours).toBeGreaterThanOrEqual(158)
+    expect(resetAfterHours).toBeLessThan(167)
     expect(getUsage).not.toHaveBeenCalled()
   })
 
@@ -139,8 +145,8 @@ describe('AccountUsageCell', () => {
       global: {
         stubs: {
           UsageProgressBar: {
-            props: ['label', 'utilization', 'resetsAt', 'windowStats'],
-            template: '<div data-test="pro-openai-window">{{ label }}|{{ utilization }}|{{ resetsAt }}|{{ windowStats ? windowStats.requests : "-" }}|{{ windowStats ? windowStats.tokens : "-" }}|{{ windowStats ? windowStats.cost : "-" }}|{{ windowStats ? windowStats.user_cost : "-" }}</div>'
+            props: ['label', 'utilization', 'resetsAt', 'windowStats', 'showNowWhenIdle'],
+            template: '<div data-test="pro-openai-window">{{ label }}|{{ utilization }}|{{ resetsAt || "" }}|{{ showNowWhenIdle === true ? "now" : "silent" }}|{{ windowStats ? windowStats.requests : "-" }}|{{ windowStats ? windowStats.tokens : "-" }}|{{ windowStats ? windowStats.cost : "-" }}|{{ windowStats ? windowStats.user_cost : "-" }}</div>'
           },
           OpenAIQuotaResetCell: {
             template: '<div data-test="quota-actions"><slot name="pre-actions" /></div>'
@@ -154,10 +160,10 @@ describe('AccountUsageCell', () => {
     const windows = wrapper.findAll('[data-test="pro-openai-window"]')
     expect(windows).toHaveLength(2)
     expect(windows[0].text()).toMatch(
-      /^5h\|[0-3]\|2026-03-07T12:00:00Z\|(?:1\d{3}|2[0-4]\d{2}|2500)\|106540000\|(\d+(?:\.\d+)?)\|\1$/
+      /^5h\|[0-3]\|\|silent\|(?:1\d{3}|2[0-4]\d{2}|2500)\|106540000\|(\d+(?:\.\d+)?)\|\1$/
     )
     expect(windows[1].text()).toMatch(
-      /^7d\|(?:3\d|4\d|5\d|60)\|2026-03-13T12:00:00Z\|-\|-\|-\|-$/
+      /^7d\|(?:3\d|4\d|5\d|60)\|\d{4}-\d{2}-\d{2}T.+Z\|silent\|-\|-\|-\|-$/
     )
     expect(wrapper.get('[data-test="quota-actions"]').exists()).toBe(true)
     expect(getUsage).toHaveBeenCalledWith(315)
