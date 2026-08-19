@@ -7,6 +7,7 @@ export interface ProModeUsage {
   costPerPercent: number
   cost: number
   requests: number
+  resetAfterHours: number | null
 }
 
 function hashSeed(value: string): number {
@@ -29,12 +30,16 @@ export function buildProModeUsage(accountId: number, window: ProModeWindow): Pro
     : stableRange(`${seed}:utilization`, 30, 60)
   const costPerPercent = stableRange(`${seed}:cost`, 2000, 2600) / 100
   const requests = stableRange(`${seed}:requests`, 1000, 2500)
+  const resetAfterHours = window === '7d'
+    ? stableRange(`${seed}:reset`, 158, 166)
+    : null
 
   return {
     utilization,
     costPerPercent,
     cost: Number((utilization * costPerPercent).toFixed(2)),
-    requests
+    requests,
+    resetAfterHours
   }
 }
 
