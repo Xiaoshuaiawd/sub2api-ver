@@ -25,13 +25,15 @@ func TestUsageMessageRepositoryCreatePendingUsesParameters(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestUsageMessageRepositoryStoresBodyWithUpsert(t *testing.T) {
+func TestUsageMessageRepositoryStoresBodyUsesContiguousParameters(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 	repo := NewUsageMessageRepository(db)
 	created := time.Now()
-	mock.ExpectExec("INSERT INTO usage_message_bodies").WithArgs(created, int64(9), "request", []byte("zstd"), int64(10), int64(4)).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(regexp.QuoteMeta("SELECT c.created_at, $1, $2, $3, $4, $5 FROM usage_message_captures c WHERE c.usage_log_id=$1")).
+		WithArgs(int64(9), "request", []byte("zstd"), int64(10), int64(4)).
+		WillReturnResult(sqlmock.NewResult(1, 1))
 	require.NoError(t, repo.StoreBody(context.Background(), service.StoredMessageBody{CreatedAt: created, UsageLogID: 9, BodyType: "request", Payload: []byte("zstd"), RawBytes: 10, StoredBytes: 4}))
 	require.NoError(t, mock.ExpectationsWereMet())
 }

@@ -32,13 +32,13 @@ func (r *usageMessageRepository) CreatePending(ctx context.Context, m service.Me
 func (r *usageMessageRepository) StoreBody(ctx context.Context, b service.StoredMessageBody) error {
 	result, err := r.db.ExecContext(ctx, `INSERT INTO usage_message_bodies
         (created_at, usage_log_id, body_type, payload_zstd, raw_bytes, stored_bytes)
-        SELECT c.created_at, $2, $3, $4, $5, $6
-        FROM usage_message_captures c WHERE c.usage_log_id=$2
+        SELECT c.created_at, $1, $2, $3, $4, $5
+        FROM usage_message_captures c WHERE c.usage_log_id=$1
         ON CONFLICT (created_at, usage_log_id, body_type) DO UPDATE SET
           payload_zstd = EXCLUDED.payload_zstd,
           raw_bytes = EXCLUDED.raw_bytes,
 		  stored_bytes = EXCLUDED.stored_bytes`,
-		b.CreatedAt, b.UsageLogID, b.BodyType, b.Payload, b.RawBytes, b.StoredBytes)
+		b.UsageLogID, b.BodyType, b.Payload, b.RawBytes, b.StoredBytes)
 	if err != nil {
 		return err
 	}
