@@ -12,6 +12,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type messageCaptureEnabledStub struct{ enabled bool }
+
+func (s *messageCaptureEnabledStub) Enabled() bool { return s != nil && s.enabled }
+
 func TestMessageCaptureMiddlewareCapturesClientBodies(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -30,4 +34,27 @@ func TestMessageCaptureMiddlewareCapturesClientBodies(t *testing.T) {
 	require.Equal(t, `{"output":true}`, rec.Body.String())
 	require.NotNil(t, session)
 	require.Equal(t, service.BodyStateAvailable, session.Artifact().Response.State)
+}
+
+func TestMessageCaptureMiddlewareSkipsCaptureWhenRuntimeDisabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(MessageCapture(
+		config.GatewayMessageStorageConfig{Enabled: true, MaxBodyBytes: 1024, MemoryBudgetBytes: 4096, SpoolDirectory: t.TempDir()},
+		&messageCaptureEnabledStub{enabled: false},
+	))
+	var session *service.MessageCaptureSession
+	r.POST("/capture", func(c *gin.Context) {
+		_, err := io.ReadAll(c.Request.Body)
+		require.NoError(t, err)
+		session = service.MessageCaptureFromContext(c.Request.Context())
+		_, _ = c.Writer.Write([]byte(`{"output":true}`))
+	})
+
+	req := httptest.NewRequest("POST", "/capture", strings.NewReader(`{"input":true}`))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Nil(t, session)
+	require.Equal(t, `{"output":true}`, rec.Body.String())
 }

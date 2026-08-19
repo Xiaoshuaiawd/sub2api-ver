@@ -14,6 +14,8 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
+const messageStorageSettingsRefreshInterval = 30 * time.Second
+
 type messageStorageJob struct {
 	usageLogID int64
 	requestID  string
@@ -34,6 +36,7 @@ type MessageStorageService struct {
 	jobs           chan messageStorageJob
 	dbSlots        chan struct{}
 	metrics        MessageStorageMetrics
+	enabled        atomic.Bool
 	retentionDays  atomic.Int64
 	settingService *SettingService
 	mu             sync.Mutex
@@ -65,35 +68,50 @@ func NewMessageStorageService(repo MessageStorageRepository, cfg *config.Config)
 		dbSlots: make(chan struct{}, storageCfg.DBMaxOpenConns), stopCleanup: make(chan struct{}),
 	}
 	svc.retentionDays.Store(int64(storageCfg.RetentionDays))
+	svc.enabled.Store(storageCfg.Enabled)
 	return svc
 }
 
 func (s *MessageStorageService) SetSettingService(ctx context.Context, settingService *SettingService) {
 	s.settingService = settingService
-	if settingService != nil {
-		s.retentionDays.Store(int64(settingService.GetMessageStorageRetentionDays(ctx, int(s.retentionDays.Load()))))
-	}
+	s.refreshSettings(ctx)
 }
+
+func (s *MessageStorageService) Enabled() bool { return s != nil && s.enabled.Load() }
 
 func (s *MessageStorageService) RetentionDays() int { return int(s.retentionDays.Load()) }
 
-func (s *MessageStorageService) UpdateRetentionDays(ctx context.Context, days int) error {
+func (s *MessageStorageService) refreshSettings(ctx context.Context) {
+	if s == nil || s.settingService == nil {
+		return
+	}
+	enabled, days := s.settingService.GetMessageStorageSettings(ctx, s.Enabled(), s.RetentionDays())
+	s.enabled.Store(enabled)
+	s.retentionDays.Store(int64(days))
+}
+
+func (s *MessageStorageService) UpdateSettings(ctx context.Context, enabled bool, days int) error {
 	if days < 1 || days > 30 {
 		return fmt.Errorf("message storage retention days must be between 1-30")
 	}
 	if s.settingService != nil {
-		if err := s.settingService.SetMessageStorageRetentionDays(ctx, days); err != nil {
+		if err := s.settingService.SetMessageStorageSettings(ctx, enabled, days); err != nil {
 			return err
 		}
 	}
+	s.enabled.Store(enabled)
 	s.retentionDays.Store(int64(days))
 	return nil
+}
+
+func (s *MessageStorageService) UpdateRetentionDays(ctx context.Context, days int) error {
+	return s.UpdateSettings(ctx, s.Enabled(), days)
 }
 
 func (s *MessageStorageService) Start() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.started || s.stopped || !s.cfg.Enabled || s.repo == nil {
+	if s.started || s.stopped || s.repo == nil {
 		return
 	}
 	s.started = true
@@ -106,10 +124,14 @@ func (s *MessageStorageService) Start() {
 	}
 	s.wg.Add(1)
 	go s.cleanupLoop()
+	if s.settingService != nil {
+		s.wg.Add(1)
+		go s.settingsRefreshLoop()
+	}
 }
 
 func (s *MessageStorageService) Enqueue(ctx context.Context, usageLogID int64, requestID string, artifact MessageCaptureArtifact) MessageEnqueueResult {
-	if !s.cfg.Enabled || s.repo == nil || usageLogID <= 0 {
+	if !s.Enabled() || s.repo == nil || usageLogID <= 0 {
 		_ = artifact.Cleanup()
 		return MessageEnqueueResult{Code: "disabled"}
 	}
@@ -149,6 +171,22 @@ func (s *MessageStorageService) Enqueue(ctx context.Context, usageLogID int64, r
 		_ = s.repo.UpdateBodyState(failCtx, usageLogID, MessageBodyTypeResponse, BodyStateFailed, 0, "queue_full", "message storage queue is full")
 		failCancel()
 		return MessageEnqueueResult{Code: "queue_full"}
+	}
+}
+
+func (s *MessageStorageService) settingsRefreshLoop() {
+	defer s.wg.Done()
+	ticker := time.NewTicker(messageStorageSettingsRefreshInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			s.refreshSettings(ctx)
+			cancel()
+		case <-s.stopCleanup:
+			return
+		}
 	}
 }
 

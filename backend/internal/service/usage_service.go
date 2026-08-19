@@ -183,6 +183,17 @@ func (s *UsageService) MessageStorageRetentionDays() int {
 	return s.messageStorage.RetentionDays()
 }
 
+func (s *UsageService) MessageStorageEnabled() bool {
+	return s.messageStorage != nil && s.messageStorage.Enabled()
+}
+
+func (s *UsageService) UpdateMessageStorageSettings(ctx context.Context, enabled bool, days int) error {
+	if s.messageStorage == nil {
+		return errors.New("message storage is unavailable")
+	}
+	return s.messageStorage.UpdateSettings(ctx, enabled, days)
+}
+
 func (s *UsageService) UpdateMessageStorageRetentionDays(ctx context.Context, days int) error {
 	if s.messageStorage == nil {
 		return errors.New("message storage is unavailable")

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -9,6 +10,47 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
+
+type messageStorageSettingRepo struct {
+	SettingRepository
+	mu     sync.Mutex
+	values map[string]string
+	setErr error
+}
+
+func (r *messageStorageSettingRepo) GetValue(_ context.Context, key string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	value, ok := r.values[key]
+	if !ok {
+		return "", ErrSettingNotFound
+	}
+	return value, nil
+}
+
+func (r *messageStorageSettingRepo) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	values := make(map[string]string, len(keys))
+	for _, key := range keys {
+		if value, ok := r.values[key]; ok {
+			values[key] = value
+		}
+	}
+	return values, nil
+}
+
+func (r *messageStorageSettingRepo) SetMultiple(_ context.Context, values map[string]string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.setErr != nil {
+		return r.setErr
+	}
+	for key, value := range values {
+		r.values[key] = value
+	}
+	return nil
+}
 
 type fakeMessageStorageRepository struct {
 	mu      sync.Mutex
@@ -67,6 +109,76 @@ func messageStorageTestConfig() *config.Config {
 	return &config.Config{Gateway: config.GatewayConfig{MessageStorage: config.GatewayMessageStorageConfig{
 		Enabled: true, RetentionDays: 7, WorkerCount: 1, QueueSize: 1, DBMaxOpenConns: 1, MaxBodyBytes: 1024,
 	}}}
+}
+
+func TestMessageStorageRuntimeSettingsUseConfigFallbackAndPersistedOverride(t *testing.T) {
+	cfg := messageStorageTestConfig()
+	cfg.Gateway.MessageStorage.Enabled = false
+	svc := NewMessageStorageService(&fakeMessageStorageRepository{}, cfg)
+	require.False(t, svc.Enabled())
+	require.Equal(t, 7, svc.RetentionDays())
+
+	settingsRepo := &messageStorageSettingRepo{values: map[string]string{
+		SettingKeyMessageStorageEnabled:       "true",
+		SettingKeyMessageStorageRetentionDays: "3",
+	}}
+	svc.SetSettingService(context.Background(), NewSettingService(settingsRepo, cfg))
+
+	require.True(t, svc.Enabled())
+	require.Equal(t, 3, svc.RetentionDays())
+}
+
+func TestMessageStorageUpdateSettingsPersistsBeforeChangingRuntimeState(t *testing.T) {
+	cfg := messageStorageTestConfig()
+	settingsRepo := &messageStorageSettingRepo{
+		values: map[string]string{},
+		setErr: errors.New("database unavailable"),
+	}
+	svc := NewMessageStorageService(&fakeMessageStorageRepository{}, cfg)
+	svc.SetSettingService(context.Background(), NewSettingService(settingsRepo, cfg))
+
+	err := svc.UpdateSettings(context.Background(), false, 2)
+	require.ErrorContains(t, err, "database unavailable")
+	require.True(t, svc.Enabled())
+	require.Equal(t, 7, svc.RetentionDays())
+
+	settingsRepo.mu.Lock()
+	settingsRepo.setErr = nil
+	settingsRepo.mu.Unlock()
+	require.NoError(t, svc.UpdateSettings(context.Background(), false, 2))
+	require.False(t, svc.Enabled())
+	require.Equal(t, 2, svc.RetentionDays())
+}
+
+func TestMessageStorageRefreshSettingsObservesAnotherInstance(t *testing.T) {
+	cfg := messageStorageTestConfig()
+	settingsRepo := &messageStorageSettingRepo{values: map[string]string{
+		SettingKeyMessageStorageEnabled:       "true",
+		SettingKeyMessageStorageRetentionDays: "7",
+	}}
+	svc := NewMessageStorageService(&fakeMessageStorageRepository{}, cfg)
+	svc.SetSettingService(context.Background(), NewSettingService(settingsRepo, cfg))
+
+	settingsRepo.mu.Lock()
+	settingsRepo.values[SettingKeyMessageStorageEnabled] = "false"
+	settingsRepo.values[SettingKeyMessageStorageRetentionDays] = "4"
+	settingsRepo.mu.Unlock()
+	svc.refreshSettings(context.Background())
+
+	require.False(t, svc.Enabled())
+	require.Equal(t, 4, svc.RetentionDays())
+}
+
+func TestMessageStorageStartsCleanupWhenRuntimeStorageIsDisabled(t *testing.T) {
+	cfg := messageStorageTestConfig()
+	cfg.Gateway.MessageStorage.Enabled = false
+	svc := NewMessageStorageService(&fakeMessageStorageRepository{}, cfg)
+	svc.Start()
+	require.True(t, svc.started)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	require.NoError(t, svc.Stop(ctx))
 }
 
 func TestMessageStorageWorkerCompressesAndStoresBothBodies(t *testing.T) {

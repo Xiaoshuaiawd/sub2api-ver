@@ -58,23 +58,30 @@ func (h *UsageHandler) MessageDetail(c *gin.Context) {
 }
 
 func (h *UsageHandler) MessageStorageSettings(c *gin.Context) {
-	response.Success(c, gin.H{"retention_days": h.usageService.MessageStorageRetentionDays()})
+	response.Success(c, gin.H{
+		"enabled":        h.usageService.MessageStorageEnabled(),
+		"retention_days": h.usageService.MessageStorageRetentionDays(),
+	})
 }
 
 func (h *UsageHandler) UpdateMessageStorageSettings(c *gin.Context) {
 	var req struct {
-		RetentionDays int `json:"retention_days"`
+		Enabled       *bool `json:"enabled"`
+		RetentionDays int   `json:"retention_days"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.RetentionDays < 1 || req.RetentionDays > 30 {
-		response.BadRequest(c, "retention_days must be between 1-30")
+	if err := c.ShouldBindJSON(&req); err != nil || req.Enabled == nil || req.RetentionDays < 1 || req.RetentionDays > 30 {
+		response.BadRequest(c, "enabled is required and retention_days must be between 1-30")
 		return
 	}
-	if err := h.usageService.UpdateMessageStorageRetentionDays(c.Request.Context(), req.RetentionDays); err != nil {
+	if err := h.usageService.UpdateMessageStorageSettings(c.Request.Context(), *req.Enabled, req.RetentionDays); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 	middleware.SetAuditAction(c, "admin.usage.message_storage.update")
-	response.Success(c, gin.H{"retention_days": req.RetentionDays})
+	response.Success(c, gin.H{
+		"enabled":        h.usageService.MessageStorageEnabled(),
+		"retention_days": h.usageService.MessageStorageRetentionDays(),
+	})
 }
 
 // NewUsageHandler creates a new admin usage handler

@@ -157,21 +157,42 @@ type SettingService struct {
 }
 
 func (s *SettingService) GetMessageStorageRetentionDays(ctx context.Context, fallback int) int {
-	if fallback < 1 || fallback > 30 {
-		fallback = 7
+	_, days := s.GetMessageStorageSettings(ctx, false, fallback)
+	return days
+}
+
+func (s *SettingService) GetMessageStorageEnabled(ctx context.Context, fallback bool) bool {
+	enabled, _ := s.GetMessageStorageSettings(ctx, fallback, 7)
+	return enabled
+}
+
+func (s *SettingService) GetMessageStorageSettings(ctx context.Context, fallbackEnabled bool, fallbackDays int) (bool, int) {
+	if fallbackDays < 1 || fallbackDays > 30 {
+		fallbackDays = 7
 	}
 	if s == nil || s.settingRepo == nil {
-		return fallback
+		return fallbackEnabled, fallbackDays
 	}
-	raw, err := s.settingRepo.GetValue(ctx, SettingKeyMessageStorageRetentionDays)
+	values, err := s.settingRepo.GetMultiple(ctx, []string{
+		SettingKeyMessageStorageEnabled,
+		SettingKeyMessageStorageRetentionDays,
+	})
 	if err != nil {
-		return fallback
+		return fallbackEnabled, fallbackDays
 	}
-	days, err := strconv.Atoi(strings.TrimSpace(raw))
-	if err != nil || days < 1 || days > 30 {
-		return fallback
+	enabled := fallbackEnabled
+	if raw, ok := values[SettingKeyMessageStorageEnabled]; ok {
+		if parsed, parseErr := strconv.ParseBool(strings.TrimSpace(raw)); parseErr == nil {
+			enabled = parsed
+		}
 	}
-	return days
+	days := fallbackDays
+	if raw, ok := values[SettingKeyMessageStorageRetentionDays]; ok {
+		if parsed, parseErr := strconv.Atoi(strings.TrimSpace(raw)); parseErr == nil && parsed >= 1 && parsed <= 30 {
+			days = parsed
+		}
+	}
+	return enabled, days
 }
 
 func (s *SettingService) SetMessageStorageRetentionDays(ctx context.Context, days int) error {
@@ -179,6 +200,19 @@ func (s *SettingService) SetMessageStorageRetentionDays(ctx context.Context, day
 		return fmt.Errorf("message storage retention days must be between 1-30")
 	}
 	return s.settingRepo.Set(ctx, SettingKeyMessageStorageRetentionDays, strconv.Itoa(days))
+}
+
+func (s *SettingService) SetMessageStorageSettings(ctx context.Context, enabled bool, days int) error {
+	if days < 1 || days > 30 {
+		return fmt.Errorf("message storage retention days must be between 1-30")
+	}
+	if s == nil || s.settingRepo == nil {
+		return errors.New("message storage settings repository is unavailable")
+	}
+	return s.settingRepo.SetMultiple(ctx, map[string]string{
+		SettingKeyMessageStorageEnabled:       strconv.FormatBool(enabled),
+		SettingKeyMessageStorageRetentionDays: strconv.Itoa(days),
+	})
 }
 
 // DefaultPlatformQuotaSetting 单 platform 三档限额（nil = 沿用上层；0 = 显式禁用；>0 = 上限）

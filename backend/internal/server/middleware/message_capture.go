@@ -13,13 +13,21 @@ import (
 // MessageCapture records the bytes consumed from the client request and the
 // bytes actually accepted by the client response writer. It is best-effort:
 // capture errors are represented in the artifact and never returned to Gin.
-func MessageCapture(cfg config.GatewayMessageStorageConfig) gin.HandlerFunc {
+func MessageCapture(cfg config.GatewayMessageStorageConfig, enabledProviders ...interface{ Enabled() bool }) gin.HandlerFunc {
 	factory := service.NewMessageCaptureFactory(service.MessageCaptureConfig{
 		MaxBodyBytes: cfg.MaxBodyBytes, MemoryBudgetBytes: cfg.MemoryBudgetBytes,
 		SpoolDirectory: cfg.SpoolDirectory, SpoolBudgetBytes: cfg.SpoolBudgetBytes,
 	})
+	var enabledProvider interface{ Enabled() bool }
+	if len(enabledProviders) > 0 {
+		enabledProvider = enabledProviders[0]
+	}
 	return func(c *gin.Context) {
-		if !cfg.Enabled {
+		enabled := cfg.Enabled
+		if enabledProvider != nil {
+			enabled = enabledProvider.Enabled()
+		}
+		if !enabled {
 			c.Next()
 			return
 		}

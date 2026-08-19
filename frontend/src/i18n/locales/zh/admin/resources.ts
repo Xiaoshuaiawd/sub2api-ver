@@ -530,6 +530,8 @@ export default {
         download: '下载正文',
         settings: '正文设置',
         settingsTitle: '消息正文存储设置',
+        storageEnabled: '存储请求与响应正文',
+        storageEnabledHint: '关闭后仅停止存储新请求的正文，不会删除已存正文。',
         retentionDays: '保留天数',
         retentionHint: '可设置 1–30 天，到期正文将自动删除。',
         settingsLoadFailed: '加载正文存储设置失败',

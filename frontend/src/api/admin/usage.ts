@@ -48,6 +48,7 @@ export interface UsageMessageDetail {
 }
 
 export interface UsageMessageStorageSettings {
+  enabled: boolean
   retention_days: number
 }
 
@@ -174,8 +175,12 @@ export async function getMessageStorageSettings(): Promise<UsageMessageStorageSe
   return data
 }
 
-export async function updateMessageStorageSettings(retentionDays: number): Promise<UsageMessageStorageSettings> {
+export async function updateMessageStorageSettings(
+  enabled: boolean,
+  retentionDays: number
+): Promise<UsageMessageStorageSettings> {
   const { data } = await apiClient.put<UsageMessageStorageSettings>('/admin/usage/message-storage/settings', {
+    enabled,
     retention_days: retentionDays
   })
   return data

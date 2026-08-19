@@ -533,6 +533,8 @@ export default {
         download: 'Download body',
         settings: 'Body settings',
         settingsTitle: 'Message body storage settings',
+        storageEnabled: 'Store request and response bodies',
+        storageEnabledHint: 'Turning this off only stops storage for new requests. Existing bodies are not deleted.',
         retentionDays: 'Retention days',
         retentionHint: 'Choose 1–30 days. Expired bodies are deleted automatically.',
         settingsLoadFailed: 'Failed to load message body storage settings',

@@ -6,6 +6,25 @@
     @close="close"
   >
     <div class="space-y-4">
+      <div class="flex items-start justify-between gap-4">
+        <div class="min-w-0">
+          <p id="message-storage-enabled-label" class="text-sm font-medium text-gray-700 dark:text-gray-200">
+            {{ t('admin.usage.message.storageEnabled') }}
+          </p>
+          <p id="message-storage-enabled-hint" class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            {{ t('admin.usage.message.storageEnabledHint') }}
+          </p>
+        </div>
+        <Toggle
+          v-model="enabled"
+          class="mt-0.5"
+          data-testid="message-storage-enabled-toggle"
+          :disabled="loading || saving"
+          aria-labelledby="message-storage-enabled-label"
+          aria-describedby="message-storage-enabled-hint"
+        />
+      </div>
+
       <div>
         <label class="input-label" for="message-retention-days">
           {{ t('admin.usage.message.retentionDays') }}
@@ -54,6 +73,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { adminUsageAPI } from '@/api/admin/usage'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import Toggle from '@/components/common/Toggle.vue'
 import { useAppStore } from '@/stores/app'
 
 const props = defineProps<{ show: boolean }>()
@@ -61,6 +81,7 @@ const emit = defineEmits<{ close: []; saved: [retentionDays: number] }>()
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const enabled = ref(true)
 const retentionDays = ref(7)
 const loading = ref(false)
 const saving = ref(false)
@@ -75,6 +96,7 @@ const load = async () => {
   loadError.value = false
   try {
     const settings = await adminUsageAPI.getMessageStorageSettings()
+    enabled.value = settings.enabled
     retentionDays.value = settings.retention_days
   } catch {
     loadError.value = true
@@ -87,7 +109,8 @@ const save = async () => {
   if (!isValid.value || saving.value) return
   saving.value = true
   try {
-    const settings = await adminUsageAPI.updateMessageStorageSettings(retentionDays.value)
+    const settings = await adminUsageAPI.updateMessageStorageSettings(enabled.value, retentionDays.value)
+    enabled.value = settings.enabled
     retentionDays.value = settings.retention_days
     appStore.showSuccess(t('admin.usage.message.settingsSaved'))
     emit('saved', settings.retention_days)
