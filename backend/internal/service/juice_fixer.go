@@ -14,15 +14,19 @@ import (
 // Juice 值修正：当请求触发了 "Juice" 语义（用户询问 Juice 数值）且管理员配置了
 // (模型, reasoning_effort) 规则时，把响应中的 Juice 数值替换为配置值。
 //
-// 触发词覆盖英文 "juice"（含 J U I C E 展开式）与中文「果汁 / 果汁值 / 果汁数值 /
-// 果汁數值」。流式响应按 chunk 缓冲后整体变换，因此跨 chunk 拆分的数字也能正确替换。
+// 触发词覆盖英文 "juice"（含展开式和倒序）、常见编码（Base64、十六进制、
+// ROT13）及多语言别名。流式响应按 chunk 缓冲后整体变换，因此跨 chunk 拆分的数字也能正确替换。
 
 const juiceContextKey = "juice_fixer_context"
 const juiceResolvedValueKey = "juice_fixer_resolved_value"
 
+const juiceLabelPattern = `(?:\bjuice\b|j\s*u\s*i\s*c\s*e|\b(?:jugo|suco|succo|saft|jus)\b|果汁|果汁值|果汁数值|果汁數值|ジュース|주스|сок|عصير)`
+
 var (
-	juiceTriggerPattern     = regexp.MustCompile(`(?i)(?:\bjuice\b|j\s*u\s*i\s*c\s*e|果汁|果汁值|果汁数值|果汁數值)`)
-	juiceNumberPattern      = regexp.MustCompile(`(?i)((?:\bjuice\b|j\s*u\s*i\s*c\s*e|果汁|果汁值|果汁数值|果汁數值)[^\d\r\n]{0,48})([-+]?\d+(?:\.\d+)?)`)
+	juiceTriggerPattern     = regexp.MustCompile(`(?i)` + juiceLabelPattern)
+	juiceReversedPattern    = regexp.MustCompile(`(?i)\be[\s\p{P}\p{S}]*c[\s\p{P}\p{S}]*i[\s\p{P}\p{S}]*u[\s\p{P}\p{S}]*j\b`)
+	juiceEncodedPattern     = regexp.MustCompile(`(?i)\b(?:whvpr|4a75696365|6a75696365|4a55494345|snvpy2u|anvpy2u|slvjq0u)\b=?`)
+	juiceNumberPattern      = regexp.MustCompile(`(?i)(` + juiceLabelPattern + `[^\d\r\n]{0,48})([-+]?\d+(?:\.\d+)?)`)
 	standaloneNumberPattern = regexp.MustCompile(`^\s*[-+]?\d+(?:\.\d+)?\s*$`)
 )
 
@@ -77,8 +81,14 @@ func BuildJuiceContext(body []byte) JuiceContext {
 		}
 	}
 	return JuiceContext{
-		Triggered: juiceTriggerPattern.MatchString(normalizeJuiceText(currentUser)),
+		Triggered: hasJuiceTrigger(normalizeJuiceText(currentUser)),
 	}
+}
+
+func hasJuiceTrigger(text string) bool {
+	return juiceTriggerPattern.MatchString(text) ||
+		juiceReversedPattern.MatchString(text) ||
+		juiceEncodedPattern.MatchString(text)
 }
 
 // messageTextContent 提取 message/input 条目中的文本内容（字符串或 content 数组的 text 部分）。
