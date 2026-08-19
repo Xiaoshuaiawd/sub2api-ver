@@ -13,8 +13,11 @@ describe('buildProModeUsage', () => {
 
   it('keeps utilization and per-percent cost within the configured ranges', () => {
     for (let accountId = 1; accountId <= 200; accountId += 1) {
+      const fiveHour = buildProModeUsage(accountId, '5h')
       const usage = buildProModeUsage(accountId, '7d')
 
+      expect(fiveHour.utilization).toBeGreaterThanOrEqual(0)
+      expect(fiveHour.utilization).toBeLessThanOrEqual(3)
       expect(usage.utilization).toBeGreaterThanOrEqual(30)
       expect(usage.utilization).toBeLessThanOrEqual(60)
       expect(usage.costPerPercent).toBeGreaterThanOrEqual(20)

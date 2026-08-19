@@ -775,6 +775,26 @@ describe("admin SettingsView payment visible method controls", () => {
     );
   });
 
+  it("saves the frontend-only PRO mode toggle from system settings", async () => {
+    localStorage.removeItem("admin-accounts-pro-mode");
+    const wrapper = mountView();
+    await flushPromises();
+
+    const toggle = wrapper.get('[data-testid="pro-mode-toggle"]');
+    expect((toggle.element as HTMLInputElement).checked).toBe(false);
+
+    await toggle.setValue(true);
+    expect(localStorage.getItem("admin-accounts-pro-mode")).toBeNull();
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(localStorage.getItem("admin-accounts-pro-mode")).toBe("true");
+    expect(updateSettings).not.toHaveBeenCalledWith(
+      expect.objectContaining({ pro_mode_enabled: expect.anything() }),
+    );
+  });
+
   it("renders panel rate limit card and saves settings", async () => {
     getPanelRateLimitSettings.mockClear();
     updatePanelRateLimitSettings.mockClear();

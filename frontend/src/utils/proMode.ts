@@ -1,6 +1,6 @@
 export const PRO_MODE_STORAGE_KEY = 'admin-accounts-pro-mode'
 
-export type ProModeWindow = '7d'
+export type ProModeWindow = '5h' | '7d'
 
 export interface ProModeUsage {
   utilization: number
@@ -24,7 +24,9 @@ function stableRange(seed: string, min: number, max: number): number {
 
 export function buildProModeUsage(accountId: number, window: ProModeWindow): ProModeUsage {
   const seed = `${accountId}:${window}`
-  const utilization = stableRange(`${seed}:utilization`, 30, 60)
+  const utilization = window === '5h'
+    ? stableRange(`${seed}:utilization`, 0, 3)
+    : stableRange(`${seed}:utilization`, 30, 60)
   const costPerPercent = stableRange(`${seed}:cost`, 2000, 2600) / 100
   const requests = stableRange(`${seed}:requests`, 1000, 2500)
 

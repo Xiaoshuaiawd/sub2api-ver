@@ -245,7 +245,8 @@ describe('admin AccountsView usage windows hint', () => {
     expect(indicator.attributes('title')).toBe('admin.accounts.upstreamBilling.syncedRateTooltip')
   })
 
-  it('persists PRO mode and overrides every account plan and usage cell', async () => {
+  it('reads PRO mode from system settings and overrides every account plan and usage cell', async () => {
+    localStorage.setItem('admin-accounts-pro-mode', 'true')
     listAccounts.mockResolvedValueOnce({
       items: [{
         id: 11,
@@ -267,13 +268,8 @@ describe('admin AccountsView usage windows hint', () => {
     const wrapper = mountView()
     await flushPromises()
 
-    expect(wrapper.get('[data-test="plan-type"]').text()).toBe('free')
-    expect(wrapper.get('[data-test="usage-mode"]').text()).toBe('real')
-
-    await wrapper.get('[data-testid="pro-mode-toggle"]').setValue(true)
-
     expect(wrapper.get('[data-test="plan-type"]').text()).toBe('pro')
     expect(wrapper.get('[data-test="usage-mode"]').text()).toBe('pro')
-    expect(localStorage.getItem('admin-accounts-pro-mode')).toBe('true')
+    expect(wrapper.find('[data-testid="pro-mode-toggle"]').exists()).toBe(false)
   })
 })

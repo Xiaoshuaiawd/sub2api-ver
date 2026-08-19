@@ -86,15 +86,16 @@ it('shows stable synthetic PRO windows without requesting upstream usage', () =>
         stubs: {
           UsageProgressBar: {
             props: ['label', 'utilization', 'windowStats', 'color'],
-            template: '<div data-test="pro-window">{{ label }}|{{ utilization }}|{{ windowStats.cost }}|{{ windowStats.requests }}</div>'
+            template: '<div data-test="pro-window">{{ label }}|{{ utilization }}|{{ windowStats ? windowStats.cost : "-" }}|{{ windowStats ? windowStats.requests : "-" }}</div>'
           }
         }
       }
     })
 
     const windows = wrapper.findAll('[data-test="pro-window"]')
-    expect(windows).toHaveLength(1)
-    expect(windows[0].text()).toMatch(/^7d\|(?:3\d|4\d|5\d|60)\|\d+(?:\.\d+)?\|(?:1\d{3}|2[0-4]\d{2}|2500)$/)
+    expect(windows).toHaveLength(2)
+    expect(windows[0].text()).toMatch(/^5h\|[0-3]\|-\|-$/)
+    expect(windows[1].text()).toMatch(/^7d\|(?:3\d|4\d|5\d|60)\|\d+(?:\.\d+)?\|(?:1\d{3}|2[0-4]\d{2}|2500)$/)
     expect(getUsage).not.toHaveBeenCalled()
   })
 
