@@ -640,6 +640,8 @@ export default {
         backendMode: 'Backend Mode',
         backendModeDescription:
           'Disables user registration, public site, and self-service features. Only admin can log in and manage the platform.',
+        proMode: 'PRO mode',
+        proModeHint: 'Changes only the account list display in this browser: plans appear as PRO, with 5h usage at 0%–3% and 7d usage at 30%–60%.',
         siteName: 'Site Name',
         siteNamePlaceholder: 'Sub2API',
         siteNameHint: 'Displayed in emails and page titles',

@@ -5,8 +5,6 @@ export default {
       createAccount: 'Create Account',
       autoRefresh: 'Auto Refresh',
       enableAutoRefresh: 'Enable auto refresh',
-      proMode: 'PRO mode',
-      proModeHint: 'Changes only the account list display in this browser: all plans appear as PRO with stable randomized usage from 30% to 60%.',
       refreshInterval5s: '5 seconds',
       refreshInterval10s: '10 seconds',
       refreshInterval15s: '15 seconds',
