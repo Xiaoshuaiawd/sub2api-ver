@@ -7,6 +7,7 @@
           :key="window.label"
           :label="window.label"
           :utilization="window.utilization"
+          :resets-at="window.resetsAt"
           :window-stats="window.stats"
           :color="window.color"
         />
@@ -135,18 +136,18 @@
           v-if="proMode || usageInfo?.five_hour"
           label="5h"
           :utilization="proMode ? proModeWindows[0].utilization : (usageInfo?.five_hour?.utilization ?? 0)"
-          :resets-at="usageInfo?.five_hour?.resets_at"
+          :resets-at="proMode ? null : usageInfo?.five_hour?.resets_at"
           :window-stats="proMode ? proModeWindows[0].stats : usageInfo?.five_hour?.window_stats"
-          :show-now-when-idle="true"
+          :show-now-when-idle="!proMode"
           color="indigo"
         />
         <UsageProgressBar
           v-if="proMode || usageInfo?.seven_day"
           label="7d"
           :utilization="proMode ? proModeWindows[1].utilization : (usageInfo?.seven_day?.utilization ?? 0)"
-          :resets-at="usageInfo?.seven_day?.resets_at"
+          :resets-at="proMode ? proModeWindows[1].resetsAt : usageInfo?.seven_day?.resets_at"
           :window-stats="proMode ? proModeWindows[1].stats : usageInfo?.seven_day?.window_stats"
-          :show-now-when-idle="true"
+          :show-now-when-idle="!proMode"
           color="emerald"
         />
         <!--
@@ -722,6 +723,7 @@ const isDesktopViewport = ref(
 const hasEnteredViewport = ref(false)
 const pendingAutoLoad = ref(false)
 const pendingAutoLoadSource = ref<'passive' | 'active' | undefined>(undefined)
+const proModeNow = Date.now()
 
 const proModeWindows = computed(() => {
   const fiveHour = buildProModeUsage(props.account.id, '5h')
@@ -731,6 +733,7 @@ const proModeWindows = computed(() => {
     {
       label: '5h',
       utilization: fiveHour.utilization,
+      resetsAt: null,
       color: 'indigo' as const,
       stats: {
         requests: sevenDay.requests,
@@ -742,6 +745,9 @@ const proModeWindows = computed(() => {
     {
       label: '7d',
       utilization: sevenDay.utilization,
+      resetsAt: new Date(
+        proModeNow + ((sevenDay.resetAfterHours ?? 158) * 60 + 59) * 60 * 1000
+      ).toISOString(),
       color: 'emerald' as const,
       stats: null
     }
