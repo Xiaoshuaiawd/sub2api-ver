@@ -715,17 +715,19 @@ const hasEnteredViewport = ref(false)
 const pendingAutoLoad = ref(false)
 const pendingAutoLoadSource = ref<'passive' | 'active' | undefined>(undefined)
 
-const proModeWindows = computed(() => (['7d'] as const).map((label) => {
+const proModeWindows = computed(() => (['5h', '7d'] as const).map((label) => {
   const usage = buildProModeUsage(props.account.id, label)
   return {
     label,
     utilization: usage.utilization,
-    color: 'emerald' as const,
-    stats: {
-      requests: usage.requests,
-      tokens: 0,
-      cost: usage.cost
-    }
+    color: (label === '5h' ? 'indigo' : 'emerald') as 'indigo' | 'emerald',
+    stats: label === '7d'
+      ? {
+          requests: usage.requests,
+          tokens: 0,
+          cost: usage.cost
+        }
+      : null
   }
 }))
 

@@ -617,6 +617,8 @@ export default {
         backendMode: 'Backend 模式',
         backendModeDescription:
           '禁用用户注册、公开页面和自助服务功能。仅管理员可以登录和管理平台。',
+        proMode: 'PRO 模式',
+        proModeHint: '仅改变当前浏览器中的账号列表展示：订阅统一显示为 PRO，5h 用量为 0%–3%，7d 用量为 30%–60%。',
         siteName: '站点名称',
         siteNameHint: '显示在邮件和页面标题中',
         siteNamePlaceholder: 'Sub2API',
