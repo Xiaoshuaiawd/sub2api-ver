@@ -330,6 +330,15 @@ func (l *openAIWSPassthroughTurnLifecycle) cancelResponseCreate() {
 	l.mu.Unlock()
 }
 
+func (l *openAIWSPassthroughTurnLifecycle) hasInFlightTurn() bool {
+	if l == nil {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.inFlight
+}
+
 func (l *openAIWSPassthroughTurnLifecycle) beginTerminalWrite() {
 	if l != nil {
 		l.mu.Lock()
@@ -752,6 +761,11 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, blocked.Message, blocked)
 	}
 	firstClientMessage = updatedFirst
+	if hooks != nil && hooks.BeforeTurn != nil {
+		if err := hooks.BeforeTurn(1); err != nil {
+			return err
+		}
+	}
 
 	// 在 policy filter 之后再提取 service_tier / reasoning_effort 用于
 	// usage 上报：filter
@@ -814,7 +828,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		gjson.GetBytes(firstClientMessage, "service_tier").String(),
 	)
 	if buildHdrErr != nil {
-		return fmt.Errorf("build ws headers: %w", buildHdrErr)
+		return markOpenAIAccountOwnedError(fmt.Errorf("build ws headers: %w", buildHdrErr))
 	}
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
@@ -833,7 +847,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	for {
 		headers, err = s.refreshOpenAIAgentIdentityHeaders(ctx, account, headers)
 		if err != nil {
-			return fmt.Errorf("refresh ws authentication headers: %w", err)
+			return markOpenAIAccountOwnedError(fmt.Errorf("refresh ws authentication headers: %w", err))
 		}
 		dialCtx, cancelDial := context.WithTimeout(ctx, s.openAIWSDialTimeout())
 		upstreamConn, statusCode, handshakeHeaders, err = dialer.Dial(dialCtx, wsURL, headers, proxyURL)
@@ -1034,6 +1048,11 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			//     覆盖（Store(nil)），因为 OpenAI 上游对该帧实际不传
 			//     service_tier 时按 default 处理，billing 应如实反映。
 			if policyErr == nil && blocked == nil && isResponseCreate {
+				if hooks != nil && hooks.BeforeTurn != nil {
+					if err := hooks.BeforeTurn(turnNo); err != nil {
+						return payload, nil, err
+					}
+				}
 				usageMeta.updateFromResponseCreate(out, model, requestModelForThisFrame)
 				acceptedTurn = true
 			}
@@ -1330,7 +1349,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		relayErr,
 		relayExit.WroteDownstream,
 	)
-	if hooks != nil && hooks.AfterTurn != nil {
+	if turnLifecycle.hasInFlightTurn() && hooks != nil && hooks.AfterTurn != nil {
 		hooks.AfterTurn(turnCount+1, nil, turnErr)
 	}
 	return turnErr

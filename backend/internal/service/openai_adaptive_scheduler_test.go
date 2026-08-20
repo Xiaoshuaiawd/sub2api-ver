@@ -75,6 +75,7 @@ func adaptiveOpenAITestSnapshot(accounts []Account) *SchedulerSnapshotService {
 	}
 	return &SchedulerSnapshotService{cache: &openAISnapshotCacheStub{
 		snapshotAccounts: snapshotAccounts,
+		borrowedAccounts: accounts,
 		accountsByID:     accountsByID,
 	}}
 }
@@ -1264,6 +1265,33 @@ func TestOpenAIGatewayService_AdaptiveSchedulerDoesNotReacquireRedisRejectedAcco
 	require.Zero(t, loadCalls.Load())
 	require.Equal(t, int64(1), acquireCalls.Load(), "one scheduling call must not reacquire the same Redis-rejected account")
 	require.Zero(t, releaseCalls.Load())
+
+	selection, _, err = svc.SelectAccountWithScheduler(
+		adaptiveOpenAITestContext(groupID),
+		&groupID,
+		"",
+		"",
+		"gpt-5.1",
+		nil,
+		OpenAIUpstreamTransportAny,
+		false,
+	)
+	require.ErrorIs(t, err, ErrNoAvailableAccounts)
+	require.Nil(t, selection)
+	require.Equal(t, int64(1), acquireCalls.Load(), "a subsequent request must honor the short local Redis-full cooldown")
+
+	time.Sleep(openAIAdaptiveRedisFullCooldown + 20*time.Millisecond)
+	_, _, _ = svc.SelectAccountWithScheduler(
+		adaptiveOpenAITestContext(groupID),
+		&groupID,
+		"",
+		"",
+		"gpt-5.1",
+		nil,
+		OpenAIUpstreamTransportAny,
+		false,
+	)
+	require.Equal(t, int64(2), acquireCalls.Load(), "the local Redis-full cooldown must expire")
 }
 
 func TestOpenAIGatewayService_AdaptiveSchedulerTriesOneDifferentAccountAfterRedisDivergence(t *testing.T) {
@@ -1427,6 +1455,115 @@ func TestOpenAIGatewayService_AdaptiveSchedulerSelectsCreditBackedSevenDayAccoun
 	require.NotNil(t, selection)
 	require.Equal(t, account.ID, selection.Account.ID)
 	selection.ReleaseFunc()
+}
+
+func TestOpenAIAdaptiveSelectionCallbackUsesPermitGeneration(t *testing.T) {
+	groupID := int64(54)
+	account := Account{
+		ID: 50_103, Name: "generation-bound", Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Status: StatusActive, Schedulable: true, Concurrency: 10,
+	}
+	cfg := &config.Config{}
+	cfg.RunMode = config.RunModeSimple
+	cfg.Gateway.OpenAIScheduler.AdaptiveEnabled = true
+	cfg.Gateway.OpenAIScheduler.ShadowMode = false
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: []Account{account}},
+		schedulerSnapshot:  adaptiveOpenAITestSnapshot([]Account{account}),
+		cache:              &schedulerTestGatewayCache{},
+		cfg:                cfg,
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+	}
+
+	selection, _, err := svc.SelectAccountWithScheduler(adaptiveOpenAITestContext(groupID), &groupID, "", "", "gpt-5.1", nil, OpenAIUpstreamTransportAny, false)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+
+	svc.reportOpenAIAdaptive429(context.Background(), selection.Account, http.Header{"Retry-After": []string{"30"}}, nil, "gpt-5.1")
+	svc.ReportOpenAIAccountSelectionResult(selection, "gpt-5.1", true, nil)
+	selection.ReleaseFunc()
+
+	scheduler := svc.getOpenAIAccountScheduler(context.Background()).(*defaultOpenAIAccountScheduler)
+	snapshot := scheduler.adaptive.snapshot(account.ID, account.Concurrency, time.Now())
+	require.False(t, snapshot.reservable, "the selected permit's older success must not clear a later 429")
+	require.Greater(t, time.Until(snapshot.cooldownUntil), 20*time.Second)
+}
+
+func TestOpenAIAdaptiveSelectionDoesNotExposeBorrowedSnapshotAccount(t *testing.T) {
+	groupID := int64(55)
+	account := Account{
+		ID: 50_104, Name: "immutable-snapshot", Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Status: StatusActive, Schedulable: true, Concurrency: 10,
+		Credentials: map[string]any{
+			"api_key":       "snapshot-key",
+			"model_mapping": map[string]any{"gpt-5.1": "gpt-5.1"},
+		},
+		Extra: map[string]any{
+			"snapshot_flag": true,
+			"nested":        map[string]any{"value": "snapshot"},
+		},
+	}
+	cfg := &config.Config{}
+	cfg.RunMode = config.RunModeSimple
+	cfg.Gateway.OpenAIScheduler.AdaptiveEnabled = true
+	cfg.Gateway.OpenAIScheduler.ShadowMode = false
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: []Account{account}},
+		schedulerSnapshot:  adaptiveOpenAITestSnapshot([]Account{account}),
+		cache:              &schedulerTestGatewayCache{},
+		cfg:                cfg,
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+	}
+	ctx := adaptiveOpenAITestContext(groupID)
+
+	first, _, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "", "gpt-5.1", nil, OpenAIUpstreamTransportAny, false)
+	require.NoError(t, err)
+	first.Account.Name = "mutated-by-handler"
+	first.Account.Credentials["plan_type"] = "mutated-by-handler"
+	first.Account.Credentials["model_mapping"].(map[string]any)["gpt-5.1"] = "mutated-by-handler"
+	first.Account.Extra["snapshot_flag"] = false
+	first.Account.Extra["nested"].(map[string]any)["value"] = "mutated-by-handler"
+	first.ReleaseFunc()
+
+	second, _, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "", "gpt-5.1", nil, OpenAIUpstreamTransportAny, false)
+	require.NoError(t, err)
+	require.Equal(t, "immutable-snapshot", second.Account.Name)
+	require.NotContains(t, second.Account.Credentials, "plan_type")
+	require.Equal(t, "gpt-5.1", second.Account.Credentials["model_mapping"].(map[string]any)["gpt-5.1"])
+	require.Equal(t, true, second.Account.Extra["snapshot_flag"])
+	require.Equal(t, "snapshot", second.Account.Extra["nested"].(map[string]any)["value"])
+	second.ReleaseFunc()
+}
+
+func TestOpenAIAdaptiveSelectionDoesNotMutateBorrowedSnapshotModelCache(t *testing.T) {
+	groupID := int64(56)
+	account := Account{
+		ID: 50_105, Name: "immutable-model-cache", Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Status: StatusActive, Schedulable: true, Concurrency: 10,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{"gpt-5.1": "gpt-5.1-upstream"},
+		},
+	}
+	cfg := &config.Config{}
+	cfg.RunMode = config.RunModeSimple
+	cfg.Gateway.OpenAIScheduler.AdaptiveEnabled = true
+	cfg.Gateway.OpenAIScheduler.ShadowMode = false
+	snapshot := adaptiveOpenAITestSnapshot([]Account{account})
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: []Account{account}},
+		schedulerSnapshot:  snapshot,
+		cache:              &schedulerTestGatewayCache{},
+		cfg:                cfg,
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+	}
+
+	selection, _, err := svc.SelectAccountWithScheduler(adaptiveOpenAITestContext(groupID), &groupID, "", "", "gpt-5.1", nil, OpenAIUpstreamTransportAny, false)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	selection.ReleaseFunc()
+
+	cache := snapshot.cache.(*openAISnapshotCacheStub)
+	require.False(t, cache.borrowedAccounts[0].modelMappingCacheReady, "adaptive filtering must treat borrowed L1 accounts as immutable")
 }
 
 func TestOpenAIGatewayService_AdaptiveSchedulerKeepsFiveHourPause(t *testing.T) {
@@ -1651,6 +1788,70 @@ func TestOpenAIAdaptiveRuntimeHalfOpenReleaseWaitsForOutcome(t *testing.T) {
 	runtime.reportSuccess(108, 10_000, cooldownUntil.Add(2*time.Millisecond), time.Millisecond)
 }
 
+func TestOpenAIAdaptiveOlderSuccessCannotClearNew429(t *testing.T) {
+	now := time.Now()
+	runtime := newOpenAIAdaptiveRuntime(testOpenAIAdaptiveConfig())
+	permit, ok := runtime.tryReserve(109, 10_000, "route", now)
+	require.True(t, ok)
+
+	cooldownUntil := runtime.report429(109, 10_000, now.Add(time.Millisecond), time.Time{})
+	permit.reportResult(true, now.Add(2*time.Millisecond), time.Millisecond)
+	permit.Release()
+
+	snapshot := runtime.snapshot(109, 10_000, now.Add(3*time.Millisecond))
+	require.Equal(t, cooldownUntil, snapshot.cooldownUntil)
+	require.False(t, snapshot.reservable, "a success from before the 429 must not close the newer circuit")
+}
+
+func TestOpenAIAdaptiveAbandonedHalfOpenPermitRetriesAfterCooldown(t *testing.T) {
+	now := time.Now()
+	runtime := newOpenAIAdaptiveRuntime(testOpenAIAdaptiveConfig())
+	cooldownUntil := runtime.report429(110, 10_000, now, time.Time{})
+	probe, ok := runtime.tryReserve(110, 10_000, "route", cooldownUntil)
+	require.True(t, ok)
+
+	probe.Release()
+	snapshot := runtime.snapshot(110, 10_000, time.Now())
+	require.True(t, snapshot.cooldownUntil.After(time.Now()), "an abandoned probe must enter a short fallback cooldown")
+	require.False(t, snapshot.reservable)
+
+	nextProbe, ok := runtime.tryReserve(110, 10_000, "route", snapshot.cooldownUntil)
+	require.True(t, ok, "release without an outcome must not strand half-open state")
+	nextProbe.reportResult(false, snapshot.cooldownUntil.Add(time.Millisecond), 0)
+	nextProbe.Release()
+}
+
+func TestOpenAIAdaptiveHalfOpenSuccessAfterReleaseStillRecovers(t *testing.T) {
+	now := time.Now()
+	runtime := newOpenAIAdaptiveRuntime(testOpenAIAdaptiveConfig())
+	cooldownUntil := runtime.report429(111, 10_000, now, time.Time{})
+	probe, ok := runtime.tryReserve(111, 10_000, "route", cooldownUntil)
+	require.True(t, ok)
+
+	probe.Release()
+	probe.reportResult(true, cooldownUntil.Add(time.Millisecond), time.Millisecond)
+
+	snapshot := runtime.snapshot(111, 10_000, cooldownUntil.Add(2*time.Millisecond))
+	require.Equal(t, 2, snapshot.window)
+	require.True(t, snapshot.reservable, "the matching probe outcome may arrive just after transport release")
+}
+
+func TestOpenAIAdaptiveHalfOpenFailureAfterReleaseReopensCircuit(t *testing.T) {
+	now := time.Now()
+	runtime := newOpenAIAdaptiveRuntime(testOpenAIAdaptiveConfig())
+	cooldownUntil := runtime.report429(112, 10_000, now, time.Time{})
+	probe, ok := runtime.tryReserve(112, 10_000, "route", cooldownUntil)
+	require.True(t, ok)
+
+	runtime.release(probe, cooldownUntil)
+	reportedAt := cooldownUntil.Add(time.Millisecond)
+	probe.reportResult(false, reportedAt, 0)
+
+	snapshot := runtime.snapshot(112, 10_000, reportedAt)
+	require.GreaterOrEqual(t, snapshot.cooldownUntil.Sub(reportedAt), 2*time.Second, "a matching failed probe must use the circuit backoff, not the abandoned-probe fallback")
+	require.False(t, snapshot.reservable)
+}
+
 func TestOpenAIAdaptiveRuntimeHalfOpenFailureReentersCooldown(t *testing.T) {
 	now := time.Unix(5500, 0)
 	runtime := newOpenAIAdaptiveRuntime(testOpenAIAdaptiveConfig())
@@ -1753,6 +1954,76 @@ func TestOpenAIAdaptiveRuntimeStateMapsStayBoundedPerShard(t *testing.T) {
 	require.LessOrEqual(t, routeCount, openAIAdaptiveMaxRouteStatesPerShard)
 }
 
+func TestOpenAIAdaptiveRuntimeProtectedAccountStatesStayHardBounded(t *testing.T) {
+	now := time.Unix(5980, 0)
+	runtime := newOpenAIAdaptiveRuntime(testOpenAIAdaptiveConfig())
+	for i := 0; i < openAIAdaptiveMaxAccountStatesPerShard; i++ {
+		accountID := int64(1 + i*openAIAdaptiveRuntimeShardCount)
+		cooldownUntil := runtime.report429(accountID, 1, now, now.Add(time.Hour))
+		require.Equal(t, now.Add(time.Hour), cooldownUntil)
+	}
+
+	overflowID := int64(1 + openAIAdaptiveMaxAccountStatesPerShard*openAIAdaptiveRuntimeShardCount)
+	require.True(t, runtime.report429(overflowID, 1, now, now.Add(time.Hour)).IsZero(),
+		"a full shard with no evictable state must reject a new account state")
+
+	accountShard := runtime.shard(1)
+	accountShard.mu.Lock()
+	accountCount := len(accountShard.accounts)
+	_, overflowExists := accountShard.accounts[overflowID]
+	accountShard.mu.Unlock()
+	require.Equal(t, openAIAdaptiveMaxAccountStatesPerShard, accountCount)
+	require.False(t, overflowExists)
+}
+
+func TestOpenAIAdaptiveSelectionAcquiresFreshPermitForEveryTurn(t *testing.T) {
+	now := time.Now()
+	cfg := testOpenAIAdaptiveConfig()
+	cfg.initialWindow = 1
+	cfg.maxWindow = 1
+	runtime := newOpenAIAdaptiveRuntime(cfg)
+	account := &Account{
+		ID:          64_001,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 8,
+		Credentials: map[string]any{"api_key": "sk-test"},
+	}
+	svc := &OpenAIGatewayService{
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+	}
+	scheduler := &defaultOpenAIAccountScheduler{
+		service:  svc,
+		stats:    newOpenAIAccountRuntimeStats(),
+		adaptive: runtime,
+	}
+	req := OpenAIAccountScheduleRequest{Platform: PlatformOpenAI, RequestedModel: "gpt-5.1"}
+	initialPermit, ok := runtime.tryReserve(account.ID, account.Concurrency, openAIAdaptiveRouteKeyForAccount(req, account), now)
+	require.True(t, ok)
+	selection, err := scheduler.finishAdaptiveSelection(context.Background(), req, account, initialPermit)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+
+	_, admitted := selection.AcquireTurn("gpt-5.1")
+	require.False(t, admitted, "the next turn cannot bypass a full adaptive window")
+
+	svc.ReportOpenAIAccountSelectionResult(selection, "gpt-5.1", true, nil)
+	selection.ReleaseFunc()
+	turnSelection, admitted := selection.AcquireTurn("gpt-5.1")
+	require.True(t, admitted)
+	require.NotNil(t, turnSelection)
+	require.NotSame(t, selection, turnSelection, "every turn needs an independent result callback")
+	require.Equal(t, 1, runtime.snapshot(account.ID, account.Concurrency, time.Now()).inflight)
+
+	svc.ReportOpenAIAccountSelectionResult(turnSelection, "gpt-5.1", true, nil)
+	turnSelection.ReleaseFunc()
+	runtime.report429(account.ID, account.Concurrency, time.Now(), time.Now().Add(time.Minute))
+	_, admitted = selection.AcquireTurn("gpt-5.1")
+	require.False(t, admitted, "a later turn must respect a new account cooldown")
+}
+
 func TestOpenAIAdaptive429UpdatesWindowBeforeFallbackSettingRead(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Gateway.OpenAIScheduler.AdaptiveEnabled = true
@@ -1788,25 +2059,35 @@ func TestOpenAIAdaptive429UpdatesWindowBeforeFallbackSettingRead(t *testing.T) {
 }
 
 func TestOpenAIAdaptiveShadowModeInitializesObserverWithoutChangingSelection(t *testing.T) {
-	cfg := &config.Config{}
-	cfg.Gateway.OpenAIScheduler.AdaptiveEnabled = false
-	cfg.Gateway.OpenAIScheduler.ShadowMode = true
-	cfg.Gateway.OpenAIScheduler.InitialWindow = 8
-	cfg.Gateway.OpenAIScheduler.MinWindow = 1
-	cfg.Gateway.OpenAIScheduler.MaxWindow = 32
-	svc := &OpenAIGatewayService{cfg: cfg}
+	for _, adaptiveEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("adaptive_enabled_%t", adaptiveEnabled), func(t *testing.T) {
+			resetOpenAIAdvancedSchedulerSettingCacheForTest()
+			t.Cleanup(resetOpenAIAdvancedSchedulerSettingCacheForTest)
 
-	require.Nil(t, svc.getOpenAIAccountScheduler(context.Background()), "shadow rollout must keep the legacy dispatch path")
+			cfg := &config.Config{}
+			cfg.Gateway.OpenAIScheduler.AdaptiveEnabled = adaptiveEnabled
+			cfg.Gateway.OpenAIScheduler.ShadowMode = true
+			cfg.Gateway.OpenAIScheduler.InitialWindow = 8
+			cfg.Gateway.OpenAIScheduler.MinWindow = 1
+			cfg.Gateway.OpenAIScheduler.MaxWindow = 32
+			svc := &OpenAIGatewayService{
+				cfg:              cfg,
+				rateLimitService: newOpenAIAdvancedSchedulerRateLimitService("false"),
+			}
 
-	account := &Account{ID: 57_010, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 32}
-	svc.reportOpenAIAdaptive429(context.Background(), account, http.Header{"Retry-After": []string{"30"}}, nil, "gpt-5.1")
+			require.Nil(t, svc.getOpenAIAccountScheduler(context.Background()), "shadow rollout must keep the legacy dispatch path")
 
-	scheduler, ok := svc.openaiScheduler.(*defaultOpenAIAccountScheduler)
-	require.True(t, ok, "shadow feedback must initialize the scheduler observer")
-	require.NotNil(t, scheduler.adaptive)
-	require.False(t, scheduler.adaptiveSelectionEnabled(OpenAIAccountScheduleRequest{Platform: PlatformOpenAI}), "shadow rollout must keep adaptive account selection disabled")
-	snapshot := scheduler.adaptive.snapshot(account.ID, account.Concurrency, time.Now())
-	require.Equal(t, 4, snapshot.window, "shadow rollout must observe immediate 429 feedback")
+			account := &Account{ID: 57_010, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 32}
+			svc.reportOpenAIAdaptive429(context.Background(), account, http.Header{"Retry-After": []string{"30"}}, nil, "gpt-5.1")
+
+			scheduler, ok := svc.openaiScheduler.(*defaultOpenAIAccountScheduler)
+			require.True(t, ok, "shadow feedback must initialize the scheduler observer")
+			require.NotNil(t, scheduler.adaptive)
+			require.False(t, scheduler.adaptiveSelectionEnabled(OpenAIAccountScheduleRequest{Platform: PlatformOpenAI}), "shadow rollout must keep adaptive account selection disabled")
+			snapshot := scheduler.adaptive.snapshot(account.ID, account.Concurrency, time.Now())
+			require.Equal(t, 4, snapshot.window, "shadow rollout must observe immediate 429 feedback")
+		})
+	}
 }
 
 func TestOpenAIAdaptiveStormCountsEarlyReturnUpstreamErrors(t *testing.T) {
@@ -1972,4 +2253,46 @@ func TestOpenAIAPIKey429UpdatesAdaptiveWindowImmediately(t *testing.T) {
 	snapshot := scheduler.adaptive.snapshot(account.ID, account.Concurrency, time.Now())
 	require.Equal(t, 4, snapshot.window)
 	require.Greater(t, time.Until(snapshot.cooldownUntil), 25*time.Second)
+}
+
+func BenchmarkOpenAIGatewayServiceAdaptiveSelect3000Accounts(b *testing.B) {
+	groupID := int64(61)
+	accounts := make([]Account, 3000)
+	for i := range accounts {
+		accounts[i] = Account{
+			ID:          int64(70_000 + i),
+			Name:        fmt.Sprintf("benchmark-account-%d", i),
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 32,
+		}
+	}
+	cfg := &config.Config{}
+	cfg.RunMode = config.RunModeSimple
+	cfg.Gateway.OpenAIScheduler.AdaptiveEnabled = true
+	cfg.Gateway.OpenAIScheduler.ShadowMode = false
+	cfg.Gateway.OpenAIScheduler.SampleSize = 4
+	cfg.Gateway.OpenAIScheduler.SampleRounds = 2
+	cfg.Gateway.OpenAIScheduler.SchedulingWaitTimeoutMS = 1000
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: accounts},
+		schedulerSnapshot:  adaptiveOpenAITestSnapshot(accounts),
+		cache:              &schedulerTestGatewayCache{},
+		cfg:                cfg,
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+	}
+	ctx := adaptiveOpenAITestContext(groupID)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		selection, _, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "", "gpt-5.1", nil, OpenAIUpstreamTransportAny, false)
+		if err != nil {
+			b.Fatal(err)
+		}
+		svc.ReportOpenAIAccountSelectionResult(selection, "gpt-5.1", true, nil)
+		selection.ReleaseFunc()
+	}
 }

@@ -205,6 +205,55 @@ func (e *OpenAIWSClientCloseError) Reason() string {
 	return strings.TrimSpace(e.reason)
 }
 
+// ShouldReportOpenAIWSAccountFailure reports whether an ingress proxy error is
+// owned by the selected upstream account. Client closes, local policy and
+// admission failures, idle timeouts, and unclassified local errors must not
+// degrade account health.
+func ShouldReportOpenAIWSAccountFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, ErrOpenAIWSIngressLeaseLost) {
+		return false
+	}
+	var failoverErr *UpstreamFailoverError
+	if errors.As(err, &failoverErr) {
+		return failoverErr.ShouldReportAccountScheduleFailure()
+	}
+	var dialErr *openAIWSDialError
+	if errors.As(err, &dialErr) {
+		return true
+	}
+	var firstOutputTimeout *openAIWSPassthroughFirstOutputTimeoutError
+	if errors.As(err, &firstOutputTimeout) {
+		return true
+	}
+	var activeTurnTimeout *openAIWSPassthroughActiveTurnTimeoutError
+	if errors.As(err, &activeTurnTimeout) {
+		return true
+	}
+	if isOpenAIAccountOwnedError(err) {
+		return true
+	}
+	var closeErr *OpenAIWSClientCloseError
+	if errors.As(err, &closeErr) {
+		return false
+	}
+	var turnErr *openAIWSIngressTurnError
+	if errors.As(err, &turnErr) && turnErr != nil {
+		switch strings.TrimSpace(turnErr.stage) {
+		case "write_upstream", "write_upstream_failed", "read_upstream", "read_upstream_failed", "upstream_message_rejected":
+			return true
+		default:
+			return false
+		}
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	return false
+}
+
 // OpenAIWSIngressHooks 定义入站 WS 每个 turn 的生命周期回调。
 type OpenAIWSIngressHooks struct {
 	// ClientLifecycleContext is the request context before an ingress lease

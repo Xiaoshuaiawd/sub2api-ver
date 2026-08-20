@@ -40,7 +40,7 @@ func (s *OpenAIGatewayService) buildOpenAIResponsesWSURL(account *Account) (stri
 		} else {
 			validatedURL, err := s.validateUpstreamBaseURL(baseURL)
 			if err != nil {
-				return "", err
+				return "", markOpenAIAccountOwnedError(err)
 			}
 			targetURL = buildOpenAIResponsesURLForPlatform(account.Platform, validatedURL)
 		}

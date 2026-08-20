@@ -75,6 +75,10 @@ type schedulerSnapshotReadOnlyReader interface {
 	GetSnapshotReadOnly(ctx context.Context, bucket SchedulerBucket) ([]Account, bool, error)
 }
 
+type schedulerSnapshotBorrowedReader interface {
+	GetSnapshotBorrowed(ctx context.Context, bucket SchedulerBucket) ([]Account, bool, error)
+}
+
 func newSchedulerAccountQueryCache(taskSets ...[]schedulerBucketWriteTask) *schedulerAccountQueryCache {
 	queries := &schedulerAccountQueryCache{
 		remaining:          make(map[schedulerAccountQueryKey]int),
@@ -290,6 +294,16 @@ func (s *SchedulerSnapshotService) ListCachedSchedulableAccounts(ctx context.Con
 		return nil, useMixed, err
 	}
 	bucket := s.bucketFor(groupID, platform, s.resolveMode(platform, hasForcePlatform))
+	if reader, ok := s.cache.(schedulerSnapshotBorrowedReader); ok {
+		cached, hit, err := reader.GetSnapshotBorrowed(ctx, bucket)
+		if err != nil {
+			return nil, useMixed, err
+		}
+		if !hit {
+			return nil, useMixed, ErrSchedulerCacheNotReady
+		}
+		return cached, useMixed, nil
+	}
 	if reader, ok := s.cache.(schedulerSnapshotReadOnlyReader); ok {
 		cached, hit, err := reader.GetSnapshotReadOnly(ctx, bucket)
 		if err != nil {

@@ -209,7 +209,7 @@ func registerAgentIdentityTask(ctx context.Context, account *Account) (string, e
 	req.Header.Set("Accept", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", errors.New("agent task registration request failed")
+		return "", fmt.Errorf("agent task registration request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {

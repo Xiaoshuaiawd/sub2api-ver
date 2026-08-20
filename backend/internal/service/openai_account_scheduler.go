@@ -30,6 +30,9 @@ const (
 const (
 	openAIAdvancedSchedulerSettingCacheTTL  = 5 * time.Second
 	openAIAdvancedSchedulerSettingDBTimeout = 2 * time.Second
+	openAIAccountRuntimeStatsTTL            = 30 * time.Minute
+	openAIAccountRuntimeStatsPruneInterval  = time.Minute
+	openAIAccountRuntimeStatsMaxAccounts    = 8192
 	// ponytail: cap probes added when cost ordering expands configured Top-K;
 	// use bulk acquisition if a measured workload needs a higher ceiling.
 	openAIAccountSelectionProbeLimit = 64
@@ -183,39 +186,52 @@ func (m *openAIAccountSchedulerMetrics) recordSwitch() {
 }
 
 type openAIAccountRuntimeStats struct {
-	accounts     sync.Map
-	accountCount atomic.Int64
+	mu          sync.Mutex
+	accounts    map[int64]*openAIAccountRuntimeStat
+	lastPruneAt time.Time
 }
 
 type openAIAccountRuntimeStat struct {
 	errorRateEWMABits atomic.Uint64
 	ttftEWMABits      atomic.Uint64
+	lastTouchedAt     atomic.Int64
 }
 
 func newOpenAIAccountRuntimeStats() *openAIAccountRuntimeStats {
-	return &openAIAccountRuntimeStats{}
+	return &openAIAccountRuntimeStats{accounts: make(map[int64]*openAIAccountRuntimeStat)}
 }
 
-func (s *openAIAccountRuntimeStats) loadOrCreate(accountID int64) *openAIAccountRuntimeStat {
-	if value, ok := s.accounts.Load(accountID); ok {
-		stat, _ := value.(*openAIAccountRuntimeStat)
-		if stat != nil {
-			return stat
-		}
+func (s *openAIAccountRuntimeStats) loadOrCreate(accountID int64, now time.Time) *openAIAccountRuntimeStat {
+	if s == nil || accountID <= 0 {
+		return nil
 	}
-
-	stat := &openAIAccountRuntimeStat{}
-	stat.ttftEWMABits.Store(math.Float64bits(math.NaN()))
-	actual, loaded := s.accounts.LoadOrStore(accountID, stat)
-	if !loaded {
-		s.accountCount.Add(1)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if stat := s.accounts[accountID]; stat != nil {
+		stat.lastTouchedAt.Store(now.UnixNano())
 		return stat
 	}
-	existing, _ := actual.(*openAIAccountRuntimeStat)
-	if existing != nil {
-		return existing
+	if s.lastPruneAt.IsZero() || now.Sub(s.lastPruneAt) >= openAIAccountRuntimeStatsPruneInterval {
+		s.pruneLocked(now)
 	}
+	if len(s.accounts) >= openAIAccountRuntimeStatsMaxAccounts {
+		return nil
+	}
+	stat := &openAIAccountRuntimeStat{}
+	stat.ttftEWMABits.Store(math.Float64bits(math.NaN()))
+	stat.lastTouchedAt.Store(now.UnixNano())
+	s.accounts[accountID] = stat
 	return stat
+}
+
+func (s *openAIAccountRuntimeStats) pruneLocked(now time.Time) {
+	cutoff := now.Add(-openAIAccountRuntimeStatsTTL).UnixNano()
+	for accountID, stat := range s.accounts {
+		if stat == nil || stat.lastTouchedAt.Load() < cutoff {
+			delete(s.accounts, accountID)
+		}
+	}
+	s.lastPruneAt = now
 }
 
 func updateEWMAAtomic(target *atomic.Uint64, sample float64, alpha float64) {
@@ -234,7 +250,10 @@ func (s *openAIAccountRuntimeStats) report(accountID int64, success bool, firstT
 		return
 	}
 	const alpha = 0.2
-	stat := s.loadOrCreate(accountID)
+	stat := s.loadOrCreate(accountID, time.Now())
+	if stat == nil {
+		return
+	}
 
 	errorSample := 1.0
 	if success {
@@ -266,11 +285,9 @@ func (s *openAIAccountRuntimeStats) snapshot(accountID int64) (errorRate float64
 	if s == nil || accountID <= 0 {
 		return 0, 0, false
 	}
-	value, ok := s.accounts.Load(accountID)
-	if !ok {
-		return 0, 0, false
-	}
-	stat, _ := value.(*openAIAccountRuntimeStat)
+	s.mu.Lock()
+	stat := s.accounts[accountID]
+	s.mu.Unlock()
 	if stat == nil {
 		return 0, 0, false
 	}
@@ -286,7 +303,10 @@ func (s *openAIAccountRuntimeStats) size() int {
 	if s == nil {
 		return 0
 	}
-	return int(s.accountCount.Load())
+	s.mu.Lock()
+	size := len(s.accounts)
+	s.mu.Unlock()
+	return size
 }
 
 type defaultOpenAIAccountScheduler struct {
@@ -1522,7 +1542,7 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 			filterStats.exclude("platform_mismatch")
 			continue
 		}
-		if s.service.isOpenAIAccountRequestRuntimeBlocked(account, req.RequestedModel) {
+		if !s.adaptiveSelectionEnabled(req) && s.service.isOpenAIAccountRequestRuntimeBlocked(account, req.RequestedModel) {
 			filterStats.exclude("runtime_blocked")
 			continue
 		}
@@ -1700,17 +1720,19 @@ func (s *defaultOpenAIAccountScheduler) finishAdaptiveSelection(
 	account *Account,
 	permit *openAIAdaptivePermit,
 ) (*AccountSelectionResult, error) {
-	if !s.isAdaptiveSelectionLocallyEligible(ctx, req, account) {
+	selectedAccount := openAIAdaptiveOwnedAccount(account)
+	if !s.isAdaptiveSelectionLocallyEligible(ctx, req, selectedAccount) {
 		permit.Release()
 		return nil, nil
 	}
 
-	acquired, err := s.service.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
+	acquired, err := s.service.tryAcquireAccountSlot(ctx, selectedAccount.ID, selectedAccount.Concurrency)
 	if err != nil {
 		permit.Release()
 		return nil, err
 	}
 	if acquired == nil || !acquired.Acquired {
+		s.adaptive.reportRedisFull(selectedAccount.ID, selectedAccount.Concurrency, time.Now())
 		permit.Release()
 		return nil, nil
 	}
@@ -1725,12 +1747,36 @@ func (s *defaultOpenAIAccountScheduler) finishAdaptiveSelection(
 		})
 	}
 	selection := attachSelectionProfitGate(ctx, &AccountSelectionResult{
-		Account:     account,
+		Account:     selectedAccount,
 		Acquired:    true,
 		ReleaseFunc: release,
+		reportResult: func(model string, success bool, firstTokenMs *int) {
+			s.reportAdaptiveSelectionResult(permit, model, success, firstTokenMs)
+		},
+		acquireTurn: func(model string) (*AccountSelectionResult, bool) {
+			turnReq := req
+			turnReq.RequestedModel = model
+			turnPermit, reserved := s.adaptive.tryReserve(
+				selectedAccount.ID,
+				selectedAccount.Concurrency,
+				openAIAdaptiveRouteKeyForAccount(turnReq, selectedAccount),
+				time.Now(),
+			)
+			if !reserved {
+				return nil, false
+			}
+			return &AccountSelectionResult{
+				Account:     selectedAccount,
+				Acquired:    true,
+				ReleaseFunc: turnPermit.Release,
+				reportResult: func(model string, success bool, firstTokenMs *int) {
+					s.reportAdaptiveSelectionResult(turnPermit, model, success, firstTokenMs)
+				},
+			}, true
+		},
 	})
 	if req.SessionHash != "" && !req.PreserveStickyBinding {
-		_ = s.service.bindOpenAIStickySessionDuringSelection(ctx, req.GroupID, req.SessionHash, account.ID)
+		_ = s.service.bindOpenAIStickySessionDuringSelection(ctx, req.GroupID, req.SessionHash, selectedAccount.ID)
 	}
 	return selection, nil
 }
@@ -2000,6 +2046,9 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReason(ctx con
 	if account == nil {
 		return false, "account_nil"
 	}
+	if s.adaptiveSelectionEnabled(req) {
+		account = openAIAdaptiveImmutableAccountView(account)
+	}
 	if s != nil && s.service != nil && s.service.isOpenAIAccountRequestRuntimeBlocked(account, req.RequestedModel) {
 		return false, "runtime_blocked"
 	}
@@ -2053,7 +2102,7 @@ func (s *defaultOpenAIAccountScheduler) ReportResult(accountID int64, model stri
 		return
 	}
 	s.stats.report(accountID, success, firstTokenMs)
-	if s.adaptive == nil {
+	if s.adaptive == nil || (s.adaptive.config.enabled && !s.adaptive.config.shadowMode) {
 		return
 	}
 	now := time.Now()
@@ -2067,6 +2116,24 @@ func (s *defaultOpenAIAccountScheduler) ReportResult(accountID int64, model stri
 		return
 	}
 	s.adaptive.reportFailure(accountID, 0, now)
+}
+
+func (s *defaultOpenAIAccountScheduler) reportAdaptiveSelectionResult(permit *openAIAdaptivePermit, model string, success bool, firstTokenMs *int) {
+	if s == nil || permit == nil {
+		return
+	}
+	if s.stats != nil {
+		s.stats.report(permit.accountID, success, firstTokenMs)
+	}
+	now := time.Now()
+	latency := time.Duration(0)
+	if firstTokenMs != nil && *firstTokenMs > 0 {
+		latency = time.Duration(*firstTokenMs) * time.Millisecond
+	}
+	permit.reportResult(success, now, latency)
+	if success && s.adaptive != nil {
+		s.adaptive.reportRouteAttempt(openAIAdaptiveResultRouteKey(PlatformOpenAI, model), false, now)
+	}
 }
 
 func (s *defaultOpenAIAccountScheduler) ReportSwitch() {
@@ -2309,7 +2376,8 @@ func (s *OpenAIGatewayService) getOpenAIAccountScheduler(ctx context.Context) Op
 		return nil
 	}
 	adaptiveConfig := s.openAIAdaptiveConfig()
-	if !adaptiveConfig.enabled && !s.isOpenAIAdvancedSchedulerEnabled(ctx) {
+	adaptiveDispatchEnabled := adaptiveConfig.enabled && !adaptiveConfig.shadowMode
+	if !adaptiveDispatchEnabled && !s.isOpenAIAdvancedSchedulerEnabled(ctx) {
 		return nil
 	}
 	return s.initOpenAIAccountScheduler()
@@ -2618,6 +2686,22 @@ func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(accountID int64
 		return
 	}
 	scheduler.ReportResult(accountID, model, success, firstTokenMs)
+}
+
+func (s *OpenAIGatewayService) ReportOpenAIAccountSelectionResult(selection *AccountSelectionResult, model string, success bool, firstTokenMs *int) {
+	if s == nil || selection == nil || selection.Account == nil {
+		return
+	}
+	selection.reportOnce.Do(func() {
+		if success {
+			s.clearOpenAIAccountModelTransientState(selection.Account.ID, normalizeOpenAIAccountModelTransientModel(model))
+		}
+		if selection.reportResult != nil {
+			selection.reportResult(model, success, firstTokenMs)
+			return
+		}
+		s.ReportOpenAIAccountScheduleResult(selection.Account.ID, model, success, firstTokenMs)
+	})
 }
 
 func (s *OpenAIGatewayService) RecordOpenAIAccountSwitch() {

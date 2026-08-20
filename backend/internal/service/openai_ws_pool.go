@@ -1774,7 +1774,7 @@ func (p *openAIWSConnPool) dialConn(ctx context.Context, req openAIWSAcquireRequ
 	if req.HeadersFactory != nil {
 		headers, err = req.HeadersFactory(ctx, headers)
 		if err != nil {
-			return nil, err
+			return nil, markOpenAIAccountOwnedError(err)
 		}
 	}
 	conn, status, handshakeHeaders, err := p.clientDialer.Dial(ctx, req.WSURL, headers, req.ProxyURL)

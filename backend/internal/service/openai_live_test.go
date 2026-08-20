@@ -19,6 +19,9 @@ import (
 type liveHTTPUpstreamStub struct {
 	request *http.Request
 	body    []byte
+	status  int
+	result  string
+	err     error
 }
 
 type liveAttestationStub struct {
@@ -46,12 +49,23 @@ func (s *liveHTTPUpstreamStub) Do(
 		return nil, err
 	}
 	s.body = body
+	if s.err != nil {
+		return nil, s.err
+	}
+	status := s.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	result := s.result
+	if result == "" {
+		result = "v=0\r\n"
+	}
 	return &http.Response{
-		StatusCode: http.StatusOK,
+		StatusCode: status,
 		Header: http.Header{
 			"Location": {"/backend-api/codex/call_test"},
 		},
-		Body: io.NopCloser(strings.NewReader("v=0\r\n")),
+		Body: io.NopCloser(strings.NewReader(result)),
 	}, nil
 }
 
@@ -63,6 +77,110 @@ func (s *liveHTTPUpstreamStub) DoWithTLS(
 	_ *tlsfingerprint.Profile,
 ) (*http.Response, error) {
 	return s.Do(request, proxyURL, accountID, accountConcurrency)
+}
+
+type liveFeedbackScheduler struct {
+	selection *AccountSelectionResult
+	selects   int
+}
+
+func (s *liveFeedbackScheduler) Select(context.Context, OpenAIAccountScheduleRequest) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	s.selects++
+	if s.selects > 1 || s.selection == nil {
+		return nil, OpenAIAccountScheduleDecision{}, ErrNoAvailableAccounts
+	}
+	return s.selection, OpenAIAccountScheduleDecision{}, nil
+}
+
+func (*liveFeedbackScheduler) ReportResult(int64, string, bool, *int) {}
+func (*liveFeedbackScheduler) ReportSwitch()                          {}
+func (*liveFeedbackScheduler) SnapshotMetrics() OpenAIAccountSchedulerMetricsSnapshot {
+	return OpenAIAccountSchedulerMetricsSnapshot{}
+}
+
+func newLiveFeedbackTestService(
+	t *testing.T,
+	upstream *liveHTTPUpstreamStub,
+	store *liveTestStore,
+	report func(bool),
+) *OpenAIGatewayService {
+	t.Helper()
+	cfg := &config.Config{JWT: config.JWTConfig{Secret: "live-feedback-secret"}}
+	cfg.Gateway.OpenAIScheduler.AdaptiveEnabled = true
+	account := &Account{
+		ID:          77,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 2,
+		Credentials: map[string]any{
+			"access_token":       "test-access-token",
+			"chatgpt_account_id": "acct_test",
+		},
+	}
+	selection := &AccountSelectionResult{
+		Account:     account,
+		Acquired:    true,
+		ReleaseFunc: func() {},
+		reportResult: func(_ string, success bool, _ *int) {
+			report(success)
+		},
+	}
+	return &OpenAIGatewayService{
+		accountRepo:           &liveTestAccountRepo{account: account},
+		cache:                 store,
+		cfg:                   cfg,
+		concurrencyService:    NewConcurrencyService(&liveTestConcurrencyCache{}),
+		httpUpstream:          upstream,
+		openaiScheduler:       &liveFeedbackScheduler{selection: selection},
+		liveAttestation:       liveAttestationStub{header: `{"v":1}`},
+		liveAttestationCipher: newLiveAttestationCipher(cfg),
+	}
+}
+
+func TestCreateLiveCallReportsAdaptiveSelectionOutcome(t *testing.T) {
+	request := &LiveCallRequest{
+		SDP:     "v=offer\r\n",
+		Session: json.RawMessage(`{"model":"gpt-live-test"}`),
+	}
+	identity := LiveCallIdentity{APIKeyID: 2, UserID: 3}
+
+	t.Run("upstream failure", func(t *testing.T) {
+		var outcomes []bool
+		svc := newLiveFeedbackTestService(t, &liveHTTPUpstreamStub{
+			status: http.StatusInternalServerError,
+			result: `{"error":{"message":"upstream unavailable"}}`,
+		}, &liveTestStore{}, func(success bool) { outcomes = append(outcomes, success) })
+
+		_, err := svc.CreateLiveCall(context.Background(), request, identity, 2)
+		require.Error(t, err)
+		require.Equal(t, []bool{false}, outcomes)
+	})
+
+	t.Run("upstream success before local save failure", func(t *testing.T) {
+		var outcomes []bool
+		svc := newLiveFeedbackTestService(t, &liveHTTPUpstreamStub{}, &liveTestStore{
+			saveErr: errors.New("redis unavailable"),
+		}, func(success bool) { outcomes = append(outcomes, success) })
+
+		_, err := svc.CreateLiveCall(context.Background(), request, identity, 2)
+		require.Error(t, err)
+		require.Equal(t, []bool{true}, outcomes)
+	})
+
+	t.Run("client cancellation", func(t *testing.T) {
+		var outcomes []bool
+		svc := newLiveFeedbackTestService(t, &liveHTTPUpstreamStub{
+			err: context.Canceled,
+		}, &liveTestStore{}, func(success bool) { outcomes = append(outcomes, success) })
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err := svc.CreateLiveCall(ctx, request, identity, 2)
+		require.ErrorIs(t, err, context.Canceled)
+		require.Empty(t, outcomes)
+	})
 }
 
 func TestLiveCapabilityOnlyAllowsOpenAIOAuth(t *testing.T) {

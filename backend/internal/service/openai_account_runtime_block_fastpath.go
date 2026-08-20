@@ -10,12 +10,13 @@ import (
 )
 
 const (
-	openAIAccountStateUpdateTimeout       = 5 * time.Second
-	openAIOAuth429FallbackCooldown        = 5 * time.Second
-	openAIStopSchedulingBridgeCooldown    = 2 * time.Minute
-	openAIOAuth429StormWindow             = 10 * time.Second
-	openAIOAuth429StormThreshold          = 20
-	openAIOAuth429StormMaxAccountSwitches = 1
+	openAIAccountStateUpdateTimeout         = 5 * time.Second
+	openAIAccountRuntimeBlockLockShardCount = 64
+	openAIOAuth429FallbackCooldown          = 5 * time.Second
+	openAIStopSchedulingBridgeCooldown      = 2 * time.Minute
+	openAIOAuth429StormWindow               = 10 * time.Second
+	openAIOAuth429StormThreshold            = 20
+	openAIOAuth429StormMaxAccountSwitches   = 1
 )
 
 // OpenAIOAuth429FailoverState tracks the request-local follow-up budget after
@@ -213,13 +214,7 @@ func (s *OpenAIGatewayService) BlockAccountScheduling(account *Account, until ti
 }
 
 func (s *OpenAIGatewayService) openAIAccountRuntimeBlockLock(accountID int64) *sync.Mutex {
-	actual, _ := s.openaiAccountRuntimeBlockLocks.LoadOrStore(accountID, &sync.Mutex{})
-	mu, ok := actual.(*sync.Mutex)
-	if !ok {
-		mu = &sync.Mutex{}
-		s.openaiAccountRuntimeBlockLocks.Store(accountID, mu)
-	}
-	return mu
+	return &s.openaiAccountRuntimeBlockLocks[uint64(accountID)&(openAIAccountRuntimeBlockLockShardCount-1)]
 }
 
 func (s *OpenAIGatewayService) blockAccountSchedulingLocked(account *Account, until time.Time, _ string) (uint64, bool) {

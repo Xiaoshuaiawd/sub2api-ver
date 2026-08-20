@@ -223,15 +223,24 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
 				if c.Writer.Size() != writerSizeBeforeForward {
+					if !failoverClientGone(c) && failoverErr.ShouldReportAccountScheduleFailure() {
+						h.gatewayService.ReportOpenAIAccountSelectionResult(selection, account.GetMappedModel(reqModel), false, nil)
+					}
 					h.handleFailoverExhausted(c, failoverErr, true)
 					return
 				}
-				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(reqModel), false, nil)
+				if !failoverClientGone(c) && failoverErr.ShouldReportAccountScheduleFailure() {
+					h.gatewayService.ReportOpenAIAccountSelectionResult(selection, account.GetMappedModel(reqModel), false, nil)
+				}
 				if failoverClientGone(c) {
 					reqLog.Info("openai_embeddings.failover_aborted_client_disconnected",
 						zap.Int64("account_id", account.ID),
 						zap.Int("upstream_status", failoverErr.StatusCode),
 					)
+					return
+				}
+				if !failoverBudget.ArmIfSwitchable(failoverErr, time.Now()) {
+					h.handleFailoverExhausted(c, failoverErr, false)
 					return
 				}
 				h.gatewayService.RecordOpenAIAccountSwitch()
@@ -242,7 +251,6 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 					return
 				}
 				switchCount++
-				failoverBudget.Arm(time.Now())
 				reqLog.Warn("openai_embeddings.upstream_failover_switching",
 					zap.Int64("account_id", account.ID),
 					zap.Int("upstream_status", failoverErr.StatusCode),
@@ -251,7 +259,9 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 				)
 				continue
 			}
-			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(reqModel), false, nil)
+			if !failoverClientGone(c) {
+				h.gatewayService.ReportOpenAIAccountSelectionResult(selection, account.GetMappedModel(reqModel), false, nil)
+			}
 			if c.Writer.Size() == writerSizeBeforeForward {
 				h.errorResponse(c, http.StatusBadGateway, "upstream_error", "Upstream request failed")
 			}
@@ -262,7 +272,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 			return
 		}
 
-		h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(reqModel), true, nil)
+		h.gatewayService.ReportOpenAIAccountSelectionResult(selection, account.GetMappedModel(reqModel), true, nil)
 		userAgent := c.GetHeader("User-Agent")
 		clientIP := ip.GetClientIP(c)
 		inboundEndpoint := GetInboundEndpoint(c)

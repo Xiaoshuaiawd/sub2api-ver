@@ -122,6 +122,23 @@ func TestOpenAIFailoverBudgetStartsDeadlineOnFirstSwitchableError(t *testing.T) 
 	require.False(t, budget.CanTry(102, now.Add(10*time.Second+800*time.Millisecond)))
 }
 
+func TestOpenAIFailoverBudgetArmsBeforeSameAccountRetryDelay(t *testing.T) {
+	now := time.Unix(21_500, 0)
+	budget := newOpenAIFailoverBudget(800*time.Millisecond, 2)
+	failoverErr := &service.UpstreamFailoverError{
+		RetryableOnSameAccount: true,
+		NextAccountAction:      service.NextAccountRetry,
+	}
+
+	require.True(t, budget.ArmIfSwitchable(failoverErr, now))
+	require.True(t, budget.CanTry(101, now.Add(799*time.Millisecond)))
+	require.False(t, budget.CanTry(102, now.Add(800*time.Millisecond)), "same-account retry sleeps must consume the failover scheduling budget")
+
+	nonSwitchable := newOpenAIFailoverBudget(800*time.Millisecond, 2)
+	require.False(t, nonSwitchable.ArmIfSwitchable(&service.UpstreamFailoverError{NextAccountAction: service.NextAccountStop}, now))
+	require.True(t, nonSwitchable.CanTry(101, now.Add(time.Hour)), "non-switchable client errors must not arm a second-account budget")
+}
+
 func TestOpenAIFailoverBudgetSelectionContextUsesAbsoluteDeadline(t *testing.T) {
 	budget := newOpenAIFailoverBudget(800*time.Millisecond, 2)
 	armedAt := time.Now()

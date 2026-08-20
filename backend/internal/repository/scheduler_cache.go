@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -64,6 +63,18 @@ for index = 1, #ARGV do
 end
 return updated
 `)
+
+const validateSchedulerSnapshotScript = `
+local ready = redis.call('GET', KEYS[1])
+if ready ~= '1' then
+    return {0, ''}
+end
+local active = redis.call('GET', KEYS[2])
+if active == false then
+    return {0, ''}
+end
+return {1, active}
+`
 
 var (
 	// epoch 标识 bucket writer 的代际，retired key 是持久退休标记。
@@ -281,38 +292,31 @@ func (c *schedulerCache) GetSnapshotReadOnly(ctx context.Context, bucket service
 	return append([]service.Account(nil), accounts...), true, nil
 }
 
+// GetSnapshotBorrowed returns the immutable L1 account slice without copying
+// it. Version changes replace complete entries and never mutate a published
+// slice, so a request may safely finish against its previous view.
+func (c *schedulerCache) GetSnapshotBorrowed(ctx context.Context, bucket service.SchedulerBucket) ([]service.Account, bool, error) {
+	return c.getSnapshotValues(ctx, bucket)
+}
+
 func (c *schedulerCache) getSnapshotValues(ctx context.Context, bucket service.SchedulerBucket) ([]service.Account, bool, error) {
 	if accounts, ok := c.getFreshSnapshotL1Values(bucket, time.Now()); ok {
 		return accounts, true, nil
 	}
 	readyKey := schedulerBucketKey(schedulerReadyPrefix, bucket)
 	activeKey := schedulerBucketKey(schedulerActivePrefix, bucket)
-	pipe := c.rdb.Pipeline()
-	readyCmd := pipe.Get(ctx, readyKey)
-	activeCmd := pipe.Get(ctx, activeKey)
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return nil, false, err
-	}
-	readyVal, err := readyCmd.Result()
-	if errors.Is(err, redis.Nil) {
-		c.evictSnapshotL1(bucket)
-		return nil, false, nil
-	}
+	validation, err := c.rdb.Eval(ctx, validateSchedulerSnapshotScript, []string{readyKey, activeKey}).Slice()
 	if err != nil {
 		return nil, false, err
 	}
-	if readyVal != "1" {
+	if len(validation) != 2 {
+		return nil, false, fmt.Errorf("invalid scheduler snapshot validation response: %v", validation)
+	}
+	ready, _ := validation[0].(int64)
+	activeVal, _ := validation[1].(string)
+	if ready != 1 || activeVal == "" {
 		c.evictSnapshotL1(bucket)
 		return nil, false, nil
-	}
-
-	activeVal, err := activeCmd.Result()
-	if errors.Is(err, redis.Nil) {
-		c.evictSnapshotL1(bucket)
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, err
 	}
 	if accounts, ok := c.getSnapshotL1Values(bucket, activeVal); ok {
 		c.markSnapshotL1Validated(bucket, activeVal, time.Now())

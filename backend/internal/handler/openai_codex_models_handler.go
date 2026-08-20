@@ -73,15 +73,15 @@ func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
 		if selection.ReleaseFunc != nil {
 			selection.ReleaseFunc()
 		}
-		h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, "", err == nil, nil)
+		h.gatewayService.ReportOpenAIAccountSelectionResult(selection, "", err == nil, nil)
 		if err != nil {
 			if c.Request.Context().Err() != nil {
 				return
 			}
 			if service.IsRetryableCodexModelsManifestError(err) && switchCount < maxAccountSwitches {
+				failoverBudget.Arm(time.Now())
 				failedAccountIDs[account.ID] = struct{}{}
 				switchCount++
-				failoverBudget.Arm(time.Now())
 				lastUpstreamErr = err
 				continue
 			}

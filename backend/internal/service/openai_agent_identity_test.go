@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -125,6 +126,22 @@ func TestRegisterAgentIdentityTaskAcceptsPlaintextAndEncryptedResponses(t *testi
 	taskID, err = registerAgentIdentityTask(context.Background(), account)
 	require.NoError(t, err)
 	require.Equal(t, "task-encrypted", taskID)
+}
+
+func TestRegisterAgentIdentityTaskPreservesContextCancellation(t *testing.T) {
+	_, privateKey := newTestAgentIdentityKey(t)
+	account := &Account{ID: 2, Type: AccountTypeOAuth, Platform: PlatformOpenAI, Credentials: map[string]any{
+		"auth_mode":         OpenAIAuthModeAgentIdentity,
+		"agent_runtime_id":  "runtime-canceled",
+		"agent_private_key": privateKey,
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := registerAgentIdentityTask(ctx, account)
+
+	require.Error(t, err)
+	require.True(t, errors.Is(err, context.Canceled), "registration must preserve cancellation ownership")
 }
 
 func TestEnsureAgentIdentityTaskPersistsAndRedactsCredentials(t *testing.T) {

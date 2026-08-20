@@ -193,7 +193,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 		service.SetOpsLatencyMs(c, service.OpsResponseLatencyMsKey, time.Since(forwardStart).Milliseconds())
 
 		if err == nil {
-			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(requestedModel), true, nil)
+			h.gatewayService.ReportOpenAIAccountSelectionResult(selection, account.GetMappedModel(requestedModel), true, nil)
 			if result != nil {
 				h.recordAlphaSearchUsage(c, apiKey, account, subscription, channelMapping, requestedModel, body, result, subject.UserID)
 			}
@@ -202,7 +202,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 
 		var failoverErr *service.UpstreamFailoverError
 		if !errors.As(err, &failoverErr) {
-			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(requestedModel), false, nil)
+			h.gatewayService.ReportOpenAIAccountSelectionResult(selection, account.GetMappedModel(requestedModel), false, nil)
 			if c.Writer.Size() == writerSizeBeforeForward {
 				h.errorResponse(c, http.StatusBadGateway, "upstream_error", "Upstream request failed")
 			}
@@ -210,7 +210,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 			return
 		}
 
-		h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(requestedModel), false, nil)
+		h.gatewayService.ReportOpenAIAccountSelectionResult(selection, account.GetMappedModel(requestedModel), false, nil)
 		if c.Writer.Size() != writerSizeBeforeForward {
 			h.handleFailoverExhausted(c, failoverErr, true)
 			return
@@ -222,6 +222,10 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 			)
 			return
 		}
+		if !failoverBudget.ArmIfSwitchable(failoverErr, time.Now()) {
+			h.handleFailoverExhausted(c, failoverErr, false)
+			return
+		}
 		h.gatewayService.RecordOpenAIAccountSwitch()
 		failedAccountIDs[account.ID] = struct{}{}
 		lastFailoverErr = failoverErr
@@ -230,7 +234,6 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 			return
 		}
 		switchCount++
-		failoverBudget.Arm(time.Now())
 		if h.gatewayService.ShouldStopOpenAIOAuth429Failover(account, failoverErr.StatusCode, switchCount, &oauth429FailoverState) {
 			h.handleFailoverExhausted(c, failoverErr, false)
 			return

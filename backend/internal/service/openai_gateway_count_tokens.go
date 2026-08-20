@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -37,6 +38,40 @@ type openAIInputTokensCountPrepared struct {
 	NormalizedModel string
 	BillingModel    string
 	UpstreamModel   string
+}
+
+// OpenAICountTokensForwardFeedback tells the handler whether a selected
+// account produced health-relevant work. Local parsing, conversion, and
+// estimation failures deliberately leave ReportSelectionResult false.
+type OpenAICountTokensForwardFeedback struct {
+	ReportSelectionResult bool
+	Success               bool
+}
+
+type openAICountTokensUpstreamError struct {
+	message string
+	cause   error
+}
+
+func (e *openAICountTokensUpstreamError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return e.message
+}
+
+func (e *openAICountTokensUpstreamError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
+
+func shouldReportOpenAICountTokensAccountFailure(ctx context.Context, err error) bool {
+	if ctx != nil && ctx.Err() != nil {
+		return false
+	}
+	return !errors.Is(err, context.Canceled)
 }
 
 // EstimateGrokCountTokens estimates an Anthropic-compatible count_tokens request
@@ -86,10 +121,10 @@ func (s *OpenAIGatewayService) ForwardCountTokensAsAnthropic(
 	account *Account,
 	body []byte,
 	defaultMappedModel string,
-) error {
+) (OpenAICountTokensForwardFeedback, error) {
 	if account == nil {
 		writeAnthropicCountTokensError(c, http.StatusServiceUnavailable, "api_error", "No available OpenAI accounts")
-		return fmt.Errorf("count_tokens: missing account")
+		return OpenAICountTokensForwardFeedback{}, fmt.Errorf("count_tokens: missing account")
 	}
 
 	// 国产供应商 Anthropic 协议：上游有原生 /v1/messages/count_tokens 端点，
@@ -105,7 +140,7 @@ func (s *OpenAIGatewayService) ForwardCountTokensAsAnthropic(
 		estimated, err := estimateAnthropicCountTokensLocally(body)
 		if err != nil {
 			writeAnthropicCountTokensError(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
-			return fmt.Errorf("count_tokens: estimate cn provider input tokens: %w", err)
+			return OpenAICountTokensForwardFeedback{}, fmt.Errorf("count_tokens: estimate cn provider input tokens: %w", err)
 		}
 		logger.L().Debug("openai count_tokens: cn provider local estimate",
 			zap.Int64("account_id", account.ID),
@@ -114,19 +149,19 @@ func (s *OpenAIGatewayService) ForwardCountTokensAsAnthropic(
 		c.JSON(http.StatusOK, gin.H{
 			"input_tokens": estimated,
 		})
-		return nil
+		return OpenAICountTokensForwardFeedback{}, nil
 	}
 
 	prepared, err := prepareOpenAIInputTokensCountRequest(body, account, defaultMappedModel)
 	if err != nil {
 		writeAnthropicCountTokensError(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
-		return err
+		return OpenAICountTokensForwardFeedback{}, err
 	}
 
 	upstreamBody, err := marshalOpenAIUpstreamJSON(prepared.Request)
 	if err != nil {
 		writeAnthropicCountTokensError(c, http.StatusInternalServerError, "api_error", "Failed to build request")
-		return fmt.Errorf("marshal openai input_tokens body: %w", err)
+		return OpenAICountTokensForwardFeedback{}, fmt.Errorf("marshal openai input_tokens body: %w", err)
 	}
 
 	logger.L().Debug("openai count_tokens: model mapping applied",
@@ -140,14 +175,17 @@ func (s *OpenAIGatewayService) ForwardCountTokensAsAnthropic(
 	token, _, err := s.GetAccessToken(ctx, account)
 	if err != nil {
 		writeAnthropicCountTokensError(c, http.StatusBadGateway, "upstream_error", "Failed to get access token")
-		return fmt.Errorf("get access token: %w", err)
+		return OpenAICountTokensForwardFeedback{ReportSelectionResult: shouldReportOpenAICountTokensAccountFailure(ctx, err)}, fmt.Errorf("get access token: %w", err)
 	}
 
 	upstreamReq, err := s.buildInputTokensUpstreamRequest(ctx, c, account, upstreamBody, token)
 	if err != nil {
 		writeAnthropicCountTokensError(c, http.StatusInternalServerError, "api_error", "Failed to build request")
-		return fmt.Errorf("build input_tokens request: %w", err)
+		return OpenAICountTokensForwardFeedback{
+			ReportSelectionResult: isOpenAIAccountOwnedError(err) && shouldReportOpenAICountTokensAccountFailure(ctx, err),
+		}, fmt.Errorf("build input_tokens request: %w", err)
 	}
+	feedback := OpenAICountTokensForwardFeedback{ReportSelectionResult: true}
 
 	proxyURL := ""
 	if account.Proxy != nil {
@@ -158,21 +196,27 @@ func (s *OpenAIGatewayService) ForwardCountTokensAsAnthropic(
 		safeErr := sanitizeUpstreamErrorMessage(err.Error())
 		setOpsUpstreamError(c, 0, safeErr, "")
 		writeAnthropicCountTokensError(c, http.StatusBadGateway, "upstream_error", "Upstream request failed")
-		return fmt.Errorf("openai input_tokens upstream request failed: %s", safeErr)
+		feedback.ReportSelectionResult = shouldReportOpenAICountTokensAccountFailure(ctx, err)
+		return feedback, &openAICountTokensUpstreamError{
+			message: fmt.Sprintf("openai input_tokens upstream request failed: %s", safeErr),
+			cause:   err,
+		}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		writeAnthropicCountTokensError(c, http.StatusBadGateway, "upstream_error", "Failed to read response")
-		return fmt.Errorf("read input_tokens response: %w", err)
+		feedback.ReportSelectionResult = shouldReportOpenAICountTokensAccountFailure(ctx, err)
+		return feedback, fmt.Errorf("read input_tokens response: %w", err)
 	}
 
 	if resp.StatusCode >= 400 {
 		upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
 		if account.Type == AccountTypeOAuth && isOpenAIOAuthInputTokensUnsupported(resp.StatusCode, respBody) {
 			writeOpenAIOAuthInputTokensFallback(c, account, prepared, resp.StatusCode)
-			return nil
+			feedback.Success = true
+			return feedback, nil
 		}
 
 		if s.rateLimitService != nil {
@@ -181,7 +225,8 @@ func (s *OpenAIGatewayService) ForwardCountTokensAsAnthropic(
 
 		if isOpenAIInputTokensUnsupported(resp.StatusCode, respBody) {
 			writeAnthropicCountTokensError(c, http.StatusNotFound, "not_found_error", "Token counting is not supported by upstream")
-			return nil
+			feedback.Success = true
+			return feedback, nil
 		}
 
 		upstreamDetail := ""
@@ -203,21 +248,22 @@ func (s *OpenAIGatewayService) ForwardCountTokensAsAnthropic(
 		}
 		writeAnthropicCountTokensError(c, resp.StatusCode, "upstream_error", errMsg)
 		if upstreamMsg == "" {
-			return fmt.Errorf("input_tokens upstream error: %d", resp.StatusCode)
+			return feedback, fmt.Errorf("input_tokens upstream error: %d", resp.StatusCode)
 		}
-		return fmt.Errorf("input_tokens upstream error: %d message=%s", resp.StatusCode, upstreamMsg)
+		return feedback, fmt.Errorf("input_tokens upstream error: %d message=%s", resp.StatusCode, upstreamMsg)
 	}
 
 	inputTokens := gjson.GetBytes(respBody, "input_tokens")
 	if !inputTokens.Exists() {
 		writeAnthropicCountTokensError(c, http.StatusBadGateway, "upstream_error", "Upstream response missing input_tokens")
-		return fmt.Errorf("input_tokens response missing input_tokens field")
+		return feedback, fmt.Errorf("input_tokens response missing input_tokens field")
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"input_tokens": int(inputTokens.Int()),
 	})
-	return nil
+	feedback.Success = true
+	return feedback, nil
 }
 
 func prepareOpenAIInputTokensCountRequest(
@@ -268,7 +314,7 @@ func (s *OpenAIGatewayService) buildInputTokensUpstreamRequest(
 		if baseURL := account.GetOpenAIBaseURL(); strings.TrimSpace(baseURL) != "" {
 			validatedURL, err := s.validateUpstreamBaseURL(baseURL)
 			if err != nil {
-				return nil, err
+				return nil, markOpenAIAccountOwnedError(err)
 			}
 			targetURL = buildOpenAIResponsesInputTokensURL(validatedURL)
 		}
@@ -281,7 +327,7 @@ func (s *OpenAIGatewayService) buildInputTokensUpstreamRequest(
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
 	authHeaders, err := s.buildOpenAIAuthenticationHeaders(ctx, account, token)
 	if err != nil {
-		return nil, err
+		return nil, markOpenAIAccountOwnedError(err)
 	}
 	for key, values := range authHeaders {
 		for _, value := range values {

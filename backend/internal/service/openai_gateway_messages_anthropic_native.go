@@ -524,18 +524,18 @@ func (s *OpenAIGatewayService) forwardCountTokensViaNativeAnthropic(
 	account *Account,
 	body []byte,
 	defaultMappedModel string,
-) error {
+) (OpenAICountTokensForwardFeedback, error) {
 	originalModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
 	if originalModel == "" {
 		writeAnthropicCountTokensError(c, http.StatusBadRequest, "invalid_request_error", "model is required")
-		return fmt.Errorf("count_tokens: missing model in request")
+		return OpenAICountTokensForwardFeedback{}, fmt.Errorf("count_tokens: missing model in request")
 	}
 	billingModel := resolveOpenAIForwardModel(account, originalModel, strings.TrimSpace(defaultMappedModel))
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
 	if upstreamModel != originalModel {
 		rewritten, err := sjson.SetBytes(body, "model", upstreamModel)
 		if err != nil {
-			return fmt.Errorf("count_tokens: rewrite model: %w", err)
+			return OpenAICountTokensForwardFeedback{}, fmt.Errorf("count_tokens: rewrite model: %w", err)
 		}
 		body = rewritten
 	}
@@ -543,19 +543,20 @@ func (s *OpenAIGatewayService) forwardCountTokensViaNativeAnthropic(
 	apiKey := strings.TrimSpace(account.GetOpenAIProtocolAPIKey())
 	if apiKey == "" {
 		writeAnthropicCountTokensError(c, http.StatusBadGateway, "upstream_error", "Account api_key is missing")
-		return fmt.Errorf("count_tokens: account %d missing api_key", account.ID)
+		return OpenAICountTokensForwardFeedback{ReportSelectionResult: true}, fmt.Errorf("count_tokens: account %d missing api_key", account.ID)
 	}
 	targetURL, err := s.nativeAnthropicTargetURL(account)
 	if err != nil {
-		return fmt.Errorf("count_tokens: %w", err)
+		return OpenAICountTokensForwardFeedback{ReportSelectionResult: true}, fmt.Errorf("count_tokens: %w", err)
 	}
 	targetURL = strings.TrimSuffix(targetURL, "/v1/messages") + "/v1/messages/count_tokens"
 
 	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
 		writeAnthropicCountTokensError(c, http.StatusInternalServerError, "api_error", "Failed to build request")
-		return fmt.Errorf("count_tokens: build request: %w", err)
+		return OpenAICountTokensForwardFeedback{ReportSelectionResult: true}, fmt.Errorf("count_tokens: build request: %w", err)
 	}
+	feedback := OpenAICountTokensForwardFeedback{ReportSelectionResult: true}
 	reqHeader := upstreamReq.Header
 	reqHeader.Del("authorization")
 	reqHeader.Del("x-api-key")
@@ -573,7 +574,11 @@ func (s *OpenAIGatewayService) forwardCountTokensViaNativeAnthropic(
 		safeErr := sanitizeUpstreamErrorMessage(err.Error())
 		setOpsUpstreamError(c, 0, safeErr, "")
 		writeAnthropicCountTokensError(c, http.StatusBadGateway, "upstream_error", "Upstream request failed")
-		return fmt.Errorf("count_tokens: upstream request failed: %s", safeErr)
+		feedback.ReportSelectionResult = shouldReportOpenAICountTokensAccountFailure(ctx, err)
+		return feedback, &openAICountTokensUpstreamError{
+			message: fmt.Sprintf("count_tokens: upstream request failed: %s", safeErr),
+			cause:   err,
+		}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -581,7 +586,8 @@ func (s *OpenAIGatewayService) forwardCountTokensViaNativeAnthropic(
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, cnQuotaMaxBodyBytes))
 	if err != nil {
 		writeAnthropicCountTokensError(c, http.StatusBadGateway, "upstream_error", "Failed to read response")
-		return fmt.Errorf("count_tokens: read response: %w", err)
+		feedback.ReportSelectionResult = shouldReportOpenAICountTokensAccountFailure(ctx, err)
+		return feedback, fmt.Errorf("count_tokens: read response: %w", err)
 	}
 	if resp.StatusCode >= 400 {
 		if s.rateLimitService != nil {
@@ -590,18 +596,19 @@ func (s *OpenAIGatewayService) forwardCountTokensViaNativeAnthropic(
 		upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
 		setOpsUpstreamError(c, resp.StatusCode, upstreamMsg, "")
 		writeAnthropicCountTokensError(c, resp.StatusCode, "upstream_error", "Upstream request failed")
-		return fmt.Errorf("count_tokens: upstream error: %d", resp.StatusCode)
+		return feedback, fmt.Errorf("count_tokens: upstream error: %d", resp.StatusCode)
 	}
 
 	inputTokens := gjson.GetBytes(respBody, "input_tokens")
 	if !inputTokens.Exists() {
 		writeAnthropicCountTokensError(c, http.StatusBadGateway, "upstream_error", "Upstream response missing input_tokens")
-		return fmt.Errorf("count_tokens: response missing input_tokens field")
+		return feedback, fmt.Errorf("count_tokens: response missing input_tokens field")
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"input_tokens": int(inputTokens.Int()),
 	})
-	return nil
+	feedback.Success = true
+	return feedback, nil
 }
 
 // claudeUsageToOpenAIUsage 把 Anthropic 格式 usage 映射到 OpenAI 网关统一的

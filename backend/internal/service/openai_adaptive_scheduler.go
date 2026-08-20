@@ -18,6 +18,8 @@ const (
 	openAIAdaptiveAccountStateTTL          = 30 * time.Minute
 	openAIAdaptiveRouteStateTTL            = 15 * time.Minute
 	openAIAdaptiveStatePruneInterval       = time.Minute
+	openAIAdaptiveAbandonedProbeCooldown   = 250 * time.Millisecond
+	openAIAdaptiveRedisFullCooldown        = 250 * time.Millisecond
 	openAIAdaptiveMaxAccountStatesPerShard = 256
 	openAIAdaptiveMaxRouteStatesPerShard   = 256
 )
@@ -52,6 +54,7 @@ type openAIAdaptiveRuntime struct {
 	routes      [openAIAdaptiveRuntimeShardCount]openAIAdaptiveRouteShard
 	waiters     atomic.Int64
 	lastPruneAt atomic.Int64
+	permitSeq   atomic.Uint64
 }
 
 func (s *OpenAIGatewayService) openAIAdaptiveConfig() openAIAdaptiveSchedulerConfig {
@@ -134,7 +137,8 @@ func openAIAdaptiveRouteKey(req OpenAIAccountScheduleRequest) string {
 }
 
 func openAIAdaptiveRouteKeyForAccount(req OpenAIAccountScheduleRequest, account *Account) string {
-	req.RequestedModel = canonicalOpenAIAccountSchedulingModel(account, req.RequestedModel)
+	accountView := openAIAdaptiveImmutableAccountView(account)
+	req.RequestedModel = canonicalOpenAIAccountSchedulingModel(accountView, req.RequestedModel)
 	return openAIAdaptiveRouteKey(req)
 }
 
@@ -147,8 +151,69 @@ func openAIAdaptiveCandidateRouteKey(routeKey string, account *Account) string {
 	if !found {
 		return routeKey
 	}
-	mappedModel := canonicalOpenAIAccountSchedulingModel(account, model)
+	accountView := openAIAdaptiveImmutableAccountView(account)
+	mappedModel := canonicalOpenAIAccountSchedulingModel(accountView, model)
 	return openAIAdaptiveResultRouteKey(platform, mappedModel) + "|pool:" + poolKey
+}
+
+// Borrowed scheduler snapshots are immutable. Account helpers keep request-hot
+// parsing caches on the value, so adaptive checks use a value copy before
+// calling any helper that may populate those caches.
+func openAIAdaptiveImmutableAccountView(account *Account) *Account {
+	if account == nil {
+		return nil
+	}
+	view := *account
+	return &view
+}
+
+func openAIAdaptiveOwnedAccount(account *Account) *Account {
+	owned := openAIAdaptiveImmutableAccountView(account)
+	if owned == nil {
+		return nil
+	}
+	owned.Credentials = cloneOpenAIAdaptiveMap(account.Credentials)
+	owned.Extra = cloneOpenAIAdaptiveMap(account.Extra)
+	owned.GroupIDs = append([]int64(nil), account.GroupIDs...)
+	owned.AccountGroups = append([]AccountGroup(nil), account.AccountGroups...)
+	owned.Groups = append([]*Group(nil), account.Groups...)
+	return owned
+}
+
+func cloneOpenAIAdaptiveMap(source map[string]any) map[string]any {
+	if source == nil {
+		return nil
+	}
+	cloned := make(map[string]any, len(source))
+	for key, value := range source {
+		cloned[key] = cloneOpenAIAdaptiveValue(value)
+	}
+	return cloned
+}
+
+func cloneOpenAIAdaptiveValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return cloneOpenAIAdaptiveMap(typed)
+	case map[string]string:
+		cloned := make(map[string]string, len(typed))
+		for key, item := range typed {
+			cloned[key] = item
+		}
+		return cloned
+	case []any:
+		cloned := make([]any, len(typed))
+		for index, item := range typed {
+			cloned[index] = cloneOpenAIAdaptiveValue(item)
+		}
+		return cloned
+	case []string:
+		return append([]string(nil), typed...)
+	case []int64:
+		return append([]int64(nil), typed...)
+	default:
+		return value
+	}
 }
 
 func openAIAdaptiveResultRouteKey(platform, model string) string {
@@ -186,18 +251,21 @@ type openAIAdaptiveRouteBucket struct {
 }
 
 type openAIAdaptiveAccountState struct {
-	window           int
-	inflight         int
-	increaseCredit   float64
-	consecutive429   int
-	cooldownUntil    time.Time
-	halfOpenInflight bool
-	last429At        time.Time
-	lastIncreaseAt   time.Time
-	lastSelectedAt   time.Time
-	latencyEWMA      float64
-	errorRateEWMA    float64
-	lastTouchedAt    time.Time
+	window              int
+	inflight            int
+	increaseCredit      float64
+	consecutive429      int
+	cooldownUntil       time.Time
+	redisFullUntil      time.Time
+	halfOpenInflight    bool
+	last429At           time.Time
+	lastIncreaseAt      time.Time
+	lastSelectedAt      time.Time
+	latencyEWMA         float64
+	errorRateEWMA       float64
+	lastTouchedAt       time.Time
+	rateLimitGeneration uint64
+	halfOpenPermitID    uint64
 }
 
 type openAIAdaptiveAccountSnapshot struct {
@@ -213,10 +281,16 @@ type openAIAdaptiveAccountSnapshot struct {
 }
 
 type openAIAdaptivePermit struct {
-	runtime   *openAIAdaptiveRuntime
-	accountID int64
-	routeKey  string
-	once      sync.Once
+	runtime             *openAIAdaptiveRuntime
+	accountID           int64
+	hardLimit           int
+	routeKey            string
+	rateLimitGeneration uint64
+	permitID            uint64
+	halfOpen            bool
+	releaseOnce         sync.Once
+	resultOnce          sync.Once
+	outcomeReported     atomic.Bool
 }
 
 func newOpenAIAdaptiveRuntime(config openAIAdaptiveSchedulerConfig) *openAIAdaptiveRuntime {
@@ -292,6 +366,9 @@ func (r *openAIAdaptiveRuntime) accountStateLocked(shard *openAIAdaptiveRuntimeS
 	}
 	if len(shard.accounts) >= openAIAdaptiveMaxAccountStatesPerShard {
 		r.evictOldestIdleAccountStateLocked(shard, now)
+		if len(shard.accounts) >= openAIAdaptiveMaxAccountStatesPerShard {
+			return nil
+		}
 	}
 	state = &openAIAdaptiveAccountState{
 		window:         r.initialWindow(hardLimit),
@@ -393,6 +470,12 @@ func (r *openAIAdaptiveRuntime) tryReserve(accountID int64, hardLimit int, route
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
 	state := r.accountStateLocked(shard, accountID, hardLimit, now)
+	if state == nil {
+		return nil, false
+	}
+	if now.Before(state.redisFullUntil) {
+		return nil, false
+	}
 
 	halfOpen := state.consecutive429 > 0 && !now.Before(state.cooldownUntil)
 	if state.consecutive429 > 0 && now.Before(state.cooldownUntil) {
@@ -408,10 +491,18 @@ func (r *openAIAdaptiveRuntime) tryReserve(accountID int64, hardLimit int, route
 	}
 	state.inflight++
 	state.lastSelectedAt = now
+	permitID := r.permitSeq.Add(1)
+	if halfOpen {
+		state.halfOpenPermitID = permitID
+	}
 	return &openAIAdaptivePermit{
-		runtime:   r,
-		accountID: accountID,
-		routeKey:  routeKey,
+		runtime:             r,
+		accountID:           accountID,
+		hardLimit:           hardLimit,
+		routeKey:            routeKey,
+		rateLimitGeneration: state.rateLimitGeneration,
+		permitID:            permitID,
+		halfOpen:            halfOpen,
 	}, true
 }
 
@@ -513,21 +604,43 @@ func (p *openAIAdaptivePermit) Release() {
 	if p == nil || p.runtime == nil {
 		return
 	}
-	p.once.Do(func() {
-		p.runtime.release(p.accountID, p.routeKey)
+	p.releaseOnce.Do(func() {
+		p.runtime.release(p, time.Now())
 	})
 }
 
-func (r *openAIAdaptiveRuntime) release(accountID int64, routeKey string) {
-	shard := r.shard(accountID)
+func (p *openAIAdaptivePermit) reportResult(success bool, now time.Time, latency time.Duration) {
+	if p == nil || p.runtime == nil {
+		return
+	}
+	p.resultOnce.Do(func() {
+		p.outcomeReported.Store(true)
+		p.runtime.reportPermitResult(p, success, now, latency)
+	})
+}
+
+func (r *openAIAdaptiveRuntime) release(permit *openAIAdaptivePermit, now time.Time) {
+	if r == nil || permit == nil {
+		return
+	}
+	shard := r.shard(permit.accountID)
 	shard.mu.Lock()
-	if state := shard.accounts[accountID]; state != nil {
+	if state := shard.accounts[permit.accountID]; state != nil {
 		if state.inflight > 0 {
 			state.inflight--
 		}
+		if permit.halfOpen && !permit.outcomeReported.Load() &&
+			state.rateLimitGeneration == permit.rateLimitGeneration &&
+			state.halfOpenPermitID == permit.permitID {
+			state.halfOpenInflight = false
+			fallbackUntil := now.Add(openAIAdaptiveAbandonedProbeCooldown)
+			if fallbackUntil.After(state.cooldownUntil) {
+				state.cooldownUntil = fallbackUntil
+			}
+		}
 	}
 	shard.mu.Unlock()
-	r.signalCapacity(routeKey, accountID)
+	r.signalCapacity(permit.routeKey, permit.accountID)
 }
 
 func (r *openAIAdaptiveRuntime) capacityNotifications(routeKey string) chan int64 {
@@ -602,8 +715,13 @@ func (r *openAIAdaptiveRuntime) nextCandidateCooldown(accounts []*Account, exclu
 		shard := r.shard(account.ID)
 		shard.mu.Lock()
 		state := shard.accounts[account.ID]
-		if state != nil && state.cooldownUntil.After(now) && state.cooldownUntil.Before(next) {
-			next = state.cooldownUntil
+		if state != nil {
+			if state.cooldownUntil.After(now) && state.cooldownUntil.Before(next) {
+				next = state.cooldownUntil
+			}
+			if state.redisFullUntil.After(now) && state.redisFullUntil.Before(next) {
+				next = state.redisFullUntil
+			}
 		}
 		shard.mu.Unlock()
 	}
@@ -685,6 +803,9 @@ func (r *openAIAdaptiveRuntime) snapshot(accountID int64, hardLimit int, now tim
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
 	state := r.accountStateLocked(shard, accountID, hardLimit, now)
+	if state == nil {
+		return openAIAdaptiveAccountSnapshot{}
+	}
 	utilization := float64(state.inflight) / float64(maxInt(state.window, 1))
 	return openAIAdaptiveAccountSnapshot{
 		window:         state.window,
@@ -695,8 +816,29 @@ func (r *openAIAdaptiveRuntime) snapshot(accountID int64, hardLimit int, now tim
 		lastSelectedAt: state.lastSelectedAt,
 		latencyEWMA:    state.latencyEWMA,
 		errorRateEWMA:  state.errorRateEWMA,
-		reservable:     (!now.Before(state.cooldownUntil) && state.consecutive429 > 0 && !state.halfOpenInflight) || (state.consecutive429 == 0 && state.inflight < state.window),
+		reservable:     !now.Before(state.redisFullUntil) && ((!now.Before(state.cooldownUntil) && state.consecutive429 > 0 && !state.halfOpenInflight) || (state.consecutive429 == 0 && state.inflight < state.window)),
 	}
+}
+
+func (r *openAIAdaptiveRuntime) reportRedisFull(accountID int64, hardLimit int, now time.Time) time.Time {
+	if r == nil || accountID <= 0 {
+		return time.Time{}
+	}
+	r.maybePrune(now)
+	shard := r.shard(accountID)
+	shard.mu.Lock()
+	state := r.accountStateLocked(shard, accountID, hardLimit, now)
+	if state == nil {
+		shard.mu.Unlock()
+		return time.Time{}
+	}
+	until := now.Add(openAIAdaptiveRedisFullCooldown)
+	if until.After(state.redisFullUntil) {
+		state.redisFullUntil = until
+	}
+	until = state.redisFullUntil
+	shard.mu.Unlock()
+	return until
 }
 
 type openAIAdaptiveCandidate struct {
@@ -819,10 +961,21 @@ func (r *openAIAdaptiveRuntime) reportSuccess(accountID int64, hardLimit int, no
 	shard := r.shard(accountID)
 	shard.mu.Lock()
 	state := r.accountStateLocked(shard, accountID, hardLimit, now)
+	if state != nil {
+		r.applySuccessLocked(state, hardLimit, now, latency)
+	}
+	shard.mu.Unlock()
+}
+
+func (r *openAIAdaptiveRuntime) applySuccessLocked(state *openAIAdaptiveAccountState, hardLimit int, now time.Time, latency time.Duration) {
+	if state == nil {
+		return
+	}
 	if state.consecutive429 > 0 {
 		state.consecutive429 = 0
 		state.cooldownUntil = time.Time{}
 		state.halfOpenInflight = false
+		state.halfOpenPermitID = 0
 		state.increaseCredit = 0
 		state.window = minInt(maxInt(2, r.config.minWindow), r.effectiveMaxWindow(hardLimit))
 		state.lastIncreaseAt = now
@@ -844,7 +997,6 @@ func (r *openAIAdaptiveRuntime) reportSuccess(accountID int64, hardLimit int, no
 			state.latencyEWMA = 0.2*sample + 0.8*state.latencyEWMA
 		}
 	}
-	shard.mu.Unlock()
 }
 
 func (r *openAIAdaptiveRuntime) reportFailure(accountID int64, hardLimit int, now time.Time) {
@@ -855,14 +1007,59 @@ func (r *openAIAdaptiveRuntime) reportFailure(accountID int64, hardLimit int, no
 	shard := r.shard(accountID)
 	shard.mu.Lock()
 	state := r.accountStateLocked(shard, accountID, hardLimit, now)
+	if state != nil {
+		r.applyFailureLocked(state, now)
+	}
+	shard.mu.Unlock()
+}
+
+func (r *openAIAdaptiveRuntime) applyFailureLocked(state *openAIAdaptiveAccountState, now time.Time) {
+	if state == nil {
+		return
+	}
 	if state.consecutive429 > 0 && !now.Before(state.cooldownUntil) {
 		retryAt := now.Add(openAIAdaptive429Cooldown(state.consecutive429))
 		if retryAt.After(state.cooldownUntil) {
 			state.cooldownUntil = retryAt
 		}
 		state.halfOpenInflight = false
+		state.halfOpenPermitID = 0
 	}
 	state.errorRateEWMA = 0.2 + 0.8*state.errorRateEWMA
+
+}
+
+func (r *openAIAdaptiveRuntime) reportPermitResult(permit *openAIAdaptivePermit, success bool, now time.Time, latency time.Duration) {
+	if r == nil || permit == nil || permit.accountID <= 0 {
+		return
+	}
+	r.maybePrune(now)
+	shard := r.shard(permit.accountID)
+	shard.mu.Lock()
+	state := r.accountStateLocked(shard, permit.accountID, permit.hardLimit, now)
+	if state == nil {
+		shard.mu.Unlock()
+		return
+	}
+	if state.rateLimitGeneration != permit.rateLimitGeneration ||
+		(permit.halfOpen && state.halfOpenPermitID != permit.permitID) ||
+		(!permit.halfOpen && state.consecutive429 > 0) {
+		shard.mu.Unlock()
+		return
+	}
+	if success {
+		r.applySuccessLocked(state, permit.hardLimit, now, latency)
+	} else if permit.halfOpen && state.consecutive429 > 0 {
+		retryAt := now.Add(openAIAdaptive429Cooldown(state.consecutive429))
+		if retryAt.After(state.cooldownUntil) {
+			state.cooldownUntil = retryAt
+		}
+		state.halfOpenInflight = false
+		state.halfOpenPermitID = 0
+		state.errorRateEWMA = 0.2 + 0.8*state.errorRateEWMA
+	} else {
+		r.applyFailureLocked(state, now)
+	}
 	shard.mu.Unlock()
 }
 
@@ -874,9 +1071,15 @@ func (r *openAIAdaptiveRuntime) report429(accountID int64, hardLimit int, now ti
 	shard := r.shard(accountID)
 	shard.mu.Lock()
 	state := r.accountStateLocked(shard, accountID, hardLimit, now)
+	if state == nil {
+		shard.mu.Unlock()
+		return time.Time{}
+	}
+	state.rateLimitGeneration++
 	state.consecutive429++
 	state.last429At = now
 	state.halfOpenInflight = false
+	state.halfOpenPermitID = 0
 	state.increaseCredit = 0
 	if state.consecutive429 == 1 {
 		state.window = maxInt(r.config.minWindow, int(math.Ceil(float64(state.window)/2)))

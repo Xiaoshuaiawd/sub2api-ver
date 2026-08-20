@@ -113,7 +113,8 @@ func TestSchedulerCacheSnapshotL1SkipsPayloadReadsForUnchangedVersion(t *testing
 	_, hit, err = cache.GetSnapshot(ctx, bucket)
 	require.NoError(t, err)
 	require.True(t, hit)
-	require.Equal(t, 2, commands.count("get"), "expired local validation must recheck ready and active")
+	require.Zero(t, commands.count("get"), "expired local validation must not spend separate commands on ready and active")
+	require.Equal(t, 1, commands.count("eval"), "expired local validation must atomically recheck ready and active once")
 }
 
 func TestSchedulerCacheSnapshotReadOnlyUsesConstantAllocations(t *testing.T) {
@@ -150,6 +151,28 @@ func TestSchedulerCacheSnapshotReadOnlyUsesConstantAllocations(t *testing.T) {
 	require.Equal(t, "account-0", second[0].Name, "returned account structs must not alias the cached slice")
 }
 
+func TestSchedulerCacheSnapshotBorrowedAvoidsFullPoolCopy(t *testing.T) {
+	ctx := context.Background()
+	cache, _ := newSchedulerCacheL1Test(t)
+	bucket := service.SchedulerBucket{GroupID: 38, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeSingle}
+	accounts := make([]service.Account, 3000)
+	for i := range accounts {
+		accounts[i] = service.Account{ID: int64(38_000 + i), Platform: service.PlatformOpenAI}
+	}
+	publishSchedulerL1TestSnapshot(t, cache, bucket, accounts)
+	_, hit, err := cache.GetSnapshotBorrowed(ctx, bucket)
+	require.NoError(t, err)
+	require.True(t, hit)
+
+	allocations := testing.AllocsPerRun(20, func() {
+		view, viewHit, viewErr := cache.GetSnapshotBorrowed(ctx, bucket)
+		if viewErr != nil || !viewHit || len(view) != len(accounts) {
+			panic("borrowed snapshot miss")
+		}
+	})
+	require.LessOrEqual(t, allocations, float64(1), "adaptive scheduling must borrow the immutable L1 slice")
+}
+
 func TestOpenAIAdaptiveRedisHotPathUsesAtMostThreeCommands(t *testing.T) {
 	ctx := context.Background()
 	cache, commands := newSchedulerCacheL1Test(t)
@@ -163,6 +186,7 @@ func TestOpenAIAdaptiveRedisHotPathUsesAtMostThreeCommands(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, acquired)
 	require.NoError(t, concurrency.ReleaseAccountSlot(ctx, 37_001, "warm"))
+	time.Sleep(schedulerSnapshotL1ValidationTTL + 20*time.Millisecond)
 	commands.reset()
 
 	_, hit, err = cache.GetSnapshotReadOnly(ctx, bucket)
@@ -173,6 +197,7 @@ func TestOpenAIAdaptiveRedisHotPathUsesAtMostThreeCommands(t *testing.T) {
 	require.True(t, acquired)
 	require.NoError(t, concurrency.ReleaseAccountSlot(ctx, 37_001, "request"))
 
+	require.Equal(t, 1, commands.count("eval"), "stale L1 validation must consume one Redis command")
 	require.LessOrEqual(t, commands.total(), 3, "normal adaptive request must stay within the 0-3 Redis command budget")
 }
 

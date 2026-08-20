@@ -60,7 +60,7 @@ func newOpenAIWSUnsupportedModelSwitchError(model string) error {
 }
 
 func shouldReportOpenAIWSProxyAccountFailure(err error) bool {
-	return err != nil && !errors.Is(err, errOpenAIWSUnsupportedModelSwitch)
+	return !errors.Is(err, errOpenAIWSUnsupportedModelSwitch) && service.ShouldReportOpenAIWSAccountFailure(err)
 }
 
 func openAIWSTurnBillingModel(result *service.OpenAIForwardResult, mapping service.ChannelMappingResult, requestedModel, upstreamModel string) string {
@@ -662,6 +662,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						return
 					}
 					if !openAIForwardMayFailover(c, writerSizeBeforeForward, failoverErr) {
+						if failoverErr.ShouldReportAccountScheduleFailure() {
+							h.gatewayService.ReportOpenAIAccountSelectionResult(selection, account.GetMappedModel(reqModel), false, nil)
+						}
 						h.handleFailoverExhausted(c, failoverErr, true)
 						return
 					}
@@ -669,9 +672,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						streamStarted = true
 					}
 					if failoverErr.ShouldReportAccountScheduleFailure() {
-						h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(reqModel), false, nil)
+						h.gatewayService.ReportOpenAIAccountSelectionResult(selection, account.GetMappedModel(reqModel), false, nil)
 					}
-					if !failoverErr.ShouldRetryNextAccount() {
+					if !failoverBudget.ArmIfSwitchable(failoverErr, time.Now()) {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
@@ -708,7 +711,6 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						return
 					}
 					switchCount++
-					failoverBudget.Arm(time.Now())
 					if h.gatewayService.ShouldStopOpenAIOAuth429Failover(account, failoverErr.StatusCode, switchCount, &oauth429FailoverState) {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
@@ -732,7 +734,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					reqLog.Warn("openai.upstream_failover_switching", failoverSwitchFields...)
 					continue
 				}
-				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(reqModel), false, nil)
+				h.gatewayService.ReportOpenAIAccountSelectionResult(selection, account.GetMappedModel(reqModel), false, nil)
 				upstreamErrorAlreadyCommunicated := openAIForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err)
 				wroteFallback := false
 				if !upstreamErrorAlreadyCommunicated {
@@ -757,9 +759,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			if account.Type == service.AccountTypeOAuth && !account.IsShadow() {
 				h.gatewayService.UpdateCodexUsageSnapshotFromHeaders(c.Request.Context(), account.ID, result.ResponseHeaders)
 			}
-			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(reqModel), openAIForwardSucceededForScheduling(result), result.FirstTokenMs)
+			h.gatewayService.ReportOpenAIAccountSelectionResult(selection, account.GetMappedModel(reqModel), openAIForwardSucceededForScheduling(result), result.FirstTokenMs)
 		} else {
-			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(reqModel), openAIForwardSucceededForScheduling(result), nil)
+			h.gatewayService.ReportOpenAIAccountSelectionResult(selection, account.GetMappedModel(reqModel), openAIForwardSucceededForScheduling(result), nil)
 		}
 		recordOpenAIPromptCacheOutcome(reqLog, account, result)
 
@@ -1238,13 +1240,16 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 						return
 					}
 					if c.Writer.Size() != writerSizeBeforeForward {
+						if failoverErr.ShouldReportAccountScheduleFailure() {
+							h.gatewayService.ReportOpenAIAccountSelectionResult(selection, account.GetMappedModel(currentRoutingModel), false, nil)
+						}
 						h.handleAnthropicFailoverExhausted(c, failoverErr, true)
 						return
 					}
 					if failoverErr.ShouldReportAccountScheduleFailure() {
-						h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(currentRoutingModel), false, nil)
+						h.gatewayService.ReportOpenAIAccountSelectionResult(selection, account.GetMappedModel(currentRoutingModel), false, nil)
 					}
-					if !failoverErr.ShouldRetryNextAccount() {
+					if !failoverBudget.ArmIfSwitchable(failoverErr, time.Now()) {
 						h.handleAnthropicFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
@@ -1277,7 +1282,6 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 						return
 					}
 					switchCount++
-					failoverBudget.Arm(time.Now())
 					if h.gatewayService.ShouldStopOpenAIOAuth429Failover(account, failoverErr.StatusCode, switchCount, &oauth429FailoverState) {
 						h.handleAnthropicFailoverExhausted(c, failoverErr, streamStarted)
 						return
@@ -1297,7 +1301,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					)
 					return
 				}
-				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(currentRoutingModel), false, nil)
+				h.gatewayService.ReportOpenAIAccountSelectionResult(selection, account.GetMappedModel(currentRoutingModel), false, nil)
 				wroteFallback := h.ensureAnthropicErrorResponse(c, streamStarted)
 				reqLog.Warn("openai_messages.forward_failed",
 					zap.Int64("account_id", account.ID),
@@ -1308,9 +1312,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			}
 		}
 		if result != nil {
-			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(currentRoutingModel), true, result.FirstTokenMs)
+			h.gatewayService.ReportOpenAIAccountSelectionResult(selection, account.GetMappedModel(currentRoutingModel), true, result.FirstTokenMs)
 		} else {
-			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(currentRoutingModel), true, nil)
+			h.gatewayService.ReportOpenAIAccountSelectionResult(selection, account.GetMappedModel(currentRoutingModel), true, nil)
 		}
 
 		userAgent := c.GetHeader("User-Agent")
@@ -1496,12 +1500,9 @@ const (
 // 由 BeforeTurn 在每个 turn 开始时冻结，AfterTurn 的用量提交读取它；turn 在
 // 连接内串行推进，互斥锁只为跨用量提交 goroutine 的读取安全。
 //
-// 零值语义（重要）：ws_v2 passthrough ingress 只实现了 AfterTurn，没有任何
-// turn 起始回调，BeforeTurn 永远不会被调用。此时本值保持零，RecordUsage 经
-// openAIUsagePricingAt 回退到记录时刻——与引入分组利润控制前的基线一致。
-// 绝不能用建连时刻初始化：那会把透传连接的所有 turn 钉死在建连时的高峰因子，
-// 客户端只要峰前一分钟建连并保活，整条连接就能全程按谷价结算，正是利润控制
-// 想堵的漏洞。透传 ingress 目前不做 turn 级利润复核，只有建连时的准入门。
+// 零值只表示当前 turn 尚未通过 BeforeTurn，不能用建连时刻预先初始化：
+// 否则长连接会把所有 turn 钉死在建连时的价格因子。所有 ingress 模式，
+// 包括 ws_v2 passthrough，都必须在每轮调用 BeforeTurn 后再写上游。
 type openAIWSTurnPricing struct {
 	mu sync.Mutex
 	at time.Time
@@ -1844,19 +1845,44 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	// 解析渠道级模型映射
 	channelMappingWS, _ := h.gatewayService.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, reqModel)
 
+	var turnResourceMu sync.Mutex
 	var currentUserRelease func()
 	var currentAccountRelease func()
 	releaseAccountSlot := func() {
-		if currentAccountRelease != nil {
-			currentAccountRelease()
-			currentAccountRelease = nil
+		turnResourceMu.Lock()
+		release := currentAccountRelease
+		currentAccountRelease = nil
+		turnResourceMu.Unlock()
+		if release != nil {
+			release()
 		}
 	}
 	releaseTurnSlots := func() {
-		releaseAccountSlot()
-		if currentUserRelease != nil {
-			currentUserRelease()
-			currentUserRelease = nil
+		turnResourceMu.Lock()
+		accountRelease := currentAccountRelease
+		userRelease := currentUserRelease
+		currentAccountRelease = nil
+		currentUserRelease = nil
+		turnResourceMu.Unlock()
+		if accountRelease != nil {
+			accountRelease()
+		}
+		if userRelease != nil {
+			userRelease()
+		}
+	}
+	setTurnReleases := func(userRelease, accountRelease func()) {
+		turnResourceMu.Lock()
+		previousUserRelease := currentUserRelease
+		previousAccountRelease := currentAccountRelease
+		currentUserRelease = userRelease
+		currentAccountRelease = accountRelease
+		turnResourceMu.Unlock()
+		if previousAccountRelease != nil {
+			previousAccountRelease()
+		}
+		if previousUserRelease != nil {
+			previousUserRelease()
 		}
 	}
 	// 必须尽早注册，确保任何 early return 都能释放已获取的并发槽位。
@@ -1872,9 +1898,12 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "too many concurrent requests, please retry later")
 		return
 	}
-	currentUserRelease = wrapReleaseOnDone(ctx, userReleaseFunc)
+	setTurnReleases(wrapReleaseOnDone(ctx, userReleaseFunc), nil)
 	ensureUserSlotHeld := func() bool {
-		if currentUserRelease != nil {
+		turnResourceMu.Lock()
+		userSlotHeld := currentUserRelease != nil
+		turnResourceMu.Unlock()
+		if userSlotHeld {
 			return true
 		}
 		userReleaseFunc, userAcquired, err := h.concurrencyHelper.TryAcquireUserSlotForAPIKey(ctx, subject.UserID, subject.Concurrency, apiKey.ID)
@@ -1887,7 +1916,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "too many concurrent requests, please retry later")
 			return false
 		}
-		currentUserRelease = wrapReleaseOnDone(ctx, userReleaseFunc)
+		setTurnReleases(wrapReleaseOnDone(ctx, userReleaseFunc), nil)
 		return true
 	}
 
@@ -1915,15 +1944,15 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	var lastFailoverErr *service.UpstreamFailoverError
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
 	failoverBudget := h.newOpenAIFailoverBudget()
-	handleWSFailover := func(account *service.Account, failoverErr *service.UpstreamFailoverError) bool {
+	handleWSFailover := func(selection *service.AccountSelectionResult, account *service.Account, failoverErr *service.UpstreamFailoverError) bool {
 		if ctx.Err() != nil {
 			return false
 		}
 		if failoverErr.ShouldReportAccountScheduleFailure() {
-			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(reqModel), false, nil)
+			h.gatewayService.ReportOpenAIAccountSelectionResult(selection, account.GetMappedModel(reqModel), false, nil)
 		}
 		releaseAccountSlot()
-		if !failoverErr.ShouldRetryNextAccount() {
+		if !failoverBudget.ArmIfSwitchable(failoverErr, time.Now()) {
 			closeOpenAIWSFailoverExhausted(wsConn, failoverErr)
 			return false
 		}
@@ -1938,7 +1967,6 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			return false
 		}
 		switchCount++
-		failoverBudget.Arm(time.Now())
 		if h.gatewayService.ShouldStopOpenAIOAuth429Failover(account, failoverErr.StatusCode, switchCount, &oauth429FailoverState) {
 			closeOpenAIWSFailoverExhausted(wsConn, failoverErr)
 			return false
@@ -2088,7 +2116,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		}
 		// 准入完成：门并入连接 ctx，turn 级复核与 failover 重选共用。
 		ctx = admissionCtx
+		turnResourceMu.Lock()
 		currentAccountRelease = wrapReleaseOnDone(ctx, accountReleaseFunc)
+		turnResourceMu.Unlock()
 		if err := h.gatewayService.BindStickySessionAfterProfitAdmission(ctx, apiKey.GroupID, sessionHash, account.ID); err != nil {
 			reqLog.Warn("openai.websocket_bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 		}
@@ -2101,7 +2131,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			}
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
-				if handleWSFailover(account, failoverErr) {
+				if handleWSFailover(selection, account, failoverErr) {
 					continue
 				}
 				return
@@ -2127,6 +2157,38 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		// AfterTurn 的计费读取所属 turn 的时刻。零值起步的语义见
 		// openAIWSTurnPricing 的注释——绝不能用建连时刻初始化。
 		var turnPricing openAIWSTurnPricing
+		var turnSelectionsMu sync.Mutex
+		turnSelections := map[int]*service.AccountSelectionResult{1: selection}
+		storeTurnSelection := func(turn int, turnSelection *service.AccountSelectionResult) {
+			turnSelectionsMu.Lock()
+			previous := turnSelections[turn]
+			turnSelections[turn] = turnSelection
+			turnSelectionsMu.Unlock()
+			if previous != nil && previous.ReleaseFunc != nil {
+				previous.ReleaseFunc()
+			}
+		}
+		takeTurnSelection := func(turn int) *service.AccountSelectionResult {
+			turnSelectionsMu.Lock()
+			turnSelection := turnSelections[turn]
+			delete(turnSelections, turn)
+			turnSelectionsMu.Unlock()
+			return turnSelection
+		}
+		releaseOutstandingTurnSelections := func() {
+			turnSelectionsMu.Lock()
+			outstanding := make([]*service.AccountSelectionResult, 0, len(turnSelections))
+			for turn, turnSelection := range turnSelections {
+				outstanding = append(outstanding, turnSelection)
+				delete(turnSelections, turn)
+			}
+			turnSelectionsMu.Unlock()
+			for _, turnSelection := range outstanding {
+				if turnSelection != nil && turnSelection.ReleaseFunc != nil {
+					turnSelection.ReleaseFunc()
+				}
+			}
+		}
 		hooks := &service.OpenAIWSIngressHooks{
 			ClientLifecycleContext:  clientLifecycleCtx,
 			InitialRequestModel:     reqModel,
@@ -2191,12 +2253,31 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 				// 防御式清理：避免异常路径下旧槽位覆盖导致泄漏。
 				releaseTurnSlots()
+				scheduleModel := reqModel
+				if snapshot := turnChannelMapping.Load(); snapshot != nil && snapshot.turn == turn {
+					if mappedModel := strings.TrimSpace(snapshot.mapping.MappedModel); mappedModel != "" {
+						scheduleModel = mappedModel
+					}
+				}
+				turnSelection, admitted := selection.AcquireTurn(scheduleModel)
+				if !admitted {
+					return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "account is temporarily throttled, please reconnect", nil)
+				}
+				storeTurnSelection(turn, turnSelection)
+				abandonTurnSelection := func() {
+					abandoned := takeTurnSelection(turn)
+					if abandoned != nil && abandoned.ReleaseFunc != nil {
+						abandoned.ReleaseFunc()
+					}
+				}
 				// 非首轮 turn 需要重新抢占并发槽位，避免长连接空闲占槽。
 				userReleaseFunc, userAcquired, err := h.concurrencyHelper.TryAcquireUserSlotForAPIKey(ctx, subject.UserID, subject.Concurrency, apiKey.ID)
 				if err != nil {
+					abandonTurnSelection()
 					return service.NewOpenAIWSClientCloseError(coderws.StatusInternalError, "failed to acquire user concurrency slot", err)
 				}
 				if !userAcquired {
+					abandonTurnSelection()
 					return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "too many concurrent requests, please retry later", nil)
 				}
 				accountReleaseFunc, accountAcquired, err := h.concurrencyHelper.TryAcquireAccountSlot(ctx, account.ID, accountMaxConcurrency)
@@ -2204,16 +2285,17 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					if userReleaseFunc != nil {
 						userReleaseFunc()
 					}
+					abandonTurnSelection()
 					return service.NewOpenAIWSClientCloseError(coderws.StatusInternalError, "failed to acquire account concurrency slot", err)
 				}
 				if !accountAcquired {
 					if userReleaseFunc != nil {
 						userReleaseFunc()
 					}
+					abandonTurnSelection()
 					return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "account is busy, please retry later", nil)
 				}
-				currentUserRelease = wrapReleaseOnDone(ctx, userReleaseFunc)
-				currentAccountRelease = wrapReleaseOnDone(ctx, accountReleaseFunc)
+				setTurnReleases(wrapReleaseOnDone(ctx, userReleaseFunc), wrapReleaseOnDone(ctx, accountReleaseFunc))
 				return nil
 			},
 			AfterTurn: func(turn int, result *service.OpenAIForwardResult, turnErr error) {
@@ -2221,6 +2303,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				// CyberBlocked 必须在 submit 前同步预捕获（task 闭包由 worker 池异步执行，
 				// 届时 defer 已清除标记）。
 				defer clearCyberPolicyTurnState(c)
+				turnSelection := takeTurnSelection(turn)
+				if turnSelection != nil && turnSelection.ReleaseFunc != nil {
+					defer turnSelection.ReleaseFunc()
+				}
 				releaseTurnSlots()
 				turnRequestedModel := reqModel
 				turnUpstreamModel := ""
@@ -2247,6 +2333,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					cyberBlockedThisConn = true
 				}
 				if turnErr != nil {
+					if shouldReportOpenAIWSProxyAccountFailure(turnErr) {
+						h.gatewayService.ReportOpenAIAccountSelectionResult(turnSelection, turnUpstreamModel, false, nil)
+					}
 					if result == nil || result.ImageCount <= 0 {
 						return
 					}
@@ -2279,7 +2368,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if scheduleModel == "" {
 					scheduleModel = turnRequestedModel
 				}
-				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, scheduleModel, openAIForwardSucceededForScheduling(result), result.FirstTokenMs)
+				if turnErr == nil {
+					h.gatewayService.ReportOpenAIAccountSelectionResult(turnSelection, scheduleModel, openAIForwardSucceededForScheduling(result), result.FirstTokenMs)
+				}
 				inboundEndpoint := GetInboundEndpoint(c)
 				upstreamEndpoint := resolveOpenAIUpstreamEndpoint(c, account, result)
 				quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
@@ -2331,10 +2422,15 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		// WebSocket 首包可能很大，hash 必须在 hooks 外算成字符串，避免 AfterTurn 闭包保活请求体。
 		requestPayloadHash = service.HashUsageRequestPayload(wsFirstMessage)
 
-		if err := h.gatewayService.ProxyResponsesWebSocketFromClient(ctx, c, wsConn, account, token, wsFirstMessage, hooks); err != nil {
+		proxyErr := func() error {
+			defer releaseOutstandingTurnSelections()
+			return h.gatewayService.ProxyResponsesWebSocketFromClient(ctx, c, wsConn, account, token, wsFirstMessage, hooks)
+		}()
+		if proxyErr != nil {
+			err := proxyErr
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
-				if handleWSFailover(account, failoverErr) {
+				if handleWSFailover(selection, account, failoverErr) {
 					continue
 				}
 				return
@@ -2360,7 +2456,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			}
 
 			if shouldReportOpenAIWSProxyAccountFailure(err) {
-				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(reqModel), false, nil)
+				h.gatewayService.ReportOpenAIAccountSelectionResult(selection, account.GetMappedModel(reqModel), false, nil)
 			}
 			closeStatus, closeReason := summarizeWSCloseErrorForLog(err)
 			proxyFailedFields := []zap.Field{

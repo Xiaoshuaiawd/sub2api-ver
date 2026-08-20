@@ -56,6 +56,21 @@ func TestOpenAIWSConnPool_NextConnIDFormat(t *testing.T) {
 	require.Equal(t, "oa_ws_42_2", id2)
 }
 
+func TestOpenAIWSConnPoolHeaderFactoryFailureIsAccountOwned(t *testing.T) {
+	pool := newOpenAIWSConnPool(&config.Config{})
+	pool.clientDialer = &openAIWSFakeDialer{}
+
+	_, err := pool.dialConn(context.Background(), openAIWSAcquireRequest{
+		Account: &Account{ID: 42},
+		HeadersFactory: func(context.Context, http.Header) (http.Header, error) {
+			return nil, errors.New("agent identity signing failed")
+		},
+	})
+
+	require.Error(t, err)
+	require.True(t, ShouldReportOpenAIWSAccountFailure(err))
+}
+
 func TestOpenAIWSConnPool_AcquireCleanupInterval(t *testing.T) {
 	require.Equal(t, 3*time.Second, openAIWSAcquireCleanupInterval)
 	require.Less(t, openAIWSAcquireCleanupInterval, openAIWSBackgroundSweepTicker)

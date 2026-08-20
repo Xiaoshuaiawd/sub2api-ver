@@ -77,6 +77,14 @@ func (b *openAIFailoverBudget) Arm(now time.Time) {
 	b.deadline = now.Add(b.duration)
 }
 
+func (b *openAIFailoverBudget) ArmIfSwitchable(failoverErr *service.UpstreamFailoverError, now time.Time) bool {
+	if failoverErr == nil || !failoverErr.ShouldRetryNextAccount() {
+		return false
+	}
+	b.Arm(now)
+	return true
+}
+
 func (b *openAIFailoverBudget) CanTry(accountID int64, now time.Time) bool {
 	if b == nil {
 		return true

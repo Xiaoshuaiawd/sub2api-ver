@@ -109,17 +109,25 @@ func (r *liveTestAccountRepo) GetByID(context.Context, int64) (*Account, error) 
 
 type liveTestStore struct {
 	GatewayCache
-	mu     sync.Mutex
-	record *LiveCallRecord
+	mu      sync.Mutex
+	record  *LiveCallRecord
+	saveErr error
 	// 注入 store 故障（模拟 Redis 抖动），区别于 ErrLiveCallNotFound。
 	claimErr         error
 	getCallErr       error
 	getControllerErr error
 }
 
+func (s *liveTestStore) GetSessionAccountID(context.Context, int64, string) (int64, error) {
+	return 0, ErrStickySessionNotFound
+}
+
 func (s *liveTestStore) SaveLiveCall(_ context.Context, record *LiveCallRecord, _ time.Duration) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.saveErr != nil {
+		return s.saveErr
+	}
 	copy := *record
 	s.record = &copy
 	return nil

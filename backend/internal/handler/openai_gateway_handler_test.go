@@ -1604,17 +1604,25 @@ func TestShouldReportOpenAIWSProxyAccountFailure(t *testing.T) {
 		require.Equal(t, "model switch requires reconnect", closeErr.Reason())
 	})
 
-	t.Run("upstream policy violation still penalizes account", func(t *testing.T) {
+	t.Run("client close errors do not penalize account", func(t *testing.T) {
 		err := service.NewOpenAIWSClientCloseError(
 			coderws.StatusPolicyViolation,
-			"upstream websocket authentication failed",
-			errors.New("upstream rejected credentials"),
+			"request rejected by local policy",
+			errors.New("local policy denied"),
 		)
-		require.True(t, shouldReportOpenAIWSProxyAccountFailure(err))
+		require.False(t, shouldReportOpenAIWSProxyAccountFailure(err))
 	})
 
-	t.Run("generic proxy failure still penalizes account", func(t *testing.T) {
-		require.True(t, shouldReportOpenAIWSProxyAccountFailure(errors.New("upstream websocket read failed")))
+	t.Run("client cancellation does not penalize account", func(t *testing.T) {
+		require.False(t, shouldReportOpenAIWSProxyAccountFailure(context.Canceled))
+	})
+
+	t.Run("unowned generic proxy errors do not penalize account", func(t *testing.T) {
+		require.False(t, shouldReportOpenAIWSProxyAccountFailure(errors.New("websocket proxy stopped")))
+	})
+
+	t.Run("classified upstream failure penalizes account", func(t *testing.T) {
+		require.True(t, shouldReportOpenAIWSProxyAccountFailure(&service.UpstreamFailoverError{StatusCode: http.StatusBadGateway}))
 	})
 }
 
