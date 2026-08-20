@@ -18,8 +18,30 @@ func resolveCredentialAccount(ctx context.Context, repo AccountRepository, accou
 	if err != nil {
 		return nil, fmt.Errorf("resolve spark shadow parent %d: %w", *account.ParentAccountID, err)
 	}
+	return validateCredentialShadowParent(*account.ParentAccountID, parent)
+}
+
+func (s *OpenAIGatewayService) resolveOpenAICredentialAccount(ctx context.Context, account *Account) (*Account, error) {
+	if account == nil || !account.IsShadow() {
+		return account, nil
+	}
+	adaptive := s.openAIAdaptiveConfig()
+	if !adaptive.enabled || adaptive.shadowMode || account.Platform != PlatformOpenAI {
+		return resolveCredentialAccount(ctx, s.accountRepo, account)
+	}
+	if s.schedulerSnapshot == nil {
+		return nil, ErrSchedulerCacheNotReady
+	}
+	parent, err := s.schedulerSnapshot.GetCachedAccount(ctx, *account.ParentAccountID)
+	if err != nil {
+		return nil, err
+	}
+	return validateCredentialShadowParent(*account.ParentAccountID, parent)
+}
+
+func validateCredentialShadowParent(parentID int64, parent *Account) (*Account, error) {
 	if parent == nil {
-		return nil, fmt.Errorf("spark shadow parent %d not found", *account.ParentAccountID)
+		return nil, fmt.Errorf("spark shadow parent %d not found", parentID)
 	}
 	// 防御:创建路径已禁二级影子(G6),此处再挡一层——畸形数据/手工 DB 写出的影子→影子链
 	// 会让凭据解析停在无凭据的一级影子(只解一层),fail-closed 比静默返回坏母更安全(外审第6轮)。

@@ -481,9 +481,18 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 		}
 	}
 
-	account, err := s.getSchedulableAccount(ctx, accountID)
+	adaptive := s.openAIAdaptiveConfig()
+	adaptiveEnabled := adaptive.enabled && !adaptive.shadowMode
+	var account *Account
+	if adaptiveEnabled {
+		account, err = s.getCachedSchedulableAccount(ctx, accountID)
+	} else {
+		account, err = s.getSchedulableAccount(ctx, accountID)
+	}
 	if err != nil || account == nil {
-		_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
+		if !adaptiveEnabled {
+			_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
+		}
 		return 0, nil, "", nil
 	}
 	// 非 WSv2 场景（如 force_http/全局关闭）不应使用 previous_response_id 粘连，
@@ -495,7 +504,11 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 		_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
 		return 0, nil, "", nil
 	}
-	if !parentHealthyForShadow(account, s.parentAccountLookup(ctx)) {
+	parentLookup := s.parentAccountLookup(ctx)
+	if adaptiveEnabled {
+		parentLookup = s.cachedParentAccountLookup(ctx)
+	}
+	if !parentHealthyForShadow(account, parentLookup) {
 		_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
 		return 0, nil, "", nil
 	}
@@ -518,7 +531,7 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 	if vetoed, _ := openAIProfitControlVetoReason(ctx, account); vetoed {
 		return 0, nil, "", nil
 	}
-	if s.schedulerSnapshot != nil && s.accountRepo != nil {
+	if !adaptiveEnabled && s.schedulerSnapshot != nil && s.accountRepo != nil {
 		latest, latestErr := s.accountRepo.GetByID(ctx, account.ID)
 		if latestErr != nil || latest == nil {
 			_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)

@@ -7,6 +7,7 @@ import (
 	"math"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,7 +18,10 @@ import (
 type openAISnapshotCacheStub struct {
 	SchedulerCache
 	snapshotAccounts []*Account
+	borrowedAccounts []Account
 	accountsByID     map[int64]*Account
+	snapshotCalls    *atomic.Int64
+	accountCalls     *atomic.Int64
 }
 
 type schedulerTestOpenAIAccountRepo struct {
@@ -286,6 +290,9 @@ func newOpenAIAdvancedSchedulerRateLimitService(enabled string, values ...string
 }
 
 func (s *openAISnapshotCacheStub) GetSnapshot(ctx context.Context, bucket SchedulerBucket) ([]*Account, bool, error) {
+	if s.snapshotCalls != nil {
+		s.snapshotCalls.Add(1)
+	}
 	if len(s.snapshotAccounts) == 0 {
 		return nil, false, nil
 	}
@@ -300,7 +307,37 @@ func (s *openAISnapshotCacheStub) GetSnapshot(ctx context.Context, bucket Schedu
 	return out, true, nil
 }
 
+func (s *openAISnapshotCacheStub) GetSnapshotBorrowed(ctx context.Context, bucket SchedulerBucket) ([]Account, bool, error) {
+	if s.snapshotCalls != nil {
+		s.snapshotCalls.Add(1)
+	}
+	if len(s.borrowedAccounts) > 0 {
+		return s.borrowedAccounts, true, nil
+	}
+	if len(s.snapshotAccounts) == 0 {
+		return nil, false, nil
+	}
+	out := make([]Account, 0, len(s.snapshotAccounts))
+	for _, account := range s.snapshotAccounts {
+		if account != nil {
+			out = append(out, *account)
+		}
+	}
+	return out, true, nil
+}
+
+func (s *openAISnapshotCacheStub) CaptureBucketWriteToken(context.Context, SchedulerBucket) (SchedulerBucketWriteToken, error) {
+	return SchedulerBucketWriteToken{}, nil
+}
+
+func (s *openAISnapshotCacheStub) SetSnapshot(context.Context, SchedulerBucket, SchedulerBucketWriteToken, []Account) error {
+	return nil
+}
+
 func (s *openAISnapshotCacheStub) GetAccount(ctx context.Context, accountID int64) (*Account, error) {
+	if s.accountCalls != nil {
+		s.accountCalls.Add(1)
+	}
 	if s.accountsByID == nil {
 		return nil, nil
 	}
@@ -2685,6 +2722,30 @@ func TestReportOpenAIAccountScheduleResult_SuccessClearsModelTransientState(t *t
 	require.False(t, svc.openaiModelTransient.isBlocked(21636, "gpt-5.5", now.Add(2*time.Millisecond)))
 }
 
+func TestOpenAIAccountRuntimeStatsRemainBounded(t *testing.T) {
+	stats := newOpenAIAccountRuntimeStats()
+	for accountID := int64(1); accountID <= 9000; accountID++ {
+		stats.report(accountID, true, nil)
+	}
+
+	require.LessOrEqual(t, stats.size(), 8192, "shadow feedback must not grow account runtime stats without a bound")
+}
+
+func TestOpenAIAccountRuntimeStatsPruneExpiredEntries(t *testing.T) {
+	stats := newOpenAIAccountRuntimeStats()
+	stats.report(1, true, nil)
+
+	stats.mu.Lock()
+	stats.accounts[1].lastTouchedAt.Store(time.Now().Add(-openAIAccountRuntimeStatsTTL - time.Minute).UnixNano())
+	stats.lastPruneAt = time.Now().Add(-openAIAccountRuntimeStatsPruneInterval)
+	stats.mu.Unlock()
+	stats.report(2, true, nil)
+
+	require.Equal(t, 1, stats.size())
+	_, _, found := stats.snapshot(1)
+	require.False(t, found)
+}
+
 func TestDefaultOpenAIAccountScheduler_ShouldEscapeStickyAccount_ThresholdBoundary(t *testing.T) {
 	stats := newOpenAIAccountRuntimeStats()
 	accountID := int64(21501)
@@ -3446,7 +3507,7 @@ func TestDefaultOpenAIAccountScheduler_ReportSwitchAndSnapshot(t *testing.T) {
 	require.True(t, ok)
 
 	ttft := 100
-	scheduler.ReportResult(1001, true, &ttft)
+	scheduler.ReportResult(1001, "gpt-5.1", true, &ttft)
 	scheduler.ReportSwitch()
 	scheduler.metrics.recordSelect(OpenAIAccountScheduleDecision{
 		Layer:             openAIAccountScheduleLayerLoadBalance,
@@ -3683,4 +3744,20 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SubscriptionPriorityWai
 	require.NotNil(t, selection.WaitPlan)
 	require.Equal(t, int64(38011), selection.WaitPlan.AccountID)
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+}
+
+func TestReportOpenAIAccountSelectionResultReportsOnlyOnce(t *testing.T) {
+	reported := 0
+	selection := &AccountSelectionResult{
+		Account: &Account{ID: 123},
+		reportResult: func(_ string, _ bool, _ *int) {
+			reported++
+		},
+	}
+	svc := &OpenAIGatewayService{}
+
+	svc.ReportOpenAIAccountSelectionResult(selection, "gpt-5.1", false, nil)
+	svc.ReportOpenAIAccountSelectionResult(selection, "gpt-5.1", false, nil)
+
+	require.Equal(t, 1, reported)
 }

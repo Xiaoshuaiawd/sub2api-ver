@@ -1313,6 +1313,37 @@ func (w GatewayOpenAIWSSchedulerScoreWeights) IsValid() bool {
 
 // GatewayOpenAISchedulerConfig OpenAI 高级调度器配置。
 type GatewayOpenAISchedulerConfig struct {
+	// AdaptiveEnabled enables the local adaptive scheduler. Disabled keeps the legacy Redis load-aware path.
+	AdaptiveEnabled bool `mapstructure:"adaptive_enabled"`
+	// ShadowMode records adaptive health feedback without changing account selection.
+	// It does not compute or compare an alternative adaptive account choice.
+	ShadowMode bool `mapstructure:"shadow_mode"`
+	// InitialWindow, MinWindow, and MaxWindow bound the learned per-account concurrency window.
+	InitialWindow int `mapstructure:"initial_window"`
+	MinWindow     int `mapstructure:"min_window"`
+	MaxWindow     int `mapstructure:"max_window"`
+	// IncreaseIntervalMS is the minimum time between additive window increases.
+	IncreaseIntervalMS int `mapstructure:"increase_interval_ms"`
+	// No429IncreaseWindowSeconds requires this quiet period before increasing a reduced window.
+	No429IncreaseWindowSeconds int `mapstructure:"no_429_increase_window_seconds"`
+	// SampleSize and SampleRounds bound candidate inspection per scheduling attempt.
+	SampleSize   int `mapstructure:"sample_size"`
+	SampleRounds int `mapstructure:"sample_rounds"`
+	// StickyEscapeUtilization makes sticky affinity a soft preference above this utilization.
+	StickyEscapeUtilization float64 `mapstructure:"sticky_escape_utilization"`
+	// SchedulingWaitTimeoutMS is the absolute scheduler wait budget.
+	SchedulingWaitTimeoutMS int `mapstructure:"scheduling_wait_timeout_ms"`
+	// FailoverTotalBudgetMS bounds scheduling after the first switchable upstream error.
+	FailoverTotalBudgetMS int `mapstructure:"failover_total_budget_ms"`
+	// MaxDistinctAccountAttempts includes the initially selected account.
+	MaxDistinctAccountAttempts int `mapstructure:"max_distinct_account_attempts"`
+	// Storm settings define the route-level rolling 429 detector.
+	StormWindowSeconds int     `mapstructure:"storm_window_seconds"`
+	StormMinAttempts   int     `mapstructure:"storm_min_attempts"`
+	Storm429Ratio      float64 `mapstructure:"storm_429_ratio"`
+	StormRecoveryRatio float64 `mapstructure:"storm_recovery_ratio"`
+	// MaxWaiters bounds memory used by scheduler waiters without imposing an ingress RPS limit.
+	MaxWaiters int `mapstructure:"max_waiters"`
 	// StickyEscapeEnabled: 是否允许 session_hash sticky 在账号健康度劣化时临时逃逸
 	StickyEscapeEnabled bool `mapstructure:"sticky_escape_enabled"`
 	// StickyEscapeTTFTMs: TTFT EWMA 超过该阈值时跳过 sticky
@@ -2109,8 +2140,8 @@ func setDefaults() {
 	viper.SetDefault("database.password", "postgres")
 	viper.SetDefault("database.dbname", "sub2api")
 	viper.SetDefault("database.sslmode", "prefer")
-	viper.SetDefault("database.max_open_conns", 256)
-	viper.SetDefault("database.max_idle_conns", 128)
+	viper.SetDefault("database.max_open_conns", 64)
+	viper.SetDefault("database.max_idle_conns", 24)
 	viper.SetDefault("database.conn_max_lifetime_minutes", 30)
 	viper.SetDefault("database.conn_max_idle_time_minutes", 5)
 	viper.SetDefault("database.user_platform_quota_flusher_enabled", false)
@@ -2126,8 +2157,8 @@ func setDefaults() {
 	viper.SetDefault("redis.dial_timeout_seconds", 5)
 	viper.SetDefault("redis.read_timeout_seconds", 3)
 	viper.SetDefault("redis.write_timeout_seconds", 3)
-	viper.SetDefault("redis.pool_size", 1024)
-	viper.SetDefault("redis.min_idle_conns", 128)
+	viper.SetDefault("redis.pool_size", 512)
+	viper.SetDefault("redis.min_idle_conns", 64)
 	viper.SetDefault("redis.enable_tls", false)
 
 	// Batch Image queue
@@ -2543,6 +2574,24 @@ func setEnvReachableDefaults() {
 	viper.SetDefault("gateway.openai_scheduler.sticky_escape_enabled", true)
 	viper.SetDefault("gateway.openai_scheduler.sticky_escape_error_rate", 0.0)
 	viper.SetDefault("gateway.openai_scheduler.sticky_escape_ttft_ms", 0)
+	viper.SetDefault("gateway.openai_scheduler.adaptive_enabled", false)
+	viper.SetDefault("gateway.openai_scheduler.shadow_mode", true)
+	viper.SetDefault("gateway.openai_scheduler.initial_window", 2)
+	viper.SetDefault("gateway.openai_scheduler.min_window", 1)
+	viper.SetDefault("gateway.openai_scheduler.max_window", 32)
+	viper.SetDefault("gateway.openai_scheduler.increase_interval_ms", 2000)
+	viper.SetDefault("gateway.openai_scheduler.no_429_increase_window_seconds", 30)
+	viper.SetDefault("gateway.openai_scheduler.sample_size", 4)
+	viper.SetDefault("gateway.openai_scheduler.sample_rounds", 2)
+	viper.SetDefault("gateway.openai_scheduler.sticky_escape_utilization", 0.8)
+	viper.SetDefault("gateway.openai_scheduler.scheduling_wait_timeout_ms", 1000)
+	viper.SetDefault("gateway.openai_scheduler.failover_total_budget_ms", 800)
+	viper.SetDefault("gateway.openai_scheduler.max_distinct_account_attempts", 2)
+	viper.SetDefault("gateway.openai_scheduler.storm_window_seconds", 5)
+	viper.SetDefault("gateway.openai_scheduler.storm_min_attempts", 20)
+	viper.SetDefault("gateway.openai_scheduler.storm_429_ratio", 0.20)
+	viper.SetDefault("gateway.openai_scheduler.storm_recovery_ratio", 0.05)
+	viper.SetDefault("gateway.openai_scheduler.max_waiters", 1000)
 
 	// server.trusted_proxies and security.forwarded_client_ip_headers are the
 	// other exception: load() distinguishes explicit configuration from absence
@@ -3497,6 +3546,55 @@ func (c *Config) Validate() error {
 	}
 	if c.Gateway.OpenAIScheduler.StickyEscapeErrorRate < 0 || c.Gateway.OpenAIScheduler.StickyEscapeErrorRate > 1 {
 		return fmt.Errorf("gateway.openai_scheduler.sticky_escape_error_rate must be between 0 and 1")
+	}
+	adaptive := c.Gateway.OpenAIScheduler
+	if adaptive.MinWindow <= 0 {
+		return fmt.Errorf("gateway.openai_scheduler.min_window must be positive")
+	}
+	if adaptive.InitialWindow < adaptive.MinWindow {
+		return fmt.Errorf("gateway.openai_scheduler.initial_window must be at least min_window")
+	}
+	if adaptive.MaxWindow < adaptive.InitialWindow {
+		return fmt.Errorf("gateway.openai_scheduler.max_window must be at least initial_window")
+	}
+	if adaptive.IncreaseIntervalMS <= 0 {
+		return fmt.Errorf("gateway.openai_scheduler.increase_interval_ms must be positive")
+	}
+	if adaptive.No429IncreaseWindowSeconds <= 0 {
+		return fmt.Errorf("gateway.openai_scheduler.no_429_increase_window_seconds must be positive")
+	}
+	if adaptive.SampleSize <= 0 {
+		return fmt.Errorf("gateway.openai_scheduler.sample_size must be positive")
+	}
+	if adaptive.SampleRounds <= 0 {
+		return fmt.Errorf("gateway.openai_scheduler.sample_rounds must be positive")
+	}
+	if adaptive.StickyEscapeUtilization <= 0 || adaptive.StickyEscapeUtilization > 1 || math.IsNaN(adaptive.StickyEscapeUtilization) {
+		return fmt.Errorf("gateway.openai_scheduler.sticky_escape_utilization must be between 0 and 1")
+	}
+	if adaptive.SchedulingWaitTimeoutMS <= 0 {
+		return fmt.Errorf("gateway.openai_scheduler.scheduling_wait_timeout_ms must be positive")
+	}
+	if adaptive.FailoverTotalBudgetMS <= 0 || adaptive.FailoverTotalBudgetMS > adaptive.SchedulingWaitTimeoutMS {
+		return fmt.Errorf("gateway.openai_scheduler.failover_total_budget_ms must be positive and no greater than scheduling_wait_timeout_ms")
+	}
+	if adaptive.MaxDistinctAccountAttempts != 2 {
+		return fmt.Errorf("gateway.openai_scheduler.max_distinct_account_attempts must be exactly 2")
+	}
+	if adaptive.StormWindowSeconds <= 0 {
+		return fmt.Errorf("gateway.openai_scheduler.storm_window_seconds must be positive")
+	}
+	if adaptive.StormMinAttempts <= 0 {
+		return fmt.Errorf("gateway.openai_scheduler.storm_min_attempts must be positive")
+	}
+	if adaptive.Storm429Ratio <= 0 || adaptive.Storm429Ratio > 1 || math.IsNaN(adaptive.Storm429Ratio) {
+		return fmt.Errorf("gateway.openai_scheduler.storm_429_ratio must be between 0 and 1")
+	}
+	if adaptive.StormRecoveryRatio < 0 || adaptive.StormRecoveryRatio >= adaptive.Storm429Ratio || math.IsNaN(adaptive.StormRecoveryRatio) {
+		return fmt.Errorf("gateway.openai_scheduler.storm_recovery_ratio must be non-negative and below storm_429_ratio")
+	}
+	if adaptive.MaxWaiters <= 0 {
+		return fmt.Errorf("gateway.openai_scheduler.max_waiters must be positive")
 	}
 	if c.Gateway.MaxLineSize < 0 {
 		return fmt.Errorf("gateway.max_line_size must be non-negative")

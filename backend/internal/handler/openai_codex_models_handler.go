@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -39,9 +40,12 @@ func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
 	failedAccountIDs := make(map[int64]struct{})
 	switchCount := 0
 	var lastUpstreamErr error
+	failoverBudget := h.newOpenAIFailoverBudget()
 
 	for {
-		account, err := h.gatewayService.SelectAccountForModelWithExclusions(c.Request.Context(), apiKey.GroupID, "", "", failedAccountIDs)
+		selectionCtx, selectionCancel := failoverBudget.SelectionContext(c.Request.Context())
+		selection, err := h.gatewayService.SelectCodexModelsAccountWithExclusions(selectionCtx, apiKey.GroupID, failedAccountIDs)
+		selectionCancel()
 		if err != nil {
 			if c.Request.Context().Err() != nil {
 				return
@@ -53,15 +57,29 @@ func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
 			h.errorResponse(c, http.StatusServiceUnavailable, "upstream_error", "No available OpenAI accounts")
 			return
 		}
+		if !failoverBudget.AcceptSelection(selection, time.Now()) {
+			if lastUpstreamErr != nil {
+				h.errorResponse(c, infraerrors.Code(lastUpstreamErr), "upstream_error", infraerrors.Message(lastUpstreamErr))
+				return
+			}
+			h.errorResponse(c, http.StatusServiceUnavailable, "upstream_error", "No available OpenAI accounts")
+			return
+		}
+		account := selection.Account
 		// 让 ops 错误日志携带实际选中的上游账号，便于定位失效账号（#4544）。
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
 		manifest, err := h.gatewayService.FetchCodexModelsManifest(c.Request.Context(), account, c.Query("client_version"), c.GetHeader("If-None-Match"))
+		if selection.ReleaseFunc != nil {
+			selection.ReleaseFunc()
+		}
+		h.gatewayService.ReportOpenAIAccountSelectionResult(selection, "", err == nil, nil)
 		if err != nil {
 			if c.Request.Context().Err() != nil {
 				return
 			}
 			if service.IsRetryableCodexModelsManifestError(err) && switchCount < maxAccountSwitches {
+				failoverBudget.Arm(time.Now())
 				failedAccountIDs[account.ID] = struct{}{}
 				switchCount++
 				lastUpstreamErr = err

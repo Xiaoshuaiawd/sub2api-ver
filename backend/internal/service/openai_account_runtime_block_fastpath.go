@@ -10,12 +10,13 @@ import (
 )
 
 const (
-	openAIAccountStateUpdateTimeout       = 5 * time.Second
-	openAIOAuth429FallbackCooldown        = 5 * time.Second
-	openAIStopSchedulingBridgeCooldown    = 2 * time.Minute
-	openAIOAuth429StormWindow             = 10 * time.Second
-	openAIOAuth429StormThreshold          = 20
-	openAIOAuth429StormMaxAccountSwitches = 1
+	openAIAccountStateUpdateTimeout         = 5 * time.Second
+	openAIAccountRuntimeBlockLockShardCount = 64
+	openAIOAuth429FallbackCooldown          = 5 * time.Second
+	openAIStopSchedulingBridgeCooldown      = 2 * time.Minute
+	openAIOAuth429StormWindow               = 10 * time.Second
+	openAIOAuth429StormThreshold            = 20
+	openAIOAuth429StormMaxAccountSwitches   = 1
 )
 
 // OpenAIOAuth429FailoverState tracks the request-local follow-up budget after
@@ -57,6 +58,9 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 	}
 	stateCtx, cancel := openAIAccountStateContext(ctx)
 	defer cancel()
+	if s != nil && account != nil {
+		s.reportOpenAIAdaptiveUpstreamAttempt(account, statusCode == http.StatusTooManyRequests, canonicalModel...)
+	}
 
 	if account != nil && account.Platform == PlatformOpenAI && isOpenAIContextWindowError("", responseBody) {
 		return false
@@ -84,7 +88,8 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 		return true
 	}
 	if statusCode == http.StatusTooManyRequests {
-		s.markOpenAIOAuth429RateLimited(stateCtx, account, headers, responseBody)
+		s.reportOpenAIAdaptive429(stateCtx, account, headers, responseBody, canonicalModel...)
+		s.markOpenAIOAuth429RateLimited(stateCtx, account, headers, responseBody, canonicalModel...)
 	}
 	if s.rateLimitService == nil {
 		return false
@@ -130,7 +135,7 @@ func shouldCooldownOpenAITransientUpstreamError(statusCode int, responseBody []b
 	}
 }
 
-func (s *OpenAIGatewayService) markOpenAIOAuth429RateLimited(ctx context.Context, account *Account, headers http.Header, responseBody []byte) {
+func (s *OpenAIGatewayService) markOpenAIOAuth429RateLimited(ctx context.Context, account *Account, headers http.Header, responseBody []byte, canonicalModel ...string) {
 	if s == nil || !isOpenAIOAuthAccount(account) {
 		return
 	}
@@ -141,19 +146,61 @@ func (s *OpenAIGatewayService) markOpenAIOAuth429RateLimited(ctx context.Context
 	}
 	s.recordOpenAIOAuth429()
 
-	cooldownUntil := time.Now().Add(openAIOAuth429FallbackCooldown)
-	if s.rateLimitService != nil {
-		if resetAt := s.rateLimitService.calculateOpenAI429ResetTime(headers); resetAt != nil && resetAt.After(time.Now()) {
-			cooldownUntil = *resetAt
-		} else if resetUnix := parseOpenAIRateLimitResetTime(responseBody); resetUnix != nil {
-			if resetAt := time.Unix(*resetUnix, 0); resetAt.After(time.Now()) {
-				cooldownUntil = resetAt
-			}
-		} else if cooldown, ok := s.rateLimitService.get429FallbackCooldown(ctx, account); ok && cooldown > 0 {
-			cooldownUntil = time.Now().Add(cooldown)
+	now := time.Now()
+	cooldownUntil, _ := openAI429ResponseCooldownUntil(headers, responseBody, now)
+	s.BlockAccountScheduling(account, cooldownUntil, "429")
+}
+
+func (s *OpenAIGatewayService) reportOpenAIAdaptive429(ctx context.Context, account *Account, headers http.Header, responseBody []byte, canonicalModel ...string) {
+	if s == nil || account == nil || account.Platform != PlatformOpenAI || account.IsShadow() {
+		return
+	}
+	if scheduler, ok := s.getOpenAIAccountSchedulerForFeedback(ctx).(*defaultOpenAIAccountScheduler); ok && scheduler.adaptive != nil {
+		now := time.Now()
+		cooldownUntil, _ := openAI429ResponseCooldownUntil(headers, responseBody, now)
+		scheduler.adaptive.report429(account.ID, account.Concurrency, now, cooldownUntil)
+	}
+}
+
+func (s *OpenAIGatewayService) reportOpenAIAdaptiveUpstreamAttempt(account *Account, limited bool, canonicalModel ...string) {
+	if s == nil || account == nil || account.Platform != PlatformOpenAI || account.IsShadow() {
+		return
+	}
+	if scheduler, ok := s.getOpenAIAccountSchedulerForFeedback(context.Background()).(*defaultOpenAIAccountScheduler); ok && scheduler.adaptive != nil {
+		model := ""
+		if len(canonicalModel) > 0 {
+			model = canonicalModel[0]
+		}
+		scheduler.adaptive.reportRouteAttempt(openAIAdaptiveResultRouteKey(account.Platform, model), limited, time.Now())
+	}
+}
+
+func openAI429ResponseCooldownUntil(headers http.Header, responseBody []byte, now time.Time) (time.Time, bool) {
+	if resetAt := parseRetryAfterResetTime(headers, now); resetAt != nil && resetAt.After(now) {
+		return *resetAt, true
+	}
+	if resetAt := calculateOpenAI429ResetTime(headers); resetAt != nil && resetAt.After(now) {
+		return *resetAt, true
+	}
+	if resetUnix := parseOpenAIRateLimitResetTime(responseBody); resetUnix != nil {
+		if resetAt := time.Unix(*resetUnix, 0); resetAt.After(now) {
+			return resetAt, true
 		}
 	}
-	s.BlockAccountScheduling(account, cooldownUntil, "429")
+	return now.Add(openAIOAuth429FallbackCooldown), false
+}
+
+func (s *OpenAIGatewayService) openAI429CooldownUntil(ctx context.Context, account *Account, headers http.Header, responseBody []byte, now time.Time) time.Time {
+	cooldownUntil, explicit := openAI429ResponseCooldownUntil(headers, responseBody, now)
+	if explicit {
+		return cooldownUntil
+	}
+	if s != nil && s.rateLimitService != nil {
+		if cooldown, ok := s.rateLimitService.get429FallbackCooldown(ctx, account); ok && cooldown > 0 {
+			cooldownUntil = now.Add(cooldown)
+		}
+	}
+	return cooldownUntil
 }
 
 func (s *OpenAIGatewayService) BlockAccountScheduling(account *Account, until time.Time, reason string) {
@@ -167,13 +214,7 @@ func (s *OpenAIGatewayService) BlockAccountScheduling(account *Account, until ti
 }
 
 func (s *OpenAIGatewayService) openAIAccountRuntimeBlockLock(accountID int64) *sync.Mutex {
-	actual, _ := s.openaiAccountRuntimeBlockLocks.LoadOrStore(accountID, &sync.Mutex{})
-	mu, ok := actual.(*sync.Mutex)
-	if !ok {
-		mu = &sync.Mutex{}
-		s.openaiAccountRuntimeBlockLocks.Store(accountID, mu)
-	}
-	return mu
+	return &s.openaiAccountRuntimeBlockLocks[uint64(accountID)&(openAIAccountRuntimeBlockLockShardCount-1)]
 }
 
 func (s *OpenAIGatewayService) blockAccountSchedulingLocked(account *Account, until time.Time, _ string) (uint64, bool) {

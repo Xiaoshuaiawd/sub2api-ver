@@ -68,6 +68,17 @@ type schedulerSnapshotAccountIDWriter interface {
 	SetSnapshotByAccountIDs(ctx context.Context, bucket SchedulerBucket, token SchedulerBucketWriteToken, accountIDs []int64) error
 }
 
+// schedulerSnapshotReadOnlyReader is an optional cache optimization used only
+// by cache-only adaptive scheduling. Returned account values may be modified,
+// but callers treat their nested maps and slices as immutable snapshot data.
+type schedulerSnapshotReadOnlyReader interface {
+	GetSnapshotReadOnly(ctx context.Context, bucket SchedulerBucket) ([]Account, bool, error)
+}
+
+type schedulerSnapshotBorrowedReader interface {
+	GetSnapshotBorrowed(ctx context.Context, bucket SchedulerBucket) ([]Account, bool, error)
+}
+
 func newSchedulerAccountQueryCache(taskSets ...[]schedulerBucketWriteTask) *schedulerAccountQueryCache {
 	queries := &schedulerAccountQueryCache{
 		remaining:          make(map[schedulerAccountQueryKey]int),
@@ -271,6 +282,48 @@ func (s *SchedulerSnapshotService) ListSchedulableAccounts(ctx context.Context, 
 	return accounts, useMixed, nil
 }
 
+// ListCachedSchedulableAccounts reads the active scheduling snapshot without
+// falling back to PostgreSQL. Request-level adaptive scheduling uses this path
+// so a cache outage cannot amplify into one database query per request.
+func (s *SchedulerSnapshotService) ListCachedSchedulableAccounts(ctx context.Context, groupID *int64, platform string, hasForcePlatform bool) ([]Account, bool, error) {
+	useMixed := (platform == PlatformAnthropic || platform == PlatformGemini) && !hasForcePlatform
+	if s == nil || s.cache == nil {
+		return nil, useMixed, ErrSchedulerCacheNotReady
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, useMixed, err
+	}
+	bucket := s.bucketFor(groupID, platform, s.resolveMode(platform, hasForcePlatform))
+	if reader, ok := s.cache.(schedulerSnapshotBorrowedReader); ok {
+		cached, hit, err := reader.GetSnapshotBorrowed(ctx, bucket)
+		if err != nil {
+			return nil, useMixed, err
+		}
+		if !hit {
+			return nil, useMixed, ErrSchedulerCacheNotReady
+		}
+		return cached, useMixed, nil
+	}
+	if reader, ok := s.cache.(schedulerSnapshotReadOnlyReader); ok {
+		cached, hit, err := reader.GetSnapshotReadOnly(ctx, bucket)
+		if err != nil {
+			return nil, useMixed, err
+		}
+		if !hit {
+			return nil, useMixed, ErrSchedulerCacheNotReady
+		}
+		return cached, useMixed, nil
+	}
+	cached, hit, err := s.cache.GetSnapshot(ctx, bucket)
+	if err != nil {
+		return nil, useMixed, err
+	}
+	if !hit {
+		return nil, useMixed, ErrSchedulerCacheNotReady
+	}
+	return derefAccounts(cached), useMixed, nil
+}
+
 func (s *SchedulerSnapshotService) GetAccount(ctx context.Context, accountID int64) (*Account, error) {
 	if accountID <= 0 {
 		return nil, nil
@@ -296,6 +349,27 @@ func (s *SchedulerSnapshotService) GetAccount(ctx context.Context, accountID int
 	fallbackCtx, cancel := s.withFallbackTimeout(ctx)
 	defer cancel()
 	return s.accountRepo.GetByID(fallbackCtx, accountID)
+}
+
+// GetCachedAccount reads account metadata without a PostgreSQL fallback.
+func (s *SchedulerSnapshotService) GetCachedAccount(ctx context.Context, accountID int64) (*Account, error) {
+	if accountID <= 0 {
+		return nil, nil
+	}
+	if s == nil || s.cache == nil {
+		return nil, ErrSchedulerCacheNotReady
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	account, err := s.cache.GetAccount(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	if account == nil {
+		return nil, ErrSchedulerCacheNotReady
+	}
+	return account, nil
 }
 
 // GetGroupByID 获取分组信息（供调度器使用）
@@ -1461,6 +1535,13 @@ func (s *SchedulerSnapshotService) loadAccountsFromDB(ctx context.Context, bucke
 	groupID := bucket.GroupID
 	if s.isRunModeSimple() {
 		groupID = 0
+	}
+	if s.cfg != nil && s.cfg.Gateway.OpenAIScheduler.AdaptiveEnabled && bucket.Platform == PlatformOpenAI && !useMixed {
+		var requestedGroupID *int64
+		if groupID > 0 {
+			requestedGroupID = &groupID
+		}
+		return s.accountRepo.ListModelAvailabilityCandidates(ctx, requestedGroupID, []string{PlatformOpenAI}, s.isRunModeSimple())
 	}
 
 	if useMixed {

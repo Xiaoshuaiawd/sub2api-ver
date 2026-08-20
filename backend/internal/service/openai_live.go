@@ -195,9 +195,17 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 			return nil, ErrLiveConcurrencyFull
 		}
 
+		model := strings.TrimSpace(gjson.GetBytes(request.Session, "model").String())
+		if model == "" {
+			model = "gpt-live"
+		}
+		scheduleModel := account.GetMappedModel(model)
 		created, createErr := s.createUpstreamLiveCall(ctx, account, request, attestation)
 		selection.ReleaseFunc()
 		if createErr != nil {
+			if shouldReportOpenAILiveCreateFailure(ctx, createErr) {
+				s.ReportOpenAIAccountSelectionResult(selection, scheduleModel, false, nil)
+			}
 			s.releaseLiveLease(account.ID, identity.UserID, identity.APIKeyID, leaseID)
 			if !s.shouldFailoverLiveCreateError(createErr) {
 				return nil, createErr
@@ -206,12 +214,9 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 			lastErr = createErr
 			continue
 		}
+		s.ReportOpenAIAccountSelectionResult(selection, scheduleModel, true, nil)
 
 		now := time.Now()
-		model := strings.TrimSpace(gjson.GetBytes(request.Session, "model").String())
-		if model == "" {
-			model = "gpt-live"
-		}
 		record := &LiveCallRecord{
 			CallID:                created.CallID,
 			CallHash:              hashLiveCallID(created.CallID),
@@ -243,6 +248,14 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 		return nil, lastErr
 	}
 	return nil, ErrLiveUnavailable
+}
+
+func shouldReportOpenAILiveCreateFailure(ctx context.Context, err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || (ctx != nil && ctx.Err() != nil) {
+		return false
+	}
+	var failoverErr *UpstreamFailoverError
+	return !errors.As(err, &failoverErr) || failoverErr.ShouldReportAccountScheduleFailure()
 }
 
 func (s *OpenAIGatewayService) shouldFailoverLiveCreateError(err error) bool {

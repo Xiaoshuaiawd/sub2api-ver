@@ -62,6 +62,47 @@ func TestIsOpenAIWSIngressPreviousResponseNotFound(t *testing.T) {
 	))
 }
 
+func TestShouldReportOpenAIWSAccountFailureUsesErrorOwnership(t *testing.T) {
+	t.Parallel()
+
+	require.True(t, ShouldReportOpenAIWSAccountFailure(
+		wrapOpenAIWSIngressTurnError("read_upstream", errors.New("upstream read failed"), false),
+	))
+	require.True(t, ShouldReportOpenAIWSAccountFailure(
+		wrapOpenAIWSIngressTurnError("read_upstream", context.DeadlineExceeded, false),
+	))
+	require.False(t, ShouldReportOpenAIWSAccountFailure(
+		wrapOpenAIWSIngressTurnError("write_client", errors.New("downstream write failed"), true),
+	))
+	require.False(t, ShouldReportOpenAIWSAccountFailure(
+		NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "local policy denied", errors.New("blocked")),
+	))
+	require.False(t, ShouldReportOpenAIWSAccountFailure(context.Canceled))
+	require.False(t, ShouldReportOpenAIWSAccountFailure(&openAIWSDialError{Err: context.Canceled}))
+}
+
+func TestBuildOpenAIResponsesWSURLMarksInvalidAccountBaseURLAsAccountOwned(t *testing.T) {
+	t.Parallel()
+
+	svc := &OpenAIGatewayService{cfg: &config.Config{Security: config.SecurityConfig{
+		URLAllowlist: config.URLAllowlistConfig{Enabled: false},
+	}}}
+	account := &Account{
+		ID:       105,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"base_url": "://invalid-account-url",
+		},
+	}
+
+	_, err := svc.buildOpenAIResponsesWSURL(account)
+
+	require.Error(t, err)
+	require.True(t, isOpenAIAccountOwnedError(err))
+	require.True(t, ShouldReportOpenAIWSAccountFailure(err))
+}
+
 func TestOpenAIWSIngressPreviousResponseRecoveryEnabled(t *testing.T) {
 	t.Parallel()
 

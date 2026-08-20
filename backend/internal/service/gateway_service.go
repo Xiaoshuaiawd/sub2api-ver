@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -577,14 +578,64 @@ type AccountWaitPlan struct {
 }
 
 type AccountSelectionResult struct {
-	Account     *Account
-	Acquired    bool
-	ReleaseFunc func()
-	WaitPlan    *AccountWaitPlan // nil means no wait allowed
+	Account      *Account
+	Acquired     bool
+	ReleaseFunc  func()
+	WaitPlan     *AccountWaitPlan // nil means no wait allowed
+	reportOnce   sync.Once
+	reportResult func(model string, success bool, firstTokenMs *int)
+	acquireTurn  func(model string) (*AccountSelectionResult, bool)
 	// profitGate 携带本次选号真实生效的利润门（无门为 nil）。门安装在调度栈的
 	// 局部 ctx 上，handler 必须经 ContextWithSelectionProfitGate 重放后才能在
 	// 调度栈之外做抢槽后终检与准入后粘性绑定。
 	profitGate *openAIProfitControlGate
+}
+
+type openAIAccountOwnedError struct {
+	err error
+}
+
+func (e *openAIAccountOwnedError) Error() string {
+	if e == nil || e.err == nil {
+		return ""
+	}
+	return e.err.Error()
+}
+
+func (e *openAIAccountOwnedError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
+
+func markOpenAIAccountOwnedError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var owned *openAIAccountOwnedError
+	if errors.As(err, &owned) {
+		return err
+	}
+	return &openAIAccountOwnedError{err: err}
+}
+
+func isOpenAIAccountOwnedError(err error) bool {
+	var owned *openAIAccountOwnedError
+	return errors.As(err, &owned)
+}
+
+// AcquireTurn reserves scheduler capacity for another request on a connection
+// that stays bound to the selected account. Legacy selections have no adaptive
+// permit, but still get an independent result object for per-turn feedback.
+func (r *AccountSelectionResult) AcquireTurn(model string) (*AccountSelectionResult, bool) {
+	if r == nil || r.Account == nil {
+		return nil, false
+	}
+	if r.acquireTurn != nil {
+		return r.acquireTurn(model)
+	}
+	return &AccountSelectionResult{Account: r.Account}, true
 }
 
 // ProfitGateActive 报告本次选号是否处于利润门之下。

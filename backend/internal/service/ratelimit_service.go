@@ -207,6 +207,32 @@ func (s *RateLimitService) ApplyAccountSchedulingThreshold(ctx context.Context, 
 	return true
 }
 
+// IsAccountSchedulingThresholdExceededCached evaluates the current in-process
+// threshold snapshot without persisting account state. It is intentionally
+// side-effect free for adaptive request scheduling, where one request may scan
+// thousands of candidates.
+func (s *RateLimitService) IsAccountSchedulingThresholdExceededCached(account *Account) bool {
+	if s == nil || s.settingService == nil {
+		return false
+	}
+	return isAccountSchedulingThresholdExceeded(
+		account,
+		s.settingService.GetCachedAccountSchedulingThresholds(),
+		time.Now().UTC(),
+	)
+}
+
+func isAccountSchedulingThresholdExceeded(account *Account, thresholds map[string]int, now time.Time) bool {
+	if account == nil || account.ID <= 0 {
+		return false
+	}
+	if !account.IsActive() || !account.Schedulable {
+		return false
+	}
+	decision := EvaluateAccountSchedulingThreshold(account, thresholds, now)
+	return decision.ShouldPause && decision.Until != nil && decision.Until.After(now)
+}
+
 func accountHasSameSchedulingThresholdPause(account *Account, until time.Time, reason string) bool {
 	if account == nil || account.TempUnschedulableUntil == nil {
 		return false

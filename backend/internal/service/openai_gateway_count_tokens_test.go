@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -73,8 +74,9 @@ func TestOpenAIGatewayService_ForwardCountTokensAsAnthropic_APIKeyUsesResponsesI
 		Schedulable: true,
 	}
 
-	err := svc.ForwardCountTokensAsAnthropic(context.Background(), c, account, body, "gpt-5.3-codex")
+	feedback, err := svc.ForwardCountTokensAsAnthropic(context.Background(), c, account, body, "gpt-5.3-codex")
 	require.NoError(t, err)
+	require.Equal(t, OpenAICountTokensForwardFeedback{ReportSelectionResult: true, Success: true}, feedback)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.JSONEq(t, `{"input_tokens":42}`, rec.Body.String())
 	require.NotNil(t, upstream.lastReq)
@@ -83,6 +85,134 @@ func TestOpenAIGatewayService_ForwardCountTokensAsAnthropic_APIKeyUsesResponsesI
 	require.Equal(t, "gpt-5.3-codex", gjson.GetBytes(upstream.lastBody, "model").String())
 	require.True(t, gjson.GetBytes(upstream.lastBody, "input").Exists())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "messages").Exists())
+}
+
+func TestForwardCountTokensAsAnthropicLocalParseFailureDoesNotReportAccountHealth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{"model":"kimi-test","messages":"invalid"}`)
+	account := &Account{
+		ID:       102,
+		Platform: PlatformKimi,
+		Type:     AccountTypeAPIKey,
+	}
+
+	feedback, err := (&OpenAIGatewayService{}).ForwardCountTokensAsAnthropic(
+		context.Background(), c, account, body, "",
+	)
+
+	require.Error(t, err)
+	require.False(t, feedback.ReportSelectionResult)
+	require.False(t, feedback.Success)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestForwardCountTokensAsAnthropicInvalidAccountBaseURLReportsAccountHealth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{"model":"gpt-5","messages":[{"role":"user","content":"hello"}]}`)
+	account := &Account{
+		ID:       103,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "://invalid-account-url",
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: &config.Config{Security: config.SecurityConfig{
+		URLAllowlist: config.URLAllowlistConfig{Enabled: false},
+	}}}
+
+	feedback, err := svc.ForwardCountTokensAsAnthropic(context.Background(), c, account, body, "")
+
+	require.Error(t, err)
+	require.True(t, feedback.ReportSelectionResult)
+	require.False(t, feedback.Success)
+}
+
+func TestForwardCountTokensAsAnthropicCanceledUpstreamDoesNotReportAccountHealth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{"model":"gpt-5","messages":[{"role":"user","content":"hello"}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", bytes.NewReader(body))
+	account := &Account{
+		ID:          104,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key": "sk-test",
+		},
+	}
+	svc := &OpenAIGatewayService{
+		cfg:          &config.Config{},
+		httpUpstream: &httpUpstreamRecorder{err: context.Canceled},
+	}
+
+	feedback, err := svc.ForwardCountTokensAsAnthropic(context.Background(), c, account, body, "")
+
+	require.Error(t, err)
+	require.True(t, errors.Is(err, context.Canceled))
+	require.False(t, feedback.ReportSelectionResult)
+	require.False(t, feedback.Success)
+}
+
+func TestForwardCountTokensViaNativeAnthropicCancellationDoesNotReportAccountHealth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"kimi-k2","messages":[{"role":"user","content":"hello"}]}`)
+	account := &Account{
+		ID:          105,
+		Platform:    PlatformKimi,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":      "sk-test",
+			"api_protocol": APIProtocolAnthropic,
+			"base_url":     "http://native.example/anthropic",
+		},
+	}
+	tests := []struct {
+		name     string
+		upstream *httpUpstreamRecorder
+	}{
+		{
+			name:     "upstream request",
+			upstream: &httpUpstreamRecorder{err: context.Canceled},
+		},
+		{
+			name: "response body read",
+			upstream: &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       passthroughErrReadCloser{err: context.Canceled},
+			}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", bytes.NewReader(body))
+			svc := &OpenAIGatewayService{
+				cfg: &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{
+					Enabled:           false,
+					AllowInsecureHTTP: true,
+				}}},
+				httpUpstream: tt.upstream,
+			}
+
+			feedback, err := svc.forwardCountTokensViaNativeAnthropic(context.Background(), c, account, body, "")
+
+			require.Error(t, err)
+			require.True(t, errors.Is(err, context.Canceled))
+			require.False(t, feedback.ReportSelectionResult)
+			require.False(t, feedback.Success)
+		})
+	}
 }
 
 func TestOpenAIGatewayService_ForwardCountTokensAsAnthropic_OAuthFallsBackWhenPlatformEndpointUnsupported(t *testing.T) {
@@ -155,8 +285,9 @@ func TestOpenAIGatewayService_ForwardCountTokensAsAnthropic_OAuthFallsBackWhenPl
 				rateLimitService: &RateLimitService{accountRepo: repo, cfg: &config.Config{}},
 			}
 
-			err := svc.ForwardCountTokensAsAnthropic(context.Background(), c, account, body, "gpt-5.4")
+			feedback, err := svc.ForwardCountTokensAsAnthropic(context.Background(), c, account, body, "gpt-5.4")
 			require.NoError(t, err)
+			require.Equal(t, OpenAICountTokensForwardFeedback{ReportSelectionResult: true, Success: true}, feedback)
 			require.Equal(t, http.StatusOK, rec.Code)
 			require.JSONEq(t, `{"input_tokens":`+strconv.Itoa(expectedEstimate)+`}`, rec.Body.String())
 			require.NotNil(t, upstream.lastReq)

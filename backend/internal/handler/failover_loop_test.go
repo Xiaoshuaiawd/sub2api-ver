@@ -102,6 +102,72 @@ func TestNewFailoverState(t *testing.T) {
 	})
 }
 
+func TestOpenAIFailoverBudgetTracksDistinctAccounts(t *testing.T) {
+	now := time.Unix(20_000, 0)
+	budget := newOpenAIFailoverBudget(800*time.Millisecond, 2)
+
+	require.True(t, budget.CanTry(101, now))
+	require.True(t, budget.CanTry(101, now), "same-account retries do not consume another distinct slot")
+	require.True(t, budget.CanTry(102, now))
+	require.False(t, budget.CanTry(103, now))
+}
+
+func TestOpenAIFailoverBudgetStartsDeadlineOnFirstSwitchableError(t *testing.T) {
+	now := time.Unix(21_000, 0)
+	budget := newOpenAIFailoverBudget(800*time.Millisecond, 2)
+	require.True(t, budget.CanTry(101, now.Add(10*time.Second)), "upstream time before the first switch is excluded")
+
+	budget.Arm(now.Add(10 * time.Second))
+	require.True(t, budget.CanTry(102, now.Add(10*time.Second+799*time.Millisecond)))
+	require.False(t, budget.CanTry(102, now.Add(10*time.Second+800*time.Millisecond)))
+}
+
+func TestOpenAIFailoverBudgetArmsBeforeSameAccountRetryDelay(t *testing.T) {
+	now := time.Unix(21_500, 0)
+	budget := newOpenAIFailoverBudget(800*time.Millisecond, 2)
+	failoverErr := &service.UpstreamFailoverError{
+		RetryableOnSameAccount: true,
+		NextAccountAction:      service.NextAccountRetry,
+	}
+
+	require.True(t, budget.ArmIfSwitchable(failoverErr, now))
+	require.True(t, budget.CanTry(101, now.Add(799*time.Millisecond)))
+	require.False(t, budget.CanTry(102, now.Add(800*time.Millisecond)), "same-account retry sleeps must consume the failover scheduling budget")
+
+	nonSwitchable := newOpenAIFailoverBudget(800*time.Millisecond, 2)
+	require.False(t, nonSwitchable.ArmIfSwitchable(&service.UpstreamFailoverError{NextAccountAction: service.NextAccountStop}, now))
+	require.True(t, nonSwitchable.CanTry(101, now.Add(time.Hour)), "non-switchable client errors must not arm a second-account budget")
+}
+
+func TestOpenAIFailoverBudgetSelectionContextUsesAbsoluteDeadline(t *testing.T) {
+	budget := newOpenAIFailoverBudget(800*time.Millisecond, 2)
+	armedAt := time.Now()
+	budget.Arm(armedAt)
+
+	ctx, cancel := budget.SelectionContext(context.Background())
+	defer cancel()
+	deadline, ok := ctx.Deadline()
+
+	require.True(t, ok)
+	require.WithinDuration(t, armedAt.Add(800*time.Millisecond), deadline, time.Millisecond)
+}
+
+func TestOpenAIFailoverBudgetRejectsAndReleasesThirdSelection(t *testing.T) {
+	now := time.Unix(22_000, 0)
+	budget := newOpenAIFailoverBudget(800*time.Millisecond, 2)
+	released := false
+
+	require.True(t, budget.AcceptSelection(&service.AccountSelectionResult{Account: &service.Account{ID: 101}}, now))
+	require.True(t, budget.AcceptSelection(&service.AccountSelectionResult{Account: &service.Account{ID: 102}}, now))
+	require.False(t, budget.AcceptSelection(&service.AccountSelectionResult{
+		Account: &service.Account{ID: 103},
+		ReleaseFunc: func() {
+			released = true
+		},
+	}, now))
+	require.True(t, released, "a rejected selection must return its local and Redis permits")
+}
+
 // ---------------------------------------------------------------------------
 // sleepWithContext 测试
 // ---------------------------------------------------------------------------

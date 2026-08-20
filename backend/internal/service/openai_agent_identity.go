@@ -206,7 +206,7 @@ func registerAgentIdentityTask(ctx context.Context, httpUpstream HTTPUpstream, a
 	req.Header.Set("Accept", "application/json")
 	resp, err := httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
 	if err != nil {
-		return "", errors.New("agent task registration request failed")
+		return "", fmt.Errorf("agent task registration request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {

@@ -1152,6 +1152,19 @@ func (s *SettingService) GetAccountSchedulingThresholds(ctx context.Context) map
 	return defaultAccountSchedulingThresholds()
 }
 
+// GetCachedAccountSchedulingThresholds returns the last in-process threshold
+// snapshot without loading settings from PostgreSQL. Adaptive request
+// scheduling uses stale data until the settings path refreshes or invalidates
+// the snapshot, keeping database reads out of the account candidate loop.
+func (s *SettingService) GetCachedAccountSchedulingThresholds() map[string]int {
+	if cached, ok := accountSchedulingThresholdsCache.Load().(*cachedAccountSchedulingThresholds); ok {
+		if cached != nil && len(cached.thresholds) > 0 {
+			return cloneAccountSchedulingThresholds(cached.thresholds)
+		}
+	}
+	return defaultAccountSchedulingThresholds()
+}
+
 // GetAuthSourcePlatformQuotas 读取指定 auth source 的 platform quota 覆盖（仅返回有配置的平台，override 语义）。
 func (s *SettingService) GetAuthSourcePlatformQuotas(ctx context.Context, source string) map[string]*DefaultPlatformQuotaSetting {
 	out := map[string]*DefaultPlatformQuotaSetting{}
