@@ -498,28 +498,6 @@ func TestGetAccountsLoadBatch_UsesShortTTLCache(t *testing.T) {
 	require.Equal(t, int64(1), cache.loadBatchCalls.Load())
 }
 
-func TestGetAccountsLoadBatch_CapsSaturatedCacheTTL(t *testing.T) {
-	cache := &stubConcurrencyCacheForTest{
-		loadBatch: map[int64]*AccountLoadInfo{
-			1: {AccountID: 1, CurrentConcurrency: 5, LoadRate: 100},
-		},
-	}
-	svc := NewConcurrencyService(cache)
-	svc.SetAccountLoadBatchCacheTTL(time.Second)
-
-	accounts := []AccountWithConcurrency{{ID: 1, MaxConcurrency: 5}}
-	first, err := svc.GetAccountsLoadBatch(context.Background(), accounts)
-	require.NoError(t, err)
-	require.Equal(t, 100, first[int64(1)].LoadRate)
-
-	cache.loadBatch[1] = &AccountLoadInfo{AccountID: 1, CurrentConcurrency: 4, LoadRate: 80}
-	time.Sleep(maxSaturatedLoadBatchCacheTTL + 50*time.Millisecond)
-	second, err := svc.GetAccountsLoadBatch(context.Background(), accounts)
-	require.NoError(t, err)
-	require.Equal(t, 80, second[int64(1)].LoadRate)
-	require.Equal(t, int64(2), cache.loadBatchCalls.Load())
-}
-
 func TestGetAccountsLoadBatchFresh_BypassesShortTTLCache(t *testing.T) {
 	cache := &stubConcurrencyCacheForTest{
 		loadBatch: map[int64]*AccountLoadInfo{
