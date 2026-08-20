@@ -426,7 +426,8 @@ gateway:
       upstream_cost: 0.0
   # OpenAI 高级调度器补充配置
   openai_scheduler:
-    # 本机自适应调度。先用 shadow_mode 观察，再启用真实派发。
+    # 本机自适应调度。shadow_mode 只记录真实请求的健康度/429 反馈，不改变选号，
+    # 也不会计算或对比替代的自适应选号结果。观察后再启用真实派发。
     adaptive_enabled: false
     shadow_mode: true
     initial_window: 2

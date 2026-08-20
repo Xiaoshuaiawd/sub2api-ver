@@ -390,7 +390,7 @@ func isOpenAICompatibleAccountEligibleForRequest(ctx context.Context, account *A
 // profit veto so earlier failures retain their actual reason.
 func isOpenAICompatibleAccountEligibleForRequestBeforeProfit(ctx context.Context, account *Account, platform string, requestedModel string, requireCompact bool, requiredCapability OpenAIEndpointCapability) bool {
 	platform = NormalizeOpenAICompatiblePlatform(platform)
-	if account == nil || account.Platform != platform || !account.IsOpenAICompatible() || !account.IsSchedulableForModelWithContext(ctx, requestedModel) {
+	if account == nil || account.Platform != platform || !account.IsOpenAICompatible() || !isOpenAIAccountSchedulableWithCredits(ctx, account, requestedModel) {
 		return false
 	}
 	if account.IsOpenAI() {
@@ -521,7 +521,7 @@ func shouldAutoPauseOpenAIAccountByQuota(ctx context.Context, account *Account) 
 			return true, openAIQuotaAutoPauseDecision{window: "5h", threshold: threshold5h, utilization: utilization}
 		}
 	}
-	if !disabled7d && threshold7d > 0 {
+	if !disabled7d && threshold7d > 0 && !openAIAccountHasAvailableResetCredits(account, now) {
 		if utilization, ok := resolveOpenAIQuotaUtilization(account.Extra, "7d", now); ok && utilization >= threshold7d {
 			return true, openAIQuotaAutoPauseDecision{window: "7d", threshold: threshold7d, utilization: utilization}
 		}
@@ -1367,12 +1367,29 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 
 func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, groupID *int64, platform string) ([]Account, error) {
 	platform = NormalizeOpenAICompatiblePlatform(platform)
+	adaptive := s.openAIAdaptiveConfig()
+	adaptiveOpenAI := adaptive.enabled && !adaptive.shadowMode && platform == PlatformOpenAI
+	if adaptiveOpenAI && s.schedulerSnapshot == nil {
+		return nil, ErrSchedulerCacheNotReady
+	}
 	if s.schedulerSnapshot != nil {
-		accounts, _, err := s.schedulerSnapshot.ListSchedulableAccounts(ctx, groupID, platform, false)
+		var (
+			accounts []Account
+			err      error
+		)
+		if adaptiveOpenAI {
+			accounts, _, err = s.schedulerSnapshot.ListCachedSchedulableAccounts(ctx, groupID, platform, false)
+		} else {
+			accounts, _, err = s.schedulerSnapshot.ListSchedulableAccounts(ctx, groupID, platform, false)
+		}
 		if err != nil {
 			return accounts, err
 		}
-		accounts = s.filterOpenAIAccountsBySchedulingThreshold(ctx, accounts)
+		if adaptiveOpenAI {
+			accounts = s.filterOpenAIAccountsByCachedSchedulingThreshold(accounts)
+		} else {
+			accounts = s.filterOpenAIAccountsBySchedulingThreshold(ctx, accounts)
+		}
 		if platform == PlatformGrok {
 			accounts = s.filterGrokFreeQuotaAccountsForOpenAI(ctx, accounts)
 		}
@@ -1458,6 +1475,16 @@ func (s *OpenAIGatewayService) parentAccountLookup(ctx context.Context) func(int
 			return nil
 		}
 		a, _ := s.accountRepo.GetByID(ctx, id)
+		return a
+	}
+}
+
+func (s *OpenAIGatewayService) cachedParentAccountLookup(ctx context.Context) func(int64) *Account {
+	return func(id int64) *Account {
+		if s == nil || s.schedulerSnapshot == nil {
+			return nil
+		}
+		a, _ := s.schedulerSnapshot.GetCachedAccount(ctx, id)
 		return a
 	}
 }
@@ -1551,6 +1578,20 @@ func (s *OpenAIGatewayService) getSchedulableAccount(ctx context.Context, accoun
 	return account, nil
 }
 
+func (s *OpenAIGatewayService) getCachedSchedulableAccount(ctx context.Context, accountID int64) (*Account, error) {
+	if s == nil || s.schedulerSnapshot == nil {
+		return nil, ErrSchedulerCacheNotReady
+	}
+	account, err := s.schedulerSnapshot.GetCachedAccount(ctx, accountID)
+	if err != nil || account == nil {
+		return account, err
+	}
+	if s.isOpenAIAccountBlockedByCachedSchedulingThreshold(account) {
+		return nil, nil
+	}
+	return account, nil
+}
+
 // filterGrokFreeQuotaAccountsForOpenAI applies the same local free soft-gate as
 // GatewayService / advanced scheduler, for OpenAI-compatible legacy selection.
 func (s *OpenAIGatewayService) filterGrokFreeQuotaAccountsForOpenAI(ctx context.Context, accounts []Account) []Account {
@@ -1575,11 +1616,35 @@ func (s *OpenAIGatewayService) filterOpenAIAccountsBySchedulingThreshold(ctx con
 	return filtered
 }
 
+func (s *OpenAIGatewayService) filterOpenAIAccountsByCachedSchedulingThreshold(accounts []Account) []Account {
+	if len(accounts) == 0 || s == nil || s.rateLimitService == nil || s.rateLimitService.settingService == nil {
+		return accounts
+	}
+
+	thresholds := s.rateLimitService.settingService.GetCachedAccountSchedulingThresholds()
+	now := time.Now().UTC()
+	filtered := make([]Account, 0, len(accounts))
+	for i := range accounts {
+		if isAccountSchedulingThresholdExceeded(&accounts[i], thresholds, now) {
+			continue
+		}
+		filtered = append(filtered, accounts[i])
+	}
+	return filtered
+}
+
 func (s *OpenAIGatewayService) isOpenAIAccountBlockedBySchedulingThreshold(ctx context.Context, account *Account) bool {
 	if s == nil || s.rateLimitService == nil || account == nil {
 		return false
 	}
 	return s.rateLimitService.ApplyAccountSchedulingThreshold(ctx, account)
+}
+
+func (s *OpenAIGatewayService) isOpenAIAccountBlockedByCachedSchedulingThreshold(account *Account) bool {
+	if s == nil || s.rateLimitService == nil || account == nil {
+		return false
+	}
+	return s.rateLimitService.IsAccountSchedulingThresholdExceededCached(account)
 }
 
 func (s *OpenAIGatewayService) hydrateSelectedAccount(ctx context.Context, account *Account) (*Account, error) {

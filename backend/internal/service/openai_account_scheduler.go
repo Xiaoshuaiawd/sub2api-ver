@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -86,6 +87,9 @@ type OpenAIAccountScheduleRequest struct {
 	// and compact_model_mapping; native remote compaction v2 leaves it false.
 	RequireCompact bool
 	ExcludedIDs    map[int64]struct{}
+	// shadowParentLookup is request-scoped scheduler state. Adaptive selection
+	// installs it from the versioned pool snapshot to avoid per-shadow cache reads.
+	shadowParentLookup func(int64) *Account
 }
 
 type OpenAIAccountScheduleDecision struct {
@@ -116,7 +120,7 @@ type OpenAIAccountSchedulerMetricsSnapshot struct {
 
 type OpenAIAccountScheduler interface {
 	Select(ctx context.Context, req OpenAIAccountScheduleRequest) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error)
-	ReportResult(accountID int64, success bool, firstTokenMs *int)
+	ReportResult(accountID int64, model string, success bool, firstTokenMs *int)
 	ReportSwitch()
 	SnapshotMetrics() OpenAIAccountSchedulerMetricsSnapshot
 }
@@ -289,6 +293,7 @@ type defaultOpenAIAccountScheduler struct {
 	service                *OpenAIGatewayService
 	metrics                openAIAccountSchedulerMetrics
 	stats                  *openAIAccountRuntimeStats
+	adaptive               *openAIAdaptiveRuntime
 	grokFreeQuotaGateCache sync.Map // key: int64(accountID), value: grokFreeQuotaGateCacheEntry
 }
 
@@ -363,10 +368,14 @@ func newDefaultOpenAIAccountScheduler(service *OpenAIGatewayService, stats *open
 	if stats == nil {
 		stats = newOpenAIAccountRuntimeStats()
 	}
-	return &defaultOpenAIAccountScheduler{
+	scheduler := &defaultOpenAIAccountScheduler{
 		service: service,
 		stats:   stats,
 	}
+	if adaptiveConfig := service.openAIAdaptiveConfig(); adaptiveConfig.enabled || adaptiveConfig.shadowMode {
+		scheduler.adaptive = newOpenAIAdaptiveRuntime(adaptiveConfig)
+	}
+	return scheduler
 }
 
 func (s *defaultOpenAIAccountScheduler) Select(
@@ -383,15 +392,24 @@ func (s *defaultOpenAIAccountScheduler) Select(
 	previousResponseID := strings.TrimSpace(req.PreviousResponseID)
 	if previousResponseID != "" && NormalizeOpenAICompatiblePlatform(req.Platform) == PlatformOpenAI &&
 		(!req.StickyWeighted || !req.PreviousResponseCanMove) {
-		selection, err := s.service.selectAccountByPreviousResponseIDForCapability(
-			ctx,
-			req.GroupID,
-			previousResponseID,
-			req.RequestedModel,
-			req.ExcludedIDs,
-			req.RequiredCapability,
-			req.RequireCompact,
+		var (
+			selection *AccountSelectionResult
+			escapedID int64
+			err       error
 		)
+		if s.adaptiveSelectionEnabled(req) {
+			selection, escapedID, err = s.selectAdaptiveByPreviousResponseID(ctx, req)
+		} else {
+			selection, err = s.service.selectAccountByPreviousResponseIDForCapability(
+				ctx,
+				req.GroupID,
+				previousResponseID,
+				req.RequestedModel,
+				req.ExcludedIDs,
+				req.RequiredCapability,
+				req.RequireCompact,
+			)
+		}
 		if err != nil {
 			return nil, decision, err
 		}
@@ -413,10 +431,15 @@ func (s *defaultOpenAIAccountScheduler) Select(
 			}
 			return selection, decision, nil
 		}
+		if escapedID > 0 {
+			req.PreserveStickyBinding = true
+			req.ExcludedIDs = cloneOpenAIAccountExclusions(req.ExcludedIDs)
+			req.ExcludedIDs[escapedID] = struct{}{}
+		}
 	}
 
 	if !req.StickyWeighted {
-		selection, escapedSticky, err := s.selectBySessionHash(ctx, req)
+		selection, escapedStickyID, err := s.selectBySessionHash(ctx, req)
 		if err != nil {
 			return nil, decision, err
 		}
@@ -427,8 +450,10 @@ func (s *defaultOpenAIAccountScheduler) Select(
 			decision.SelectedAccountType = selection.Account.Type
 			return selection, decision, nil
 		}
-		if escapedSticky {
+		if escapedStickyID > 0 {
 			req.PreserveStickyBinding = true
+			req.ExcludedIDs = cloneOpenAIAccountExclusions(req.ExcludedIDs)
+			req.ExcludedIDs[escapedStickyID] = struct{}{}
 		}
 	}
 
@@ -455,13 +480,54 @@ func (s *defaultOpenAIAccountScheduler) Select(
 	return selection, decision, nil
 }
 
+func (s *defaultOpenAIAccountScheduler) selectAdaptiveByPreviousResponseID(
+	ctx context.Context,
+	req OpenAIAccountScheduleRequest,
+) (*AccountSelectionResult, int64, error) {
+	accountID, account, responseID, store := s.service.resolveAccountByPreviousResponseIDForCapability(
+		ctx,
+		req.GroupID,
+		req.PreviousResponseID,
+		req.RequestedModel,
+		req.ExcludedIDs,
+		req.RequiredCapability,
+		req.RequireCompact,
+	)
+	if accountID <= 0 || account == nil || store == nil {
+		return nil, 0, nil
+	}
+	now := time.Now()
+	snapshot := s.adaptive.snapshot(accountID, account.Concurrency, now)
+	if snapshot.utilization >= s.adaptive.config.stickyEscape {
+		return nil, accountID, nil
+	}
+	permit, reserved := s.adaptive.tryReserve(accountID, account.Concurrency, openAIAdaptiveRouteKeyForAccount(req, account), now)
+	if !reserved {
+		return nil, accountID, nil
+	}
+	selection, err := s.finishAdaptiveSelection(ctx, req, account, permit)
+	if err != nil {
+		return nil, 0, err
+	}
+	if selection == nil {
+		return nil, accountID, nil
+	}
+	logOpenAIWSBindResponseAccountWarn(
+		derefGroupID(req.GroupID),
+		accountID,
+		responseID,
+		store.BindResponseAccount(ctx, derefGroupID(req.GroupID), responseID, accountID, s.service.openAIWSResponseStickyTTL()),
+	)
+	return selection, 0, nil
+}
+
 func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 	ctx context.Context,
 	req OpenAIAccountScheduleRequest,
-) (*AccountSelectionResult, bool, error) {
+) (*AccountSelectionResult, int64, error) {
 	sessionHash := strings.TrimSpace(req.SessionHash)
 	if sessionHash == "" || s == nil || s.service == nil || s.service.cache == nil {
-		return nil, false, nil
+		return nil, 0, nil
 	}
 
 	accountID := req.StickyAccountID
@@ -469,55 +535,63 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		var err error
 		accountID, err = s.service.getStickySessionAccountID(ctx, req.GroupID, sessionHash)
 		if err != nil || accountID <= 0 {
-			return nil, false, nil
+			return nil, 0, nil
 		}
 	}
 	if accountID <= 0 {
-		return nil, false, nil
+		return nil, 0, nil
 	}
 	if req.ExcludedIDs != nil {
 		if _, excluded := req.ExcludedIDs[accountID]; excluded {
-			return nil, false, nil
+			return nil, 0, nil
 		}
 	}
 
-	account, err := s.service.getSchedulableAccount(ctx, accountID)
+	var account *Account
+	var err error
+	if s.adaptiveSelectionEnabled(req) {
+		account, err = s.service.getCachedSchedulableAccount(ctx, accountID)
+	} else {
+		account, err = s.service.getSchedulableAccount(ctx, accountID)
+	}
 	if err != nil || account == nil {
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
-		return nil, false, nil
+		return nil, 0, nil
 	}
 	if shouldClearStickySession(account, req.RequestedModel) || account.Platform != NormalizeOpenAICompatiblePlatform(req.Platform) || !account.IsOpenAICompatible() || !account.IsSchedulable() {
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
-		return nil, false, nil
+		return nil, 0, nil
 	}
 	if !s.isAccountRequestCompatible(ctx, account, req) {
-		return nil, false, nil
+		return nil, 0, nil
 	}
 	if !s.isAccountTransportCompatible(account, req.RequiredTransport) {
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
-		return nil, false, nil
+		return nil, 0, nil
 	}
-	account = s.service.recheckSelectedOpenAIAccountFromDB(ctx, account, req.GroupID, req.Platform, req.RequestedModel, req.RequireCompact, req.RequiredCapability)
+	if !s.adaptiveSelectionEnabled(req) {
+		account = s.service.recheckSelectedOpenAIAccountFromDB(ctx, account, req.GroupID, req.Platform, req.RequestedModel, req.RequireCompact, req.RequiredCapability)
+	}
 	if account == nil || !s.service.openAIAccountMatchesSchedulingGroup(account, req.GroupID) || !s.isAccountTransportCompatible(account, req.RequiredTransport) {
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
-		return nil, false, nil
+		return nil, 0, nil
 	}
 	// Free-tier soft gate: sticky session must not pin an over-quota free OAuth account.
 	// Admin QueryQuota / import probes do not use this path.
 	if account != nil && len(s.filterGrokFreeQuotaAccounts(ctx, []Account{*account})) == 0 {
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
-		return nil, false, nil
+		return nil, 0, nil
 	}
 	// Team+model cool: sticky must not pin a sibling under the same team 429 window.
 	now := time.Now()
 	upstreamModel := canonicalOpenAIAccountSchedulingModel(account, req.RequestedModel)
 	if account != nil && isGrokTeamModelRateLimited(account, upstreamModel, now) {
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
-		return nil, false, nil
+		return nil, 0, nil
 	}
 	if account != nil && isGrokModelQuotaBlocked(account.ID, upstreamModel, now) {
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
-		return nil, false, nil
+		return nil, 0, nil
 	}
 	escapeCfg := s.service.openAIStickyEscapeConfig()
 	if reason, errorRate, ttft, shouldEscape := s.shouldEscapeStickyAccount(accountID, escapeCfg); shouldEscape {
@@ -527,7 +601,26 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 			"error_rate", errorRate,
 			"ttft", ttft,
 		)
-		return nil, true, nil
+		return nil, accountID, nil
+	}
+	if s.adaptiveSelectionEnabled(req) {
+		snapshot := s.adaptive.snapshot(accountID, account.Concurrency, now)
+		if snapshot.utilization >= s.adaptive.config.stickyEscape {
+			return nil, accountID, nil
+		}
+		permit, reserved := s.adaptive.tryReserve(accountID, account.Concurrency, openAIAdaptiveRouteKeyForAccount(req, account), now)
+		if !reserved {
+			return nil, accountID, nil
+		}
+		selection, err := s.finishAdaptiveSelection(ctx, req, account, permit)
+		if err != nil {
+			return nil, 0, err
+		}
+		if selection == nil {
+			return nil, accountID, nil
+		}
+		_ = s.service.refreshStickySessionTTL(ctx, req.GroupID, sessionHash, s.service.openAIWSSessionStickyTTL())
+		return selection, 0, nil
 	}
 	result, acquireErr := s.service.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
 	if acquireErr == nil && result != nil && result.Acquired {
@@ -536,7 +629,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 			Account:     account,
 			Acquired:    true,
 			ReleaseFunc: result.ReleaseFunc,
-		}), false, nil
+		}), 0, nil
 	}
 
 	cfg := s.service.schedulingConfig()
@@ -550,7 +643,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 				"error_rate", errorRate,
 				"ttft", ttft,
 			)
-			return nil, true, nil
+			return nil, accountID, nil
 		}
 		return attachSelectionProfitGate(ctx, &AccountSelectionResult{
 			Account: account,
@@ -560,9 +653,9 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 				Timeout:        cfg.StickySessionWaitTimeout,
 				MaxWaiting:     cfg.StickySessionMaxWaiting,
 			},
-		}), false, nil
+		}), 0, nil
 	}
-	return nil, false, nil
+	return nil, 0, nil
 }
 
 func openAIStickyAccountMatchesGroup(account *Account, groupID *int64) bool {
@@ -1385,15 +1478,34 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		accounts = modelFiltered
 	}
 
-	// require_privacy_set: 获取分组信息
+	// require_privacy_set: reuse the authenticated group on the adaptive hot path.
 	var schedGroup *Group
-	if req.GroupID != nil && s.service.schedulerSnapshot != nil {
-		schedGroup, _ = s.service.schedulerSnapshot.GetGroupByID(ctx, *req.GroupID)
+	if req.GroupID != nil {
+		if group, ok := ctx.Value(ctxkey.Group).(*Group); ok && IsGroupContextValid(group) && group.ID == *req.GroupID {
+			schedGroup = group
+		} else if s.adaptiveSelectionEnabled(req) {
+			return nil, 0, 0, 0, fmt.Errorf("%w: adaptive scheduler group context missing", ErrSchedulerCacheNotReady)
+		} else if s.service.schedulerSnapshot != nil {
+			schedGroup, _ = s.service.schedulerSnapshot.GetGroupByID(ctx, *req.GroupID)
+		}
+	}
+	if s.adaptiveSelectionEnabled(req) {
+		accountsByID := make(map[int64]*Account, len(accounts))
+		for i := range accounts {
+			accountsByID[accounts[i].ID] = &accounts[i]
+		}
+		req.shadowParentLookup = func(id int64) *Account {
+			if account, ok := accountsByID[id]; ok {
+				return account
+			}
+			account := s.lookupShadowParentAccount(ctx, id, true)
+			accountsByID[id] = account
+			return account
+		}
 	}
 
 	filterStats := openAISelectionFilterStats{pool: len(accounts)}
 	filtered := make([]*Account, 0, len(accounts))
-	loadReq := make([]AccountWithConcurrency, 0, len(accounts))
 	for i := range accounts {
 		account := &accounts[i]
 		if req.ExcludedIDs != nil {
@@ -1402,7 +1514,7 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 				continue
 			}
 		}
-		if !account.IsSchedulable() {
+		if !account.IsSchedulable() && !(s.adaptiveSelectionEnabled(req) && isOpenAICreditBackedSevenDayThresholdPause(account, time.Now())) {
 			filterStats.exclude("not_schedulable")
 			continue
 		}
@@ -1416,9 +1528,11 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		}
 		// require_privacy_set: 跳过 privacy 未设置的账号并标记异常
 		if schedGroup != nil && schedGroup.RequirePrivacySet && !account.IsPrivacySet() {
-			s.service.BlockAccountScheduling(account, time.Time{}, "privacy_not_set")
-			_ = s.service.accountRepo.SetError(ctx, account.ID,
-				fmt.Sprintf("Privacy not set, required by group [%s]", schedGroup.Name))
+			if !s.adaptiveSelectionEnabled(req) {
+				s.service.BlockAccountScheduling(account, time.Time{}, "privacy_not_set")
+				_ = s.service.accountRepo.SetError(ctx, account.ID,
+					fmt.Sprintf("Privacy not set, required by group [%s]", schedGroup.Name))
+			}
 			filterStats.exclude("privacy_not_set")
 			continue
 		}
@@ -1431,17 +1545,17 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 			continue
 		}
 		filtered = append(filtered, account)
-		loadReq = append(loadReq, AccountWithConcurrency{
-			ID:             account.ID,
-			MaxConcurrency: account.EffectiveLoadFactor(),
-		})
 	}
 	if len(filtered) == 0 {
 		return nil, 0, 0, 0, noAvailableOpenAISelectionError(req.RequestedModel, false, filterStats.summary(""))
 	}
+	if s.adaptiveSelectionEnabled(req) {
+		return s.selectByAdaptiveLoadBalance(ctx, req, filtered, filterStats)
+	}
 
 	loadMap := map[int64]*AccountLoadInfo{}
 	if s.service.concurrencyService != nil {
+		loadReq := buildOpenAIAccountLoadRequest(filtered)
 		if batchLoad, loadErr := s.service.concurrencyService.GetAccountsLoadBatch(ctx, loadReq); loadErr == nil {
 			loadMap = batchLoad
 		}
@@ -1495,6 +1609,150 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		return attempt.result, attempt.candidateCount, attempt.topK, attempt.loadSkew, nil
 	}
 	return s.finishLoadBalanceSelectionFallback(ctx, req, attempt, budget, filterStats)
+}
+
+func (s *defaultOpenAIAccountScheduler) adaptiveSelectionEnabled(req OpenAIAccountScheduleRequest) bool {
+	return s != nil && s.adaptive != nil && s.adaptive.config.enabled && !s.adaptive.config.shadowMode &&
+		NormalizeOpenAICompatiblePlatform(req.Platform) == PlatformOpenAI
+}
+
+func (s *defaultOpenAIAccountScheduler) selectByAdaptiveLoadBalance(
+	ctx context.Context,
+	req OpenAIAccountScheduleRequest,
+	filtered []*Account,
+	filterStats openAISelectionFilterStats,
+) (*AccountSelectionResult, int, int, float64, error) {
+	candidateCount := len(filtered)
+	topK := minInt(candidateCount, s.adaptive.config.sampleSize*s.adaptive.config.sampleRounds)
+	localExcluded := cloneOpenAIAccountExclusions(req.ExcludedIDs)
+	pools := [][]*Account{filtered}
+	if req.SubscriptionPriority {
+		subscriptionAccounts, regularAccounts := partitionOpenAIChatGPTSubscriptionAccounts(filtered)
+		pools = pools[:0]
+		if len(subscriptionAccounts) > 0 {
+			pools = append(pools, subscriptionAccounts)
+		}
+		if len(regularAccounts) > 0 {
+			pools = append(pools, regularAccounts)
+		}
+	}
+
+	for _, pool := range pools {
+		if req.RequireCompact {
+			pool = prioritizeOpenAICompactAccounts(pool)
+		}
+		account, permit := s.adaptive.selectCandidate(pool, localExcluded, openAIAdaptiveRouteKey(req), time.Now(), deriveOpenAISelectionSeed(req))
+		if account == nil || permit == nil {
+			continue
+		}
+		selection, err := s.finishAdaptiveSelection(ctx, req, account, permit)
+		if err != nil {
+			return nil, candidateCount, topK, 0, err
+		}
+		if selection != nil {
+			return selection, candidateCount, topK, 0, nil
+		}
+		localExcluded[account.ID] = struct{}{}
+	}
+
+	waitPool := pools[0]
+	if req.RequireCompact {
+		waitPool = prioritizeOpenAICompactAccounts(waitPool)
+	}
+	deadline := time.Now().Add(s.adaptive.config.waitTimeout)
+	account, permit, waitErr := s.adaptive.waitAndSelect(
+		ctx,
+		deadline,
+		openAIAdaptiveRouteKey(req),
+		waitPool,
+		localExcluded,
+		deriveOpenAISelectionSeed(req),
+	)
+	if waitErr == nil && account != nil && permit != nil {
+		selection, err := s.finishAdaptiveSelection(ctx, req, account, permit)
+		if err != nil {
+			return nil, candidateCount, topK, 0, err
+		}
+		if selection != nil {
+			return selection, candidateCount, topK, 0, nil
+		}
+		localExcluded[account.ID] = struct{}{}
+	}
+	if waitErr != nil && !errors.Is(waitErr, errOpenAIAdaptiveWaitTimeout) && !errors.Is(waitErr, errOpenAIAdaptiveWaiterLimit) {
+		return nil, candidateCount, topK, 0, waitErr
+	}
+
+	return nil, candidateCount, topK, 0,
+		noAvailableOpenAISelectionError(req.RequestedModel, req.RequireCompact, filterStats.summary("adaptive_capacity_exhausted"))
+}
+
+func cloneOpenAIAccountExclusions(source map[int64]struct{}) map[int64]struct{} {
+	clone := make(map[int64]struct{}, len(source)+1)
+	for accountID := range source {
+		clone[accountID] = struct{}{}
+	}
+	return clone
+}
+
+func (s *defaultOpenAIAccountScheduler) finishAdaptiveSelection(
+	ctx context.Context,
+	req OpenAIAccountScheduleRequest,
+	account *Account,
+	permit *openAIAdaptivePermit,
+) (*AccountSelectionResult, error) {
+	if !s.isAdaptiveSelectionLocallyEligible(ctx, req, account) {
+		permit.Release()
+		return nil, nil
+	}
+
+	acquired, err := s.service.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
+	if err != nil {
+		permit.Release()
+		return nil, err
+	}
+	if acquired == nil || !acquired.Acquired {
+		permit.Release()
+		return nil, nil
+	}
+
+	var releaseOnce sync.Once
+	release := func() {
+		releaseOnce.Do(func() {
+			if acquired.ReleaseFunc != nil {
+				acquired.ReleaseFunc()
+			}
+			permit.Release()
+		})
+	}
+	selection := attachSelectionProfitGate(ctx, &AccountSelectionResult{
+		Account:     account,
+		Acquired:    true,
+		ReleaseFunc: release,
+	})
+	if req.SessionHash != "" && !req.PreserveStickyBinding {
+		_ = s.service.bindOpenAIStickySessionDuringSelection(ctx, req.GroupID, req.SessionHash, account.ID)
+	}
+	return selection, nil
+}
+
+func (s *defaultOpenAIAccountScheduler) isAdaptiveSelectionLocallyEligible(
+	ctx context.Context,
+	req OpenAIAccountScheduleRequest,
+	account *Account,
+) bool {
+	if s == nil || s.service == nil || account == nil {
+		return false
+	}
+	if !s.service.openAIAccountMatchesSchedulingGroup(account, req.GroupID) ||
+		!isOpenAICompatibleAccountEligibleForRequestBeforeProfit(ctx, account, req.Platform, req.RequestedModel, req.RequireCompact, req.RequiredCapability) ||
+		s.service.isOpenAIAccountRequestRuntimeBlocked(account, req.RequestedModel) ||
+		s.service.isOpenAIProxyStreamQuarantined(ctx, account) ||
+		!s.isAccountTransportCompatible(account, req.RequiredTransport) ||
+		!accountSupportsOpenAICapabilities(account, req.RequiredCapability, req.RequiredImageCapability) {
+		return false
+	}
+	vetoed, _ := openAIProfitControlVetoReason(ctx, account)
+	return !vetoed
 }
 
 func partitionOpenAIChatGPTSubscriptionAccounts(accounts []*Account) ([]*Account, []*Account) {
@@ -1701,14 +1959,26 @@ func (s *defaultOpenAIAccountScheduler) isAccountTransportCompatible(account *Ac
 	return s.service.isOpenAIAccountTransportCompatible(account, requiredTransport)
 }
 
-func (s *defaultOpenAIAccountScheduler) lookupShadowParentAccount(ctx context.Context, id int64) *Account {
+func (s *defaultOpenAIAccountScheduler) lookupShadowParentAccount(ctx context.Context, id int64, cacheOnly bool) *Account {
 	if s == nil || s.service == nil {
 		return nil
 	}
 	if s.service.schedulerSnapshot != nil {
-		if account, err := s.service.schedulerSnapshot.GetAccount(ctx, id); err == nil && account != nil {
+		var (
+			account *Account
+			err     error
+		)
+		if cacheOnly {
+			account, err = s.service.schedulerSnapshot.GetCachedAccount(ctx, id)
+		} else {
+			account, err = s.service.schedulerSnapshot.GetAccount(ctx, id)
+		}
+		if err == nil && account != nil {
 			return account
 		}
+	}
+	if cacheOnly {
+		return nil
 	}
 	if s.service.accountRepo == nil {
 		return nil
@@ -1750,9 +2020,13 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReason(ctx con
 	// 母账号健康联动：影子账号的凭据来自母账号，母账号不可调度时影子也不应被选中。
 	// Parent-health gate: shadow borrows the parent's credentials; an unschedulable
 	// parent must block the shadow across all scheduler paths.
-	if !parentHealthyForShadow(account, func(id int64) *Account {
-		return s.lookupShadowParentAccount(ctx, id)
-	}) {
+	shadowParentLookup := req.shadowParentLookup
+	if shadowParentLookup == nil {
+		shadowParentLookup = func(id int64) *Account {
+			return s.lookupShadowParentAccount(ctx, id, s.adaptiveSelectionEnabled(req))
+		}
+	}
+	if !parentHealthyForShadow(account, shadowParentLookup) {
 		return false, "shadow_parent_unhealthy"
 	}
 	if req.RequestedModel != "" && !account.IsModelSupported(req.RequestedModel) {
@@ -1774,11 +2048,25 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReason(ctx con
 	return true, ""
 }
 
-func (s *defaultOpenAIAccountScheduler) ReportResult(accountID int64, success bool, firstTokenMs *int) {
+func (s *defaultOpenAIAccountScheduler) ReportResult(accountID int64, model string, success bool, firstTokenMs *int) {
 	if s == nil || s.stats == nil {
 		return
 	}
 	s.stats.report(accountID, success, firstTokenMs)
+	if s.adaptive == nil {
+		return
+	}
+	now := time.Now()
+	if success {
+		latency := time.Duration(0)
+		if firstTokenMs != nil && *firstTokenMs > 0 {
+			latency = time.Duration(*firstTokenMs) * time.Millisecond
+		}
+		s.adaptive.reportSuccess(accountID, 0, now, latency)
+		s.adaptive.reportRouteAttempt(openAIAdaptiveResultRouteKey(PlatformOpenAI, model), false, now)
+		return
+	}
+	s.adaptive.reportFailure(accountID, 0, now)
 }
 
 func (s *defaultOpenAIAccountScheduler) ReportSwitch() {
@@ -2020,9 +2308,25 @@ func (s *OpenAIGatewayService) getOpenAIAccountScheduler(ctx context.Context) Op
 	if s == nil {
 		return nil
 	}
-	if !s.isOpenAIAdvancedSchedulerEnabled(ctx) {
+	adaptiveConfig := s.openAIAdaptiveConfig()
+	if !adaptiveConfig.enabled && !s.isOpenAIAdvancedSchedulerEnabled(ctx) {
 		return nil
 	}
+	return s.initOpenAIAccountScheduler()
+}
+
+func (s *OpenAIGatewayService) getOpenAIAccountSchedulerForFeedback(ctx context.Context) OpenAIAccountScheduler {
+	if s == nil {
+		return nil
+	}
+	adaptiveConfig := s.openAIAdaptiveConfig()
+	if !adaptiveConfig.enabled && !adaptiveConfig.shadowMode && !s.isOpenAIAdvancedSchedulerEnabled(ctx) {
+		return nil
+	}
+	return s.initOpenAIAccountScheduler()
+}
+
+func (s *OpenAIGatewayService) initOpenAIAccountScheduler() OpenAIAccountScheduler {
 	s.openaiSchedulerOnce.Do(func() {
 		if s.openaiAccountStats == nil {
 			s.openaiAccountStats = newOpenAIAccountRuntimeStats()
@@ -2231,8 +2535,14 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 			stickyAccountID = accountID
 		}
 	}
-	stickyWeighted := s.isOpenAIAdvancedSchedulerStickyWeightedEnabled(ctx)
-	subscriptionPriority := s.isOpenAIAdvancedSchedulerSubscriptionPriorityEnabled(ctx)
+	adaptiveCfg := s.openAIAdaptiveConfig()
+	adaptiveRequest := adaptiveCfg.enabled && !adaptiveCfg.shadowMode && platform == PlatformOpenAI
+	stickyWeighted := false
+	subscriptionPriority := false
+	if !adaptiveRequest {
+		stickyWeighted = s.isOpenAIAdvancedSchedulerStickyWeightedEnabled(ctx)
+		subscriptionPriority = s.isOpenAIAdvancedSchedulerSubscriptionPriorityEnabled(ctx)
+	}
 	stickyPreviousAccountID := int64(0)
 	if stickyWeighted && previousResponseCanMove && strings.TrimSpace(previousResponseID) != "" && platform == PlatformOpenAI {
 		stickyPreviousAccountID = s.ResolveAccountIDByPreviousResponseIDForScheduler(ctx, groupID, previousResponseID, requestedModel, excludedIDs, requiredCapability, requireCompact)
@@ -2303,11 +2613,11 @@ func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(accountID int64
 	if success {
 		s.clearOpenAIAccountModelTransientState(accountID, normalizeOpenAIAccountModelTransientModel(model))
 	}
-	scheduler := s.getOpenAIAccountScheduler(context.Background())
+	scheduler := s.getOpenAIAccountSchedulerForFeedback(context.Background())
 	if scheduler == nil {
 		return
 	}
-	scheduler.ReportResult(accountID, success, firstTokenMs)
+	scheduler.ReportResult(accountID, model, success, firstTokenMs)
 }
 
 func (s *OpenAIGatewayService) RecordOpenAIAccountSwitch() {

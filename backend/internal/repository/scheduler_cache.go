@@ -37,7 +37,8 @@ const (
 
 	// snapshotGraceTTLSeconds 旧快照过期的宽限期（秒）。
 	// 替代立即 DEL，让正在读取旧版本的 reader 有足够时间完成 ZRANGE。
-	snapshotGraceTTLSeconds = 60
+	snapshotGraceTTLSeconds          = 60
+	schedulerSnapshotL1ValidationTTL = 250 * time.Millisecond
 )
 
 const (
@@ -232,8 +233,9 @@ type schedulerCache struct {
 }
 
 type schedulerSnapshotL1Entry struct {
-	version  string
-	accounts []service.Account
+	version     string
+	accounts    []service.Account
+	validatedAt time.Time
 }
 
 type schedulerSnapshotHydrationResult struct {
@@ -261,6 +263,28 @@ func newSchedulerCacheWithChunkSizes(rdb *redis.Client, mgetChunkSize, writeChun
 }
 
 func (c *schedulerCache) GetSnapshot(ctx context.Context, bucket service.SchedulerBucket) ([]*service.Account, bool, error) {
+	accounts, hit, err := c.getSnapshotValues(ctx, bucket)
+	if err != nil || !hit {
+		return nil, hit, err
+	}
+	return cloneSchedulerSnapshotAccounts(accounts), true, nil
+}
+
+// GetSnapshotReadOnly is an internal adaptive-scheduler fast path. It copies
+// Account values but shares immutable nested metadata from the active L1
+// version. Callers must not mutate maps or slices inside returned accounts.
+func (c *schedulerCache) GetSnapshotReadOnly(ctx context.Context, bucket service.SchedulerBucket) ([]service.Account, bool, error) {
+	accounts, hit, err := c.getSnapshotValues(ctx, bucket)
+	if err != nil || !hit {
+		return nil, hit, err
+	}
+	return append([]service.Account(nil), accounts...), true, nil
+}
+
+func (c *schedulerCache) getSnapshotValues(ctx context.Context, bucket service.SchedulerBucket) ([]service.Account, bool, error) {
+	if accounts, ok := c.getFreshSnapshotL1Values(bucket, time.Now()); ok {
+		return accounts, true, nil
+	}
 	readyKey := schedulerBucketKey(schedulerReadyPrefix, bucket)
 	activeKey := schedulerBucketKey(schedulerActivePrefix, bucket)
 	pipe := c.rdb.Pipeline()
@@ -290,7 +314,8 @@ func (c *schedulerCache) GetSnapshot(ctx context.Context, bucket service.Schedul
 	if err != nil {
 		return nil, false, err
 	}
-	if accounts, ok := c.getSnapshotL1(bucket, activeVal); ok {
+	if accounts, ok := c.getSnapshotL1Values(bucket, activeVal); ok {
+		c.markSnapshotL1Validated(bucket, activeVal, time.Now())
 		return accounts, true, nil
 	}
 
@@ -312,7 +337,7 @@ func (c *schedulerCache) GetSnapshot(ctx context.Context, bucket service.Schedul
 	if !result.hit {
 		return nil, false, nil
 	}
-	return cloneSchedulerSnapshotAccounts(result.accounts), true, nil
+	return result.accounts, true, nil
 }
 
 func (c *schedulerCache) hydrateSnapshotVersion(ctx context.Context, bucket service.SchedulerBucket, activeVal string) ([]service.Account, bool, error) {
@@ -360,14 +385,6 @@ func (c *schedulerCache) hydrateSnapshotVersion(ctx context.Context, bucket serv
 	return accounts, true, nil
 }
 
-func (c *schedulerCache) getSnapshotL1(bucket service.SchedulerBucket, version string) ([]*service.Account, bool) {
-	accounts, ok := c.getSnapshotL1Values(bucket, version)
-	if !ok {
-		return nil, false
-	}
-	return cloneSchedulerSnapshotAccounts(accounts), true
-}
-
 func (c *schedulerCache) getSnapshotL1Values(bucket service.SchedulerBucket, version string) ([]service.Account, bool) {
 	c.snapshotL1Mu.RLock()
 	entry, ok := c.snapshotL1[bucket]
@@ -378,13 +395,34 @@ func (c *schedulerCache) getSnapshotL1Values(bucket service.SchedulerBucket, ver
 	return entry.accounts, true
 }
 
+func (c *schedulerCache) getFreshSnapshotL1Values(bucket service.SchedulerBucket, now time.Time) ([]service.Account, bool) {
+	c.snapshotL1Mu.RLock()
+	entry, ok := c.snapshotL1[bucket]
+	c.snapshotL1Mu.RUnlock()
+	age := now.Sub(entry.validatedAt)
+	if !ok || entry.validatedAt.IsZero() || age < 0 || age >= schedulerSnapshotL1ValidationTTL {
+		return nil, false
+	}
+	return entry.accounts, true
+}
+
+func (c *schedulerCache) markSnapshotL1Validated(bucket service.SchedulerBucket, version string, now time.Time) {
+	c.snapshotL1Mu.Lock()
+	entry, ok := c.snapshotL1[bucket]
+	if ok && entry.version == version {
+		entry.validatedAt = now
+		c.snapshotL1[bucket] = entry
+	}
+	c.snapshotL1Mu.Unlock()
+}
+
 func (c *schedulerCache) storeSnapshotL1(bucket service.SchedulerBucket, version string, accounts []service.Account) {
 	stored := make([]service.Account, len(accounts))
 	for i := range accounts {
 		stored[i] = cloneSchedulerAccount(accounts[i])
 	}
 	c.snapshotL1Mu.Lock()
-	c.snapshotL1[bucket] = schedulerSnapshotL1Entry{version: version, accounts: stored}
+	c.snapshotL1[bucket] = schedulerSnapshotL1Entry{version: version, accounts: stored, validatedAt: time.Now()}
 	c.snapshotL1Mu.Unlock()
 }
 

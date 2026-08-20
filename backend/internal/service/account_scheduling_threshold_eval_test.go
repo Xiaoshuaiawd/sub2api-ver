@@ -260,6 +260,39 @@ func TestEvaluateAccountSchedulingThreshold_AccountOverrideCanLowerOpenAIThresho
 	require.True(t, wantUntil.Equal(*decision.Until))
 }
 
+func TestEvaluateAccountSchedulingThreshold_OpenAIResetCreditsMustBeUnexpired(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)
+	resetAt := now.Add(24 * time.Hour)
+	baseExtra := func(snapshot any) map[string]any {
+		return map[string]any{
+			"codex_7d_used_percent":    100.0,
+			"codex_7d_reset_at":        resetAt.Format(time.RFC3339),
+			openaiQuotaResetCreditsKey: snapshot,
+		}
+	}
+	tests := []struct {
+		name      string
+		snapshot  any
+		wantPause bool
+	}{
+		{name: "typed future credit", snapshot: OpenAIRateLimitResetCredits{AvailableCount: 1, Credits: []OpenAIRateLimitResetCreditDetail{{ExpiresAt: now.Add(time.Hour).Format(time.RFC3339)}}}, wantPause: false},
+		{name: "typed expired credit", snapshot: OpenAIRateLimitResetCredits{AvailableCount: 1, Credits: []OpenAIRateLimitResetCreditDetail{{ExpiresAt: now.Add(-time.Second).Format(time.RFC3339)}}}, wantPause: true},
+		{name: "map future credit", snapshot: map[string]any{"available_count": float64(1), "credits": []any{map[string]any{"expires_at": now.Add(time.Hour).Format(time.RFC3339)}}}, wantPause: false},
+		{name: "map expired credit", snapshot: map[string]any{"available_count": float64(1), "credits": []any{map[string]any{"expires_at": now.Add(-time.Second).Format(time.RFC3339)}}}, wantPause: true},
+		{name: "missing expiry details", snapshot: map[string]any{"available_count": float64(1)}, wantPause: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			account := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: baseExtra(tt.snapshot)}
+			decision := EvaluateAccountSchedulingThreshold(account, map[string]int{PlatformOpenAI: 99}, now)
+			require.Equal(t, tt.wantPause, decision.ShouldPause)
+		})
+	}
+}
+
 func TestEvaluateAccountSchedulingThreshold_AccountOverrideHundredDisablesOpenAI(t *testing.T) {
 	t.Parallel()
 

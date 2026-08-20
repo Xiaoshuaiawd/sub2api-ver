@@ -7,6 +7,7 @@ import (
 	"math"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +19,8 @@ type openAISnapshotCacheStub struct {
 	SchedulerCache
 	snapshotAccounts []*Account
 	accountsByID     map[int64]*Account
+	snapshotCalls    *atomic.Int64
+	accountCalls     *atomic.Int64
 }
 
 type schedulerTestOpenAIAccountRepo struct {
@@ -286,6 +289,9 @@ func newOpenAIAdvancedSchedulerRateLimitService(enabled string, values ...string
 }
 
 func (s *openAISnapshotCacheStub) GetSnapshot(ctx context.Context, bucket SchedulerBucket) ([]*Account, bool, error) {
+	if s.snapshotCalls != nil {
+		s.snapshotCalls.Add(1)
+	}
 	if len(s.snapshotAccounts) == 0 {
 		return nil, false, nil
 	}
@@ -300,7 +306,18 @@ func (s *openAISnapshotCacheStub) GetSnapshot(ctx context.Context, bucket Schedu
 	return out, true, nil
 }
 
+func (s *openAISnapshotCacheStub) CaptureBucketWriteToken(context.Context, SchedulerBucket) (SchedulerBucketWriteToken, error) {
+	return SchedulerBucketWriteToken{}, nil
+}
+
+func (s *openAISnapshotCacheStub) SetSnapshot(context.Context, SchedulerBucket, SchedulerBucketWriteToken, []Account) error {
+	return nil
+}
+
 func (s *openAISnapshotCacheStub) GetAccount(ctx context.Context, accountID int64) (*Account, error) {
+	if s.accountCalls != nil {
+		s.accountCalls.Add(1)
+	}
 	if s.accountsByID == nil {
 		return nil, nil
 	}
@@ -3446,7 +3463,7 @@ func TestDefaultOpenAIAccountScheduler_ReportSwitchAndSnapshot(t *testing.T) {
 	require.True(t, ok)
 
 	ttft := 100
-	scheduler.ReportResult(1001, true, &ttft)
+	scheduler.ReportResult(1001, "gpt-5.1", true, &ttft)
 	scheduler.ReportSwitch()
 	scheduler.metrics.recordSelect(OpenAIAccountScheduleDecision{
 		Layer:             openAIAccountScheduleLayerLoadBalance,

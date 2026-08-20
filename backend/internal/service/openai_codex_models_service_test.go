@@ -395,6 +395,39 @@ func TestFetchCodexModelsManifestUpstreamError(t *testing.T) {
 	}
 }
 
+func TestFetchCodexModelsManifestOAuth429FeedsAdaptiveScheduler(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "30")
+		http.Error(w, `{"error":{"message":"rate limited"}}`, http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	original := chatgptCodexModelsURL
+	chatgptCodexModelsURL = server.URL
+	defer func() { chatgptCodexModelsURL = original }()
+
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIScheduler.AdaptiveEnabled = true
+	cfg.Gateway.OpenAIScheduler.ShadowMode = false
+	cfg.Gateway.OpenAIScheduler.InitialWindow = 4
+	cfg.Gateway.OpenAIScheduler.MinWindow = 1
+	cfg.Gateway.OpenAIScheduler.MaxWindow = 32
+	account := newCodexModelsTestAccount()
+	account.Concurrency = 32
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	_, err := svc.FetchCodexModelsManifest(context.Background(), account, "0.144.0", "")
+	require.Error(t, err)
+
+	scheduler, ok := svc.getOpenAIAccountScheduler(context.Background()).(*defaultOpenAIAccountScheduler)
+	require.True(t, ok)
+	require.NotNil(t, scheduler.adaptive)
+	snapshot := scheduler.adaptive.snapshot(account.ID, account.Concurrency, time.Now())
+	require.Equal(t, 2, snapshot.window, "the first manifest 429 must halve the local window immediately")
+	require.False(t, snapshot.reservable, "the selected account must enter cooldown after a manifest 429")
+	require.Greater(t, time.Until(snapshot.cooldownUntil), 20*time.Second)
+}
+
 func TestFetchCodexModelsManifestMissingToken(t *testing.T) {
 	account := newCodexModelsTestAccount()
 	delete(account.Credentials, "access_token")
@@ -469,6 +502,38 @@ func TestFetchCodexModelsManifestAPIKeyCustomUpstream(t *testing.T) {
 	if manifest.ETag != `W/"api-key-manifest"` {
 		t.Errorf("etag not passed through: got %q", manifest.ETag)
 	}
+}
+
+func TestFetchCodexModelsManifestAPIKey429FeedsAdaptiveScheduler(t *testing.T) {
+	upstream := &codexModelsHTTPUpstreamStub{do: func(*http.Request, string, int64, int) (*http.Response, error) {
+		header := make(http.Header)
+		header.Set("Retry-After", "30")
+		return &http.Response{
+			StatusCode: http.StatusTooManyRequests,
+			Header:     header,
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"rate limited"}}`)),
+		}, nil
+	}}
+	cfg := &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}}
+	cfg.Gateway.OpenAIScheduler.AdaptiveEnabled = true
+	cfg.Gateway.OpenAIScheduler.ShadowMode = false
+	cfg.Gateway.OpenAIScheduler.InitialWindow = 4
+	cfg.Gateway.OpenAIScheduler.MinWindow = 1
+	cfg.Gateway.OpenAIScheduler.MaxWindow = 32
+	account := newCodexModelsAPIKeyTestAccount("https://upstream.example/v1")
+	account.Concurrency = 32
+	svc := &OpenAIGatewayService{cfg: cfg, httpUpstream: upstream}
+
+	_, err := svc.FetchCodexModelsManifest(context.Background(), account, "0.144.0", "")
+	require.Error(t, err)
+
+	scheduler, ok := svc.getOpenAIAccountScheduler(context.Background()).(*defaultOpenAIAccountScheduler)
+	require.True(t, ok)
+	require.NotNil(t, scheduler.adaptive)
+	snapshot := scheduler.adaptive.snapshot(account.ID, account.Concurrency, time.Now())
+	require.Equal(t, 2, snapshot.window, "the first API key manifest 429 must halve the local window immediately")
+	require.False(t, snapshot.reservable)
+	require.Greater(t, time.Until(snapshot.cooldownUntil), 20*time.Second)
 }
 
 func TestFetchCodexModelsManifestAPIKeyConvertsStandardOpenAIModelList(t *testing.T) {

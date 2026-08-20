@@ -1342,7 +1342,8 @@ func (w GatewayOpenAIWSSchedulerScoreWeights) IsValid() bool {
 type GatewayOpenAISchedulerConfig struct {
 	// AdaptiveEnabled enables the local adaptive scheduler. Disabled keeps the legacy Redis load-aware path.
 	AdaptiveEnabled bool `mapstructure:"adaptive_enabled"`
-	// ShadowMode evaluates adaptive decisions without changing account selection.
+	// ShadowMode records adaptive health feedback without changing account selection.
+	// It does not compute or compare an alternative adaptive account choice.
 	ShadowMode bool `mapstructure:"shadow_mode"`
 	// InitialWindow, MinWindow, and MaxWindow bound the learned per-account concurrency window.
 	InitialWindow int `mapstructure:"initial_window"`
@@ -3570,8 +3571,8 @@ func (c *Config) Validate() error {
 	if adaptive.FailoverTotalBudgetMS <= 0 || adaptive.FailoverTotalBudgetMS > adaptive.SchedulingWaitTimeoutMS {
 		return fmt.Errorf("gateway.openai_scheduler.failover_total_budget_ms must be positive and no greater than scheduling_wait_timeout_ms")
 	}
-	if adaptive.MaxDistinctAccountAttempts < 2 {
-		return fmt.Errorf("gateway.openai_scheduler.max_distinct_account_attempts must be at least 2")
+	if adaptive.MaxDistinctAccountAttempts != 2 {
+		return fmt.Errorf("gateway.openai_scheduler.max_distinct_account_attempts must be exactly 2")
 	}
 	if adaptive.StormWindowSeconds <= 0 {
 		return fmt.Errorf("gateway.openai_scheduler.storm_window_seconds must be positive")

@@ -55,6 +55,65 @@ const (
 // 语义上等同于「无可用账号」：候选账号都不满足分组的利润约束。
 const profitVetoExhaustedMessage = "No available accounts: all candidates rejected by group profit control"
 
+type openAIFailoverBudget struct {
+	duration    time.Duration
+	maxDistinct int
+	deadline    time.Time
+	accounts    map[int64]struct{}
+}
+
+func newOpenAIFailoverBudget(duration time.Duration, maxDistinct int) *openAIFailoverBudget {
+	return &openAIFailoverBudget{
+		duration:    duration,
+		maxDistinct: maxDistinct,
+		accounts:    make(map[int64]struct{}),
+	}
+}
+
+func (b *openAIFailoverBudget) Arm(now time.Time) {
+	if b == nil || b.duration <= 0 || !b.deadline.IsZero() {
+		return
+	}
+	b.deadline = now.Add(b.duration)
+}
+
+func (b *openAIFailoverBudget) CanTry(accountID int64, now time.Time) bool {
+	if b == nil {
+		return true
+	}
+	if !b.deadline.IsZero() && !now.Before(b.deadline) {
+		return false
+	}
+	if _, ok := b.accounts[accountID]; ok {
+		return true
+	}
+	if accountID <= 0 || (b.maxDistinct > 0 && len(b.accounts) >= b.maxDistinct) {
+		return false
+	}
+	b.accounts[accountID] = struct{}{}
+	return true
+}
+
+func (b *openAIFailoverBudget) SelectionContext(parent context.Context) (context.Context, context.CancelFunc) {
+	if b == nil || b.deadline.IsZero() {
+		return context.WithCancel(parent)
+	}
+	return context.WithDeadline(parent, b.deadline)
+}
+
+func (b *openAIFailoverBudget) AcceptSelection(selection *service.AccountSelectionResult, now time.Time) bool {
+	if selection == nil || selection.Account == nil {
+		return false
+	}
+	if b.CanTry(selection.Account.ID, now) {
+		return true
+	}
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
+	return false
+}
+
 func sameAccountRetryDelayFor(failoverErr *service.UpstreamFailoverError, retryCount int) time.Duration {
 	if failoverErr == nil || !failoverErr.RequestScopedTransient || retryCount <= 1 {
 		return sameAccountRetryDelay

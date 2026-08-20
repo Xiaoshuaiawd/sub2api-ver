@@ -627,6 +627,7 @@ func TestValidateOpenAIAdaptiveSchedulerConfig(t *testing.T) {
 		{name: "wait timeout", mutate: func(c *GatewayOpenAISchedulerConfig) { c.SchedulingWaitTimeoutMS = 0 }, wantErr: "scheduling_wait_timeout_ms"},
 		{name: "failover budget", mutate: func(c *GatewayOpenAISchedulerConfig) { c.FailoverTotalBudgetMS = 0 }, wantErr: "failover_total_budget_ms"},
 		{name: "attempts", mutate: func(c *GatewayOpenAISchedulerConfig) { c.MaxDistinctAccountAttempts = 1 }, wantErr: "max_distinct_account_attempts"},
+		{name: "attempts above hard limit", mutate: func(c *GatewayOpenAISchedulerConfig) { c.MaxDistinctAccountAttempts = 3 }, wantErr: "max_distinct_account_attempts"},
 		{name: "storm window", mutate: func(c *GatewayOpenAISchedulerConfig) { c.StormWindowSeconds = 0 }, wantErr: "storm_window_seconds"},
 		{name: "storm attempts", mutate: func(c *GatewayOpenAISchedulerConfig) { c.StormMinAttempts = 0 }, wantErr: "storm_min_attempts"},
 		{name: "storm ratio", mutate: func(c *GatewayOpenAISchedulerConfig) { c.Storm429Ratio = 0 }, wantErr: "storm_429_ratio"},

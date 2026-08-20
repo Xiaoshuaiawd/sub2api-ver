@@ -156,17 +156,20 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 	jsonKeepaliveStarted := false
 	defer func() { stopJSONKeepalive() }()
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
+	failoverBudget := h.newOpenAIFailoverBudget()
 
 	for {
 		reqLog.Debug("openai.images.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
+		selectionCtx, selectionCancel := failoverBudget.SelectionContext(requestCtx)
 		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForImages(
-			requestCtx,
+			selectionCtx,
 			apiKey.GroupID,
 			sessionHash,
 			routingModel,
 			failedAccountIDs,
 			parsed.RequiredCapability,
 		)
+		selectionCancel()
 		if err != nil {
 			if failoverClientGone(c) {
 				reqLog.Info("openai.images.account_select_aborted_client_disconnected", zap.Error(err))
@@ -205,6 +208,14 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 				message = "No available compatible accounts"
 			}
 			h.handleStreamingAwareError(c, cls.Status, cls.ErrType, message, streamStarted)
+			return
+		}
+		if !failoverBudget.AcceptSelection(selection, time.Now()) {
+			if lastFailoverErr != nil {
+				h.handleFailoverExhausted(c, lastFailoverErr, streamStarted)
+			} else {
+				h.handleFailoverExhaustedSimple(c, http.StatusBadGateway, streamStarted)
+			}
 			return
 		}
 
@@ -329,6 +340,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 						return
 					}
 					switchCount++
+					failoverBudget.Arm(time.Now())
 					if h.gatewayService.ShouldStopOpenAIOAuth429Failover(account, failoverErr.StatusCode, switchCount, &oauth429FailoverState) {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return

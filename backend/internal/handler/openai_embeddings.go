@@ -116,14 +116,16 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 		maxAccountSwitches = 3
 	}
 	routingStart := time.Now()
+	failoverBudget := h.newOpenAIFailoverBudget()
 
 	// 分组利润控制：embeddings 文本入口请求级装门并固定 pricingAt。
 	embPricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
 	c.Request = c.Request.WithContext(embPricingCtx)
 
 	for {
+		selectionCtx, selectionCancel := failoverBudget.SelectionContext(c.Request.Context())
 		selection, _, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
-			c.Request.Context(),
+			selectionCtx,
 			apiKey.GroupID,
 			"",
 			"",
@@ -135,6 +137,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 			false,
 			true,
 		)
+		selectionCancel()
 		if err != nil {
 			if failoverClientGone(c) {
 				reqLog.Info("openai_embeddings.account_select_aborted_client_disconnected", zap.Error(err))
@@ -165,6 +168,14 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 				markOpsRoutingCapacityLimited(c)
 			}
 			h.errorResponse(c, cls.Status, cls.ErrType, cls.Message)
+			return
+		}
+		if !failoverBudget.AcceptSelection(selection, time.Now()) {
+			if lastFailoverErr != nil {
+				h.handleFailoverExhausted(c, lastFailoverErr, false)
+			} else {
+				h.errorResponse(c, http.StatusBadGateway, "api_error", "Upstream request failed")
+			}
 			return
 		}
 		account := selection.Account
@@ -231,6 +242,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 					return
 				}
 				switchCount++
+				failoverBudget.Arm(time.Now())
 				reqLog.Warn("openai_embeddings.upstream_failover_switching",
 					zap.Int64("account_id", account.ID),
 					zap.Int("upstream_status", failoverErr.StatusCode),

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"math"
 	"strconv"
@@ -160,10 +161,74 @@ func openAIThresholdCandidates(account *Account, now time.Time) []*accountSchedu
 	if !openAICodexSnapshotIdentityTrusted(account) {
 		return nil
 	}
-	return []*accountSchedulingThresholdCandidate{
+	candidates := []*accountSchedulingThresholdCandidate{
 		openAIThresholdCandidate(account.Extra, "5h", now),
-		openAIThresholdCandidate(account.Extra, "7d", now),
 	}
+	if !openAIAccountHasAvailableResetCredits(account, now) {
+		candidates = append(candidates, openAIThresholdCandidate(account.Extra, "7d", now))
+	}
+	return candidates
+}
+
+func openAIAccountHasAvailableResetCredits(account *Account, now time.Time) bool {
+	if account == nil || len(account.Extra) == 0 {
+		return false
+	}
+	raw := account.Extra[openaiQuotaResetCreditsKey]
+	switch value := raw.(type) {
+	case OpenAIRateLimitResetCredits:
+		creditsCopy := value
+		return openAIResetCreditsIncludeUnexpired(&creditsCopy, now)
+	case *OpenAIRateLimitResetCredits:
+		return openAIResetCreditsIncludeUnexpired(value, now)
+	case map[string]any:
+		encoded, err := json.Marshal(value)
+		var decoded OpenAIRateLimitResetCredits
+		if err != nil || json.Unmarshal(encoded, &decoded) != nil {
+			return false
+		}
+		return openAIResetCreditsIncludeUnexpired(&decoded, now)
+	default:
+		return false
+	}
+}
+
+func openAIResetCreditsIncludeUnexpired(credits *OpenAIRateLimitResetCredits, now time.Time) bool {
+	if credits == nil || credits.AvailableCount <= 0 {
+		return false
+	}
+	for _, credit := range credits.Credits {
+		expiresAt, err := parseTime(strings.TrimSpace(credit.ExpiresAt))
+		if err == nil && expiresAt.After(now) {
+			return true
+		}
+	}
+	return false
+}
+
+func isOpenAICreditBackedSevenDayThresholdPause(account *Account, now time.Time) bool {
+	if account == nil || !account.IsOpenAI() || !openAIAccountHasAvailableResetCredits(account, now) ||
+		account.TempUnschedulableUntil == nil || !now.Before(*account.TempUnschedulableUntil) {
+		return false
+	}
+	payload, ok := parseTempUnschedReasonPayload(account.TempUnschedulableReason)
+	return ok && payload.Source == AccountSchedulingThresholdReasonSource && payload.Window == "7d"
+}
+
+func isOpenAIAccountSchedulableWithCredits(ctx context.Context, account *Account, requestedModel string) bool {
+	if account == nil {
+		return false
+	}
+	if account.IsSchedulableForModelWithContext(ctx, requestedModel) {
+		return true
+	}
+	if !isOpenAICreditBackedSevenDayThresholdPause(account, time.Now()) {
+		return false
+	}
+	creditBacked := *account
+	creditBacked.TempUnschedulableUntil = nil
+	creditBacked.TempUnschedulableReason = ""
+	return creditBacked.IsSchedulableForModelWithContext(ctx, requestedModel)
 }
 
 func openAICodexSnapshotIdentityTrusted(account *Account) bool {

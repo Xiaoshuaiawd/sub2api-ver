@@ -2,8 +2,10 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/alicebob/miniredis/v2"
@@ -56,6 +58,16 @@ func (h *schedulerCommandCountHook) count(name string) int {
 	return h.counts[name]
 }
 
+func (h *schedulerCommandCountHook) total() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	total := 0
+	for _, count := range h.counts {
+		total += count
+	}
+	return total
+}
+
 func newSchedulerCacheL1Test(t *testing.T) (*schedulerCache, *schedulerCommandCountHook) {
 	t.Helper()
 	mr := miniredis.RunT(t)
@@ -93,9 +105,75 @@ func TestSchedulerCacheSnapshotL1SkipsPayloadReadsForUnchangedVersion(t *testing
 	require.NoError(t, err)
 	require.True(t, hit)
 	require.Len(t, second, 1)
-	require.Equal(t, 2, commands.count("get"), "unchanged version should only validate ready and active")
+	require.Zero(t, commands.total(), "fresh local version validation should avoid Redis entirely")
 	require.Zero(t, commands.count("zrange"))
 	require.Zero(t, commands.count("mget"))
+
+	time.Sleep(schedulerSnapshotL1ValidationTTL + 20*time.Millisecond)
+	_, hit, err = cache.GetSnapshot(ctx, bucket)
+	require.NoError(t, err)
+	require.True(t, hit)
+	require.Equal(t, 2, commands.count("get"), "expired local validation must recheck ready and active")
+}
+
+func TestSchedulerCacheSnapshotReadOnlyUsesConstantAllocations(t *testing.T) {
+	ctx := context.Background()
+	cache, _ := newSchedulerCacheL1Test(t)
+	bucket := service.SchedulerBucket{GroupID: 36, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeSingle}
+	accounts := make([]service.Account, 3000)
+	for i := range accounts {
+		accounts[i] = service.Account{
+			ID: int64(36_000 + i), Name: fmt.Sprintf("account-%d", i), Platform: service.PlatformOpenAI,
+			Credentials: map[string]any{"model_mapping": map[string]any{"source": "target"}},
+		}
+	}
+	publishSchedulerL1TestSnapshot(t, cache, bucket, accounts)
+	_, hit, err := cache.GetSnapshotReadOnly(ctx, bucket)
+	require.NoError(t, err)
+	require.True(t, hit)
+
+	allocations := testing.AllocsPerRun(20, func() {
+		view, viewHit, viewErr := cache.GetSnapshotReadOnly(ctx, bucket)
+		if viewErr != nil || !viewHit || len(view) != len(accounts) {
+			panic("read-only snapshot miss")
+		}
+	})
+	require.LessOrEqual(t, allocations, float64(2), "read-only snapshot should copy one account-value slice without deep-cloning 3000 maps")
+
+	first, hit, err := cache.GetSnapshotReadOnly(ctx, bucket)
+	require.NoError(t, err)
+	require.True(t, hit)
+	first[0].Name = "mutated"
+	second, hit, err := cache.GetSnapshotReadOnly(ctx, bucket)
+	require.NoError(t, err)
+	require.True(t, hit)
+	require.Equal(t, "account-0", second[0].Name, "returned account structs must not alias the cached slice")
+}
+
+func TestOpenAIAdaptiveRedisHotPathUsesAtMostThreeCommands(t *testing.T) {
+	ctx := context.Background()
+	cache, commands := newSchedulerCacheL1Test(t)
+	bucket := service.SchedulerBucket{GroupID: 37, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeSingle}
+	publishSchedulerL1TestSnapshot(t, cache, bucket, []service.Account{{ID: 37_001, Platform: service.PlatformOpenAI}})
+	_, hit, err := cache.GetSnapshotReadOnly(ctx, bucket)
+	require.NoError(t, err)
+	require.True(t, hit)
+	concurrency := NewConcurrencyCache(cache.rdb, 15, 900).(*concurrencyCache)
+	acquired, err := concurrency.AcquireAccountSlot(ctx, 37_001, 10, "warm")
+	require.NoError(t, err)
+	require.True(t, acquired)
+	require.NoError(t, concurrency.ReleaseAccountSlot(ctx, 37_001, "warm"))
+	commands.reset()
+
+	_, hit, err = cache.GetSnapshotReadOnly(ctx, bucket)
+	require.NoError(t, err)
+	require.True(t, hit)
+	acquired, err = concurrency.AcquireAccountSlot(ctx, 37_001, 10, "request")
+	require.NoError(t, err)
+	require.True(t, acquired)
+	require.NoError(t, concurrency.ReleaseAccountSlot(ctx, 37_001, "request"))
+
+	require.LessOrEqual(t, commands.total(), 3, "normal adaptive request must stay within the 0-3 Redis command budget")
 }
 
 func TestSchedulerCacheSnapshotL1ReloadsChangedVersion(t *testing.T) {

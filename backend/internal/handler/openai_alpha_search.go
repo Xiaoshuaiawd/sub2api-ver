@@ -113,6 +113,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 	switchCount := 0
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
 	routingStart := time.Now()
+	failoverBudget := h.newOpenAIFailoverBudget()
 
 	// 分组利润控制：alpha search 文本入口请求级装门并固定 pricingAt
 	//（记录路径经 service.OpenAIPricingAtFromContext 从请求 ctx 回读）。
@@ -120,8 +121,9 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 	c.Request = c.Request.WithContext(asPricingCtx)
 
 	for {
+		selectionCtx, selectionCancel := failoverBudget.SelectionContext(c.Request.Context())
 		selection, _, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
-			c.Request.Context(),
+			selectionCtx,
 			apiKey.GroupID,
 			"",
 			sessionHash,
@@ -134,6 +136,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 			false,
 			service.PlatformOpenAI,
 		)
+		selectionCancel()
 		if err != nil || selection == nil || selection.Account == nil {
 			if failoverClientGone(c) {
 				reqLog.Info("openai_alpha_search.account_select_aborted_client_disconnected", zap.Error(err))
@@ -147,6 +150,14 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 				h.errorResponse(c, cls.Status, cls.ErrType, cls.Message)
 				return
 			}
+			if lastFailoverErr != nil {
+				h.handleFailoverExhausted(c, lastFailoverErr, false)
+			} else {
+				h.errorResponse(c, http.StatusBadGateway, "upstream_error", "Upstream request failed")
+			}
+			return
+		}
+		if !failoverBudget.AcceptSelection(selection, time.Now()) {
 			if lastFailoverErr != nil {
 				h.handleFailoverExhausted(c, lastFailoverErr, false)
 			} else {
@@ -219,6 +230,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 			return
 		}
 		switchCount++
+		failoverBudget.Arm(time.Now())
 		if h.gatewayService.ShouldStopOpenAIOAuth429Failover(account, failoverErr.StatusCode, switchCount, &oauth429FailoverState) {
 			h.handleFailoverExhausted(c, failoverErr, false)
 			return

@@ -42,6 +42,8 @@ type OpenAIGatewayHandler struct {
 	concurrencyHelper          *ConcurrencyHelper
 	imageLimiter               *imageConcurrencyLimiter
 	maxAccountSwitches         int
+	openAIFailoverBudget       time.Duration
+	openAIMaxDistinctAccounts  int
 	cfg                        *config.Config
 }
 
@@ -220,30 +222,44 @@ func NewOpenAIGatewayHandler(
 ) *OpenAIGatewayHandler {
 	pingInterval := time.Duration(0)
 	maxAccountSwitches := 3
+	openAIFailoverBudget := time.Duration(0)
+	openAIMaxDistinctAccounts := 0
 	if cfg != nil {
 		pingInterval = time.Duration(cfg.Concurrency.PingInterval) * time.Second
 		if cfg.Gateway.MaxAccountSwitches > 0 {
 			maxAccountSwitches = cfg.Gateway.MaxAccountSwitches
 		}
-		if adaptive := cfg.Gateway.OpenAIScheduler; adaptive.AdaptiveEnabled && adaptive.MaxDistinctAccountAttempts > 1 {
-			if adaptiveMaxSwitches := adaptive.MaxDistinctAccountAttempts - 1; maxAccountSwitches > adaptiveMaxSwitches {
+		if adaptive := cfg.Gateway.OpenAIScheduler; adaptive.AdaptiveEnabled && !adaptive.ShadowMode {
+			openAIFailoverBudget = time.Duration(adaptive.FailoverTotalBudgetMS) * time.Millisecond
+			const adaptiveMaxDistinctAccounts = 2
+			openAIMaxDistinctAccounts = adaptiveMaxDistinctAccounts
+			if adaptiveMaxSwitches := adaptiveMaxDistinctAccounts - 1; maxAccountSwitches > adaptiveMaxSwitches {
 				maxAccountSwitches = adaptiveMaxSwitches
 			}
 		}
 	}
 	return &OpenAIGatewayHandler{
-		gatewayService:           gatewayService,
-		billingCacheService:      billingCacheService,
-		apiKeyService:            apiKeyService,
-		usageRecordWorkerPool:    usageRecordWorkerPool,
-		errorPassthroughService:  errorPassthroughService,
-		contentModerationService: contentModerationService,
-		opsService:               opsService,
-		concurrencyHelper:        NewConcurrencyHelper(concurrencyService, SSEPingFormatComment, pingInterval),
-		imageLimiter:             &imageConcurrencyLimiter{},
-		maxAccountSwitches:       maxAccountSwitches,
-		cfg:                      cfg,
+		gatewayService:            gatewayService,
+		billingCacheService:       billingCacheService,
+		apiKeyService:             apiKeyService,
+		usageRecordWorkerPool:     usageRecordWorkerPool,
+		errorPassthroughService:   errorPassthroughService,
+		contentModerationService:  contentModerationService,
+		opsService:                opsService,
+		concurrencyHelper:         NewConcurrencyHelper(concurrencyService, SSEPingFormatComment, pingInterval),
+		imageLimiter:              &imageConcurrencyLimiter{},
+		maxAccountSwitches:        maxAccountSwitches,
+		openAIFailoverBudget:      openAIFailoverBudget,
+		openAIMaxDistinctAccounts: openAIMaxDistinctAccounts,
+		cfg:                       cfg,
 	}
+}
+
+func (h *OpenAIGatewayHandler) newOpenAIFailoverBudget() *openAIFailoverBudget {
+	if h == nil || h.openAIFailoverBudget <= 0 || h.openAIMaxDistinctAccounts <= 0 {
+		return nil
+	}
+	return newOpenAIFailoverBudget(h.openAIFailoverBudget, h.openAIMaxDistinctAccounts)
 }
 
 // Responses handles OpenAI Responses API endpoint
@@ -463,6 +479,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	var lastFailoverErr *service.UpstreamFailoverError
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
 	var passthroughFailoverState openAIPassthroughFailoverState
+	failoverBudget := h.newOpenAIFailoverBudget()
 
 	// 生图意图的 /v1/responses 请求必须调度到确实支持 Responses API 的账号，否则
 	// 会在 forward 阶段被静默降级为无法生图的 Chat Completions 直转（#4417）。
@@ -488,8 +505,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		}
 		// Select account supporting the requested model
 		reqLog.Debug("openai.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
+		selectionCtx, selectionCancel := failoverBudget.SelectionContext(c.Request.Context())
 		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
-			c.Request.Context(),
+			selectionCtx,
 			apiKey.GroupID,
 			previousResponseID,
 			sessionHash,
@@ -502,6 +520,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			!imageIntent,
 			requestPlatform,
 		)
+		selectionCancel()
 		if err != nil {
 			if failoverClientGone(c) {
 				reqLog.Info("openai.account_select_aborted_client_disconnected", zap.Error(err))
@@ -537,6 +556,14 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				markOpsRoutingCapacityLimited(c)
 			}
 			h.handleStreamingAwareError(c, cls.Status, cls.ErrType, cls.Message, streamStarted)
+			return
+		}
+		if !failoverBudget.AcceptSelection(selection, time.Now()) {
+			if lastFailoverErr != nil {
+				h.handleFailoverExhausted(c, lastFailoverErr, streamStarted)
+			} else {
+				h.handleFailoverExhaustedSimple(c, http.StatusBadGateway, streamStarted)
+			}
 			return
 		}
 		if previousResponseID != "" && selection != nil && selection.Account != nil {
@@ -681,6 +708,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						return
 					}
 					switchCount++
+					failoverBudget.Arm(time.Now())
 					if h.gatewayService.ShouldStopOpenAIOAuth429Failover(account, failoverErr.StatusCode, switchCount, &oauth429FailoverState) {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
@@ -1068,6 +1096,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	var lastFailoverErr *service.UpstreamFailoverError
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
 	effectiveMappedModel := preferredMappedModel
+	failoverBudget := h.newOpenAIFailoverBudget()
 
 	// 分组利润控制：Messages 文本入口同样请求级装门并固定 pricingAt。
 	msgPricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
@@ -1082,8 +1111,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			currentRoutingModel = effectiveMappedModel
 		}
 		reqLog.Debug("openai_messages.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
+		selectionCtx, selectionCancel := failoverBudget.SelectionContext(c.Request.Context())
 		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
-			c.Request.Context(),
+			selectionCtx,
 			apiKey.GroupID,
 			"", // no previous_response_id
 			sessionHash,
@@ -1096,6 +1126,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			true,
 			requestPlatform,
 		)
+		selectionCancel()
 		if err != nil {
 			if failoverClientGone(c) {
 				reqLog.Info("openai_messages.account_select_aborted_client_disconnected", zap.Error(err))
@@ -1129,6 +1160,14 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 				markOpsRoutingCapacityLimited(c)
 			}
 			h.anthropicStreamingAwareError(c, cls.Status, cls.ErrType, cls.Message, streamStarted)
+			return
+		}
+		if !failoverBudget.AcceptSelection(selection, time.Now()) {
+			if lastFailoverErr != nil {
+				h.handleAnthropicFailoverExhausted(c, lastFailoverErr, streamStarted)
+			} else {
+				h.anthropicStreamingAwareError(c, http.StatusBadGateway, "api_error", "Upstream request failed", streamStarted)
+			}
 			return
 		}
 		account := selection.Account
@@ -1238,6 +1277,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 						return
 					}
 					switchCount++
+					failoverBudget.Arm(time.Now())
 					if h.gatewayService.ShouldStopOpenAIOAuth429Failover(account, failoverErr.StatusCode, switchCount, &oauth429FailoverState) {
 						h.handleAnthropicFailoverExhausted(c, failoverErr, streamStarted)
 						return
@@ -1874,6 +1914,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	failedAccountIDs := make(map[int64]struct{})
 	var lastFailoverErr *service.UpstreamFailoverError
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
+	failoverBudget := h.newOpenAIFailoverBudget()
 	handleWSFailover := func(account *service.Account, failoverErr *service.UpstreamFailoverError) bool {
 		if ctx.Err() != nil {
 			return false
@@ -1897,6 +1938,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			return false
 		}
 		switchCount++
+		failoverBudget.Arm(time.Now())
 		if h.gatewayService.ShouldStopOpenAIOAuth429Failover(account, failoverErr.StatusCode, switchCount, &oauth429FailoverState) {
 			closeOpenAIWSFailoverExhausted(wsConn, failoverErr)
 			return false
@@ -1934,8 +1976,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			return
 		}
 		reqLog.Debug("openai.websocket_account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
+		selectionCtx, selectionCancel := failoverBudget.SelectionContext(ctx)
 		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
-			ctx,
+			selectionCtx,
 			apiKey.GroupID,
 			previousResponseID,
 			sessionHash,
@@ -1948,6 +1991,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			!imageIntent,
 			requestPlatform,
 		)
+		selectionCancel()
 		if err != nil {
 			reqLog.Warn("openai.websocket_account_select_failed",
 				zap.Error(openAICompatibleSelectionErrorForLog(err, requestPlatform)),
@@ -1961,6 +2005,14 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			return
 		}
 		if selection == nil || selection.Account == nil {
+			if lastFailoverErr != nil {
+				closeOpenAIWSFailoverExhausted(wsConn, lastFailoverErr)
+			} else {
+				closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "no available account")
+			}
+			return
+		}
+		if !failoverBudget.AcceptSelection(selection, time.Now()) {
 			if lastFailoverErr != nil {
 				closeOpenAIWSFailoverExhausted(wsConn, lastFailoverErr)
 			} else {
