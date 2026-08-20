@@ -580,6 +580,70 @@ func TestLoadDefaultOpenAIWSConfig(t *testing.T) {
 	}
 }
 
+func TestLoadDefaultOpenAIAdaptiveSchedulerConfig(t *testing.T) {
+	resetViperWithJWTSecret(t)
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	scheduler := cfg.Gateway.OpenAIScheduler
+	require.False(t, scheduler.AdaptiveEnabled)
+	require.True(t, scheduler.ShadowMode)
+	require.Equal(t, 2, scheduler.InitialWindow)
+	require.Equal(t, 1, scheduler.MinWindow)
+	require.Equal(t, 32, scheduler.MaxWindow)
+	require.Equal(t, 4, scheduler.SampleSize)
+	require.Equal(t, 2, scheduler.SampleRounds)
+	require.Equal(t, 0.8, scheduler.StickyEscapeUtilization)
+	require.Equal(t, 1000, scheduler.SchedulingWaitTimeoutMS)
+	require.Equal(t, 800, scheduler.FailoverTotalBudgetMS)
+	require.Equal(t, 2, scheduler.MaxDistinctAccountAttempts)
+	require.Equal(t, 5, scheduler.StormWindowSeconds)
+	require.Equal(t, 20, scheduler.StormMinAttempts)
+	require.Equal(t, 0.20, scheduler.Storm429Ratio)
+	require.Equal(t, 0.05, scheduler.StormRecoveryRatio)
+	require.Equal(t, 1000, scheduler.MaxWaiters)
+	require.Equal(t, 64, cfg.Database.MaxOpenConns)
+	require.Equal(t, 24, cfg.Database.MaxIdleConns)
+	require.Equal(t, 512, cfg.Redis.PoolSize)
+	require.Equal(t, 64, cfg.Redis.MinIdleConns)
+}
+
+func TestValidateOpenAIAdaptiveSchedulerConfig(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	base, err := Load()
+	require.NoError(t, err)
+
+	tests := []struct {
+		name    string
+		mutate  func(*GatewayOpenAISchedulerConfig)
+		wantErr string
+	}{
+		{name: "initial below minimum", mutate: func(c *GatewayOpenAISchedulerConfig) { c.InitialWindow = 0 }, wantErr: "initial_window"},
+		{name: "maximum below initial", mutate: func(c *GatewayOpenAISchedulerConfig) { c.MaxWindow = 1 }, wantErr: "max_window"},
+		{name: "sample size", mutate: func(c *GatewayOpenAISchedulerConfig) { c.SampleSize = 0 }, wantErr: "sample_size"},
+		{name: "sample rounds", mutate: func(c *GatewayOpenAISchedulerConfig) { c.SampleRounds = 0 }, wantErr: "sample_rounds"},
+		{name: "sticky utilization", mutate: func(c *GatewayOpenAISchedulerConfig) { c.StickyEscapeUtilization = 1.1 }, wantErr: "sticky_escape_utilization"},
+		{name: "wait timeout", mutate: func(c *GatewayOpenAISchedulerConfig) { c.SchedulingWaitTimeoutMS = 0 }, wantErr: "scheduling_wait_timeout_ms"},
+		{name: "failover budget", mutate: func(c *GatewayOpenAISchedulerConfig) { c.FailoverTotalBudgetMS = 0 }, wantErr: "failover_total_budget_ms"},
+		{name: "attempts", mutate: func(c *GatewayOpenAISchedulerConfig) { c.MaxDistinctAccountAttempts = 1 }, wantErr: "max_distinct_account_attempts"},
+		{name: "storm window", mutate: func(c *GatewayOpenAISchedulerConfig) { c.StormWindowSeconds = 0 }, wantErr: "storm_window_seconds"},
+		{name: "storm attempts", mutate: func(c *GatewayOpenAISchedulerConfig) { c.StormMinAttempts = 0 }, wantErr: "storm_min_attempts"},
+		{name: "storm ratio", mutate: func(c *GatewayOpenAISchedulerConfig) { c.Storm429Ratio = 0 }, wantErr: "storm_429_ratio"},
+		{name: "storm recovery ratio", mutate: func(c *GatewayOpenAISchedulerConfig) { c.StormRecoveryRatio = 0.25 }, wantErr: "storm_recovery_ratio"},
+		{name: "waiter cap", mutate: func(c *GatewayOpenAISchedulerConfig) { c.MaxWaiters = 0 }, wantErr: "max_waiters"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := *base
+			cfg.Gateway = base.Gateway
+			tt.mutate(&cfg.Gateway.OpenAIScheduler)
+			require.ErrorContains(t, cfg.Validate(), tt.wantErr)
+		})
+	}
+}
+
 func TestLoadOpenAIWSClientFirstMessageTimeoutFromEnv(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	t.Setenv("GATEWAY_OPENAI_WS_CLIENT_FIRST_MESSAGE_TIMEOUT_SECONDS", "120")

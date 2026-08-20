@@ -225,6 +225,11 @@ func NewOpenAIGatewayHandler(
 		if cfg.Gateway.MaxAccountSwitches > 0 {
 			maxAccountSwitches = cfg.Gateway.MaxAccountSwitches
 		}
+		if adaptive := cfg.Gateway.OpenAIScheduler; adaptive.AdaptiveEnabled && adaptive.MaxDistinctAccountAttempts > 1 {
+			if adaptiveMaxSwitches := adaptive.MaxDistinctAccountAttempts - 1; maxAccountSwitches > adaptiveMaxSwitches {
+				maxAccountSwitches = adaptiveMaxSwitches
+			}
+		}
 	}
 	return &OpenAIGatewayHandler{
 		gatewayService:           gatewayService,

@@ -426,6 +426,25 @@ gateway:
       upstream_cost: 0.0
   # OpenAI 高级调度器补充配置
   openai_scheduler:
+    # 本机自适应调度。先用 shadow_mode 观察，再启用真实派发。
+    adaptive_enabled: false
+    shadow_mode: true
+    initial_window: 2
+    min_window: 1
+    max_window: 32
+    increase_interval_ms: 2000
+    no_429_increase_window_seconds: 30
+    sample_size: 4
+    sample_rounds: 2
+    sticky_escape_utilization: 0.8
+    scheduling_wait_timeout_ms: 1000
+    failover_total_budget_ms: 800
+    max_distinct_account_attempts: 2
+    storm_window_seconds: 5
+    storm_min_attempts: 20
+    storm_429_ratio: 0.20
+    storm_recovery_ratio: 0.05
+    max_waiters: 1000
     # 是否允许 session_hash sticky 在账号健康度恶化时临时逃逸；false 可一键回退旧行为
     sticky_escape_enabled: true
     # TTFT EWMA 超过该阈值（毫秒）时跳过 sticky，默认 15s，避免轻微抖动就逃逸
@@ -958,12 +977,12 @@ database:
   # SSL 模式：disable（禁用）, prefer（优先加密，默认）, require（要求）, verify-ca（验证CA）, verify-full（完全验证）
   # 默认值为 "prefer"，数据库支持 SSL 时自动使用加密连接，不支持时回退明文
   sslmode: "prefer"
-  # Max open connections (高并发场景建议 256+，需配合 PostgreSQL max_connections 调整)
+  # PostgreSQL max_connections=100 时为管理/迁移保留连接。
   # 最大打开连接数
-  max_open_conns: 256
+  max_open_conns: 64
   # Max idle connections (建议为 max_open_conns 的 50%，减少频繁建连开销)
   # 最大空闲连接数
-  max_idle_conns: 128
+  max_idle_conns: 24
   # Connection max lifetime (minutes)
   # 连接最大存活时间（分钟）
   conn_max_lifetime_minutes: 30
@@ -993,10 +1012,10 @@ redis:
   db: 0
   # Connection pool size (max concurrent connections)
   # 连接池大小（最大并发连接数）
-  pool_size: 1024
+  pool_size: 512
   # Minimum number of idle connections (高并发场景建议 128+，保持足够热连接)
   # 最小空闲连接数
-  min_idle_conns: 128
+  min_idle_conns: 64
   # Enable TLS/SSL connection
   # 是否启用 TLS/SSL 连接
   enable_tls: false
