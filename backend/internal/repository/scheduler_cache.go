@@ -35,6 +35,7 @@ const (
 	defaultSchedulerSnapshotWriteChunkSize = 256
 	defaultSchedulerSnapshotL1MaxEntries   = 64
 	defaultSchedulerLastUsedL1TTL          = time.Second
+	defaultSchedulerSnapshotStaleTTL       = 5 * time.Second
 	defaultSchedulerSnapshotL1LoadTimeout  = 5 * time.Second
 	schedulerLastUsedUpdateChunkSize       = 256
 
@@ -276,7 +277,7 @@ func (c *schedulerCache) GetSnapshot(ctx context.Context, bucket service.Schedul
 	activeKey := schedulerBucketKey(schedulerActivePrefix, bucket)
 	state, err := c.rdb.MGet(ctx, readyKey, activeKey, schedulerAccountMetaRevisionKey).Result()
 	if err != nil {
-		return nil, false, err
+		return c.recentSnapshotL1OrError(ctx, bucket, err)
 	}
 	if len(state) != 3 {
 		return nil, false, fmt.Errorf("unexpected scheduler snapshot state length: %d", len(state))
@@ -342,7 +343,7 @@ func (c *schedulerCache) GetSnapshot(ctx context.Context, bucket service.Schedul
 	case loaded = <-resultCh:
 	}
 	if loaded.Err != nil {
-		return nil, false, loaded.Err
+		return c.recentSnapshotL1OrError(ctx, bucket, loaded.Err)
 	}
 	entry := loaded.Val.(schedulerSnapshotL1Entry)
 	if len(entry.accounts) == 0 {
@@ -438,6 +439,12 @@ func (c *schedulerCache) refreshSnapshotL1LastUsed(
 	case result = <-resultCh:
 	}
 	if result.Err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, false, ctxErr
+		}
+		if current, ok := c.getSnapshotL1(bucket, cached.version, cached.metadataRevision); ok && len(current.accounts) > 0 {
+			return cloneSchedulerSnapshotAccounts(current.accounts), true, nil
+		}
 		return nil, false, result.Err
 	}
 	entry := result.Val.(schedulerSnapshotL1Entry)
@@ -453,6 +460,25 @@ func (c *schedulerCache) getSnapshotL1(bucket service.SchedulerBucket, version, 
 	entry, ok := c.snapshotL1[key]
 	c.snapshotL1Mu.RUnlock()
 	return entry, ok && entry.version == version && entry.metadataRevision == metadataRevision
+}
+
+func (c *schedulerCache) recentSnapshotL1OrError(
+	ctx context.Context,
+	bucket service.SchedulerBucket,
+	cause error,
+) ([]*service.Account, bool, error) {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, false, ctxErr
+	}
+	key := schedulerBucketKey("snapshot-l1:", bucket)
+	now := time.Now()
+	c.snapshotL1Mu.RLock()
+	entry, ok := c.snapshotL1[key]
+	c.snapshotL1Mu.RUnlock()
+	if !ok || len(entry.accounts) == 0 || entry.lastUsedRefreshedAt.IsZero() || now.Sub(entry.lastUsedRefreshedAt) > defaultSchedulerSnapshotStaleTTL {
+		return nil, false, cause
+	}
+	return cloneSchedulerSnapshotAccounts(entry.accounts), true, nil
 }
 
 func (c *schedulerCache) storeSnapshotL1(bucket service.SchedulerBucket, entry schedulerSnapshotL1Entry) {

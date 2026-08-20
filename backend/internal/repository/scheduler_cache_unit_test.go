@@ -69,6 +69,97 @@ func TestSchedulerCacheSnapshotL1ReusesActiveVersion(t *testing.T) {
 	require.Equal(t, "first", second[0].Name)
 }
 
+func TestSchedulerCacheSnapshotL1ServesRecentSnapshotWhenRedisUnavailable(t *testing.T) {
+	ctx := context.Background()
+	cache, _ := newSchedulerCacheUnitWithRedis(t)
+	bucket := service.SchedulerBucket{GroupID: 909, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeSingle}
+	account := service.Account{
+		ID:          9091,
+		Name:        "recent",
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeOAuth,
+		Status:      service.StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+	}
+	token, err := cache.CaptureBucketWriteToken(ctx, bucket)
+	require.NoError(t, err)
+	require.NoError(t, cache.SetSnapshot(ctx, bucket, token, []service.Account{account}))
+	_, hit, err := cache.GetSnapshot(ctx, bucket)
+	require.NoError(t, err)
+	require.True(t, hit)
+
+	cache.rdb = redis.NewClient(&redis.Options{
+		Addr:        "127.0.0.1:1",
+		DialTimeout: 20 * time.Millisecond,
+		MaxRetries:  -1,
+	})
+	t.Cleanup(func() { _ = cache.rdb.Close() })
+
+	loaded, hit, err := cache.GetSnapshot(ctx, bucket)
+	require.NoError(t, err)
+	require.True(t, hit)
+	require.Len(t, loaded, 1)
+	require.Equal(t, "recent", loaded[0].Name)
+}
+
+func TestSchedulerCacheSnapshotL1RejectsExpiredSnapshotWhenRedisUnavailable(t *testing.T) {
+	ctx := context.Background()
+	cache, _ := newSchedulerCacheUnitWithRedis(t)
+	bucket := service.SchedulerBucket{GroupID: 910, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeSingle}
+	account := service.Account{
+		ID:          9101,
+		Name:        "expired",
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeOAuth,
+		Status:      service.StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+	}
+	token, err := cache.CaptureBucketWriteToken(ctx, bucket)
+	require.NoError(t, err)
+	require.NoError(t, cache.SetSnapshot(ctx, bucket, token, []service.Account{account}))
+	_, hit, err := cache.GetSnapshot(ctx, bucket)
+	require.NoError(t, err)
+	require.True(t, hit)
+
+	key := schedulerBucketKey("snapshot-l1:", bucket)
+	cache.snapshotL1Mu.Lock()
+	entry := cache.snapshotL1[key]
+	entry.lastUsedRefreshedAt = time.Now().Add(-2 * defaultSchedulerSnapshotStaleTTL)
+	cache.snapshotL1[key] = entry
+	cache.snapshotL1Mu.Unlock()
+	cache.rdb = redis.NewClient(&redis.Options{
+		Addr:        "127.0.0.1:1",
+		DialTimeout: 20 * time.Millisecond,
+		MaxRetries:  -1,
+	})
+	t.Cleanup(func() { _ = cache.rdb.Close() })
+
+	loaded, hit, err := cache.GetSnapshot(ctx, bucket)
+	require.Error(t, err)
+	require.False(t, hit)
+	require.Nil(t, loaded)
+}
+
+func TestSchedulerCacheSnapshotL1DoesNotMaskCanceledRequest(t *testing.T) {
+	cache := newSchedulerCacheUnit(t)
+	bucket := service.SchedulerBucket{GroupID: 911, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeSingle}
+	cache.storeSnapshotL1(bucket, schedulerSnapshotL1Entry{
+		version:             "1",
+		metadataRevision:    "1",
+		accounts:            []*service.Account{{ID: 9111, Name: "recent"}},
+		lastUsedRefreshedAt: time.Now(),
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	loaded, hit, err := cache.GetSnapshot(ctx, bucket)
+	require.ErrorIs(t, err, context.Canceled)
+	require.False(t, hit)
+	require.Nil(t, loaded)
+}
+
 func TestSchedulerCacheSnapshotL1ReloadsAfterAccountUpdate(t *testing.T) {
 	ctx := context.Background()
 	cache, _ := newSchedulerCacheUnitWithRedis(t)
