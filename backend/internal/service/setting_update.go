@@ -120,6 +120,11 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 		return nil, infraerrors.BadRequest("INVALID_FORWARDED_CLIENT_IP_HEADERS", err.Error())
 	}
 	settings.ForwardedClientIPHeaders = normalizedForwardedClientIPHeaders
+	openCodeVersion, err := NormalizeOpenCodeProtocolVersion(settings.OpenCodeProtocolVersion)
+	if err != nil {
+		return nil, infraerrors.BadRequest("INVALID_OPENCODE_PROTOCOL_VERSION", err.Error())
+	}
+	settings.OpenCodeProtocolVersion = openCodeVersion
 	alipaySource, err := normalizeVisibleMethodSettingSource("alipay", settings.PaymentVisibleMethodAlipaySource, settings.PaymentVisibleMethodAlipayEnabled)
 	if err != nil {
 		return nil, err
@@ -494,6 +499,8 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyOpenAICodexUserAgent] = strings.TrimSpace(settings.OpenAICodexUserAgent)
 	updates[SettingKeyOpenAICodexClientVersion] = NormalizeCodexClientVersion(settings.OpenAICodexClientVersion)
 	updates[SettingKeyOpenAICodexVersionAutoSyncEnabled] = strconv.FormatBool(settings.OpenAICodexVersionAutoSyncEnabled)
+	updates[SettingKeyOpenCodeProtocolEnabled] = strconv.FormatBool(settings.OpenCodeProtocolEnabled)
+	updates[SettingKeyOpenCodeProtocolVersion] = settings.OpenCodeProtocolVersion
 	// SettingKeyOpenAICodexClientVersionSynced 由自动同步任务独占写入，此处不得覆盖，
 	// 否则面板保存会把同步结果清空。
 	// codex_cli_only 加固
@@ -750,6 +757,14 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	// 版本号缓存只做失效，不在此重算：生效值还取决于自动同步写入的 synced 键，
 	// 这里没有它的最新值，重算会把同步结果覆盖成陈旧值。
 	s.InvalidateOpenAICodexClientVersionCache()
+	s.openCodeProtocolSF.Forget("opencode_protocol")
+	s.openCodeProtocolCache.Store(&cachedOpenCodeProtocolSettings{
+		settings: OpenCodeProtocolSettings{
+			Enabled: settings.OpenCodeProtocolEnabled,
+			Version: normalizeStoredOpenCodeProtocolVersion(settings.OpenCodeProtocolVersion),
+		},
+		expiresAt: time.Now().Add(openCodeProtocolCacheTTL).UnixNano(),
+	})
 	openAIAdvancedSchedulerSettingSF.Forget(openAIAdvancedSchedulerSettingKey)
 	openAIAdvancedSchedulerSettingCache.Store(&cachedOpenAIAdvancedSchedulerSetting{
 		lowUpstreamRatePriorityEnabled: settings.OpenAILowUpstreamRatePriorityEnabled,

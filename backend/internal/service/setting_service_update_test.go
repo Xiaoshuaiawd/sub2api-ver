@@ -217,6 +217,45 @@ func TestSettingService_AffiliateAdminRechargeSetting(t *testing.T) {
 	})
 }
 
+func TestOpenCodeProtocolSettingsDefaultsAndPersistence(t *testing.T) {
+	t.Run("missing values use safe defaults", func(t *testing.T) {
+		svc := NewSettingService(&settingGetAllRepoStub{values: map[string]string{}}, &config.Config{})
+
+		settings, err := svc.GetAllSettings(context.Background())
+		require.NoError(t, err)
+		require.False(t, settings.OpenCodeProtocolEnabled)
+		require.Equal(t, DefaultOpenCodeProtocolVersion, settings.OpenCodeProtocolVersion)
+	})
+
+	t.Run("valid values persist and refresh runtime policy", func(t *testing.T) {
+		repo := &settingUpdateRepoStub{}
+		svc := NewSettingService(repo, &config.Config{})
+
+		err := svc.UpdateSettings(context.Background(), &SystemSettings{
+			OpenCodeProtocolEnabled: true,
+			OpenCodeProtocolVersion: " 1.19.0 ",
+		})
+		require.NoError(t, err)
+		require.Equal(t, "true", repo.updates[SettingKeyOpenCodeProtocolEnabled])
+		require.Equal(t, "1.19.0", repo.updates[SettingKeyOpenCodeProtocolVersion])
+		require.Equal(t, OpenCodeProtocolSettings{Enabled: true, Version: "1.19.0"}, svc.GetOpenCodeProtocolSettings(context.Background()))
+	})
+}
+
+func TestOpenCodeProtocolSettingsRejectInvalidVersionBeforeWrite(t *testing.T) {
+	repo := &settingUpdateRepoStub{}
+	svc := NewSettingService(repo, &config.Config{})
+
+	err := svc.UpdateSettings(context.Background(), &SystemSettings{
+		OpenCodeProtocolEnabled: true,
+		OpenCodeProtocolVersion: "1.18 beta",
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "opencode_protocol_version")
+	require.Nil(t, repo.updates)
+}
+
 func (s *defaultSubGroupReaderStub) GetByID(ctx context.Context, id int64) (*Group, error) {
 	s.calls = append(s.calls, id)
 	if err, ok := s.errBy[id]; ok {

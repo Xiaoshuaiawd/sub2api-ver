@@ -242,6 +242,8 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyOpenAICodexClientVersion:                           "",
 		SettingKeyOpenAICodexClientVersionSynced:                     "",
 		SettingKeyOpenAICodexVersionAutoSyncEnabled:                  "true",
+		SettingKeyOpenCodeProtocolEnabled:                            "false",
+		SettingKeyOpenCodeProtocolVersion:                            DefaultOpenCodeProtocolVersion,
 		SettingPaymentVisibleMethodAlipaySource:                      "",
 		SettingPaymentVisibleMethodWxpaySource:                       "",
 		SettingPaymentVisibleMethodAlipayEnabled:                     "false",
@@ -878,6 +880,8 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	} else {
 		result.OpenAICodexVersionAutoSyncEnabled = true
 	}
+	result.OpenCodeProtocolEnabled = strings.EqualFold(strings.TrimSpace(settings[SettingKeyOpenCodeProtocolEnabled]), "true")
+	result.OpenCodeProtocolVersion = normalizeStoredOpenCodeProtocolVersion(settings[SettingKeyOpenCodeProtocolVersion])
 	// codex_cli_only 加固
 	result.MinCodexVersion = settings[SettingKeyMinCodexVersion]
 	result.MaxCodexVersion = settings[SettingKeyMaxCodexVersion]

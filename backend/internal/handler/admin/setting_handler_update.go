@@ -256,6 +256,8 @@ type UpdateSettingsRequest struct {
 	OpenAICodexUserAgent                   *string `json:"openai_codex_user_agent"`
 	OpenAICodexClientVersion               *string `json:"openai_codex_client_version"`
 	OpenAICodexVersionAutoSyncEnabled      *bool   `json:"openai_codex_version_auto_sync_enabled"`
+	OpenCodeProtocolEnabled                *bool   `json:"opencode_protocol_enabled"`
+	OpenCodeProtocolVersion                *string `json:"opencode_protocol_version"`
 
 	// codex_cli_only 加固（global-only）
 	MinCodexVersion                      string `json:"min_codex_version"`
@@ -1776,6 +1778,18 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.OpenAICodexVersionAutoSyncEnabled
 		}(),
+		OpenCodeProtocolEnabled: func() bool {
+			if req.OpenCodeProtocolEnabled != nil {
+				return *req.OpenCodeProtocolEnabled
+			}
+			return previousSettings.OpenCodeProtocolEnabled
+		}(),
+		OpenCodeProtocolVersion: func() string {
+			if req.OpenCodeProtocolVersion != nil {
+				return strings.TrimSpace(*req.OpenCodeProtocolVersion)
+			}
+			return previousSettings.OpenCodeProtocolVersion
+		}(),
 		MinCodexVersion:       strings.TrimSpace(req.MinCodexVersion),
 		MaxCodexVersion:       strings.TrimSpace(req.MaxCodexVersion),
 		CodexCLIOnlyBlacklist: strings.TrimSpace(req.CodexCLIOnlyBlacklist),
@@ -2297,6 +2311,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		OpenAICodexClientVersion:                               updatedSettings.OpenAICodexClientVersion,
 		OpenAICodexClientVersionSynced:                         updatedSettings.OpenAICodexClientVersionSynced,
 		OpenAICodexVersionAutoSyncEnabled:                      updatedSettings.OpenAICodexVersionAutoSyncEnabled,
+		OpenCodeProtocolEnabled:                                updatedSettings.OpenCodeProtocolEnabled,
+		OpenCodeProtocolVersion:                                updatedSettings.OpenCodeProtocolVersion,
 		MinCodexVersion:                                        updatedSettings.MinCodexVersion,
 		MaxCodexVersion:                                        updatedSettings.MaxCodexVersion,
 		CodexCLIOnlyBlacklist:                                  updatedSettings.CodexCLIOnlyBlacklist,
