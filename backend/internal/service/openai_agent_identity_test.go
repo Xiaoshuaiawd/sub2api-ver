@@ -156,7 +156,7 @@ func TestRegisterAgentIdentityTaskPreservesContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := registerAgentIdentityTask(ctx, account)
+	_, err := registerAgentIdentityTask(ctx, newAgentIdentityDirectTestUpstream(), account)
 
 	require.Error(t, err)
 	require.True(t, errors.Is(err, context.Canceled), "registration must preserve cancellation ownership")
