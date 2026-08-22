@@ -548,6 +548,10 @@ export default {
         openaiCodexVersionAutoSync: 'Auto-sync Codex version',
         openaiCodexVersionAutoSyncHint: 'Fetches the latest stable client version from the official repository every 6 hours, so you never need to upgrade this service just to keep the version current. When disabled, only the version above or the built-in default is used.',
         openaiCodexVersionSyncedValue: 'Currently synced: {version}',
+        openCodeProtocolEnabled: 'OpenCode protocol',
+        openCodeProtocolEnabledHint: 'Default off. For OpenAI Responses over HTTP, normalizes the outbound User-Agent, originator, and session headers to the OpenCode identity. TLS, HTTP/2, and WebSocket fingerprints are unchanged.',
+        openCodeProtocolVersion: 'OpenCode version',
+        openCodeProtocolVersionHint: 'Dotted numeric version used in the outbound OpenCode User-Agent, for example 1.18.21.',
         codexHardeningTitle: "Codex Settings",
         codexClientRestrictionTitle: "Codex client restriction",
         codexHardeningDesc:

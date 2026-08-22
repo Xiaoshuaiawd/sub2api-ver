@@ -243,6 +243,8 @@ vi.mock("vue-i18n", async () => {
     "admin.settings.gatewayForwarding.openaiProxyEgressIP": "出口 IP",
     "admin.settings.gatewayForwarding.openaiProxyCheckedAt": "检测时间",
     "admin.settings.gatewayForwarding.openaiProxyUnavailable": "暂无",
+    "admin.settings.gatewayForwarding.openCodeProtocolEnabled": "OpenCode 协议",
+    "admin.settings.gatewayForwarding.openCodeProtocolVersion": "OpenCode 版本",
     "admin.settings.upstreamBillingProbe.title": "上游倍率自动探测",
     "admin.settings.upstreamBillingProbe.description": "定期获取 OpenAI API Key 所连接上游 Sub2API 站点声明的计费倍率。",
     "admin.settings.upstreamBillingProbe.enabled": "启用全局自动探测",
@@ -497,6 +499,8 @@ const baseSettingsResponse = {
   enable_client_dateline_normalization: true,
   antigravity_user_agent_version: "",
   openai_codex_user_agent: "",
+  opencode_protocol_enabled: false,
+  opencode_protocol_version: "1.18.21",
   openai_default_proxy_enabled: true,
   openai_default_proxy_url: "socks5h://warp-proxy:1080",
   openai_default_proxy_failure_policy: "fail_closed",
@@ -1362,6 +1366,36 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(updateSettings).toHaveBeenCalledWith(
       expect.objectContaining({
         antigravity_user_agent_version: "1.23.2",
+      }),
+    );
+  });
+
+  it("enables and saves the OpenCode HTTP protocol identity", async () => {
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openGatewayTab(wrapper);
+
+    const section = wrapper.find('[data-testid="opencode-protocol-settings"]');
+    expect(section.text()).toContain("OpenCode 协议");
+    expect(section.text()).toContain("OpenCode 版本");
+    const toggle = section.find('input[type="checkbox"]');
+    const versionInput = section.find("#opencode-protocol-version");
+    expect(toggle.exists()).toBe(true);
+    expect(versionInput.exists()).toBe(true);
+    expect(versionInput.attributes("disabled")).toBeDefined();
+
+    await toggle.setValue(true);
+    await versionInput.setValue("1.19.0");
+    expect(versionInput.attributes("disabled")).toBeUndefined();
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        opencode_protocol_enabled: true,
+        opencode_protocol_version: "1.19.0",
       }),
     );
   });

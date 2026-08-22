@@ -665,6 +665,8 @@ export interface SystemSettings {
   openai_codex_client_version: string;
   openai_codex_client_version_synced: string;
   openai_codex_version_auto_sync_enabled: boolean;
+  opencode_protocol_enabled: boolean;
+  opencode_protocol_version: string;
   // codex_cli_only 加固
   min_codex_version: string;
   max_codex_version: string;
@@ -980,6 +982,8 @@ export interface UpdateSettingsRequest {
   openai_codex_user_agent?: string;
   openai_codex_client_version?: string;
   openai_codex_version_auto_sync_enabled?: boolean;
+  opencode_protocol_enabled?: boolean;
+  opencode_protocol_version?: string;
   // codex_cli_only 加固
   min_codex_version?: string;
   max_codex_version?: string;

@@ -541,6 +541,10 @@ export default {
         openaiCodexVersionAutoSync: '自动同步 Codex 版本号',
         openaiCodexVersionAutoSyncHint: '每 6 小时从官方仓库获取最新稳定版客户端版本号，无需为了跟版本而升级本服务。关闭后仅使用上方手填版本或内置版本。',
         openaiCodexVersionSyncedValue: '当前同步到：{version}',
+        openCodeProtocolEnabled: 'OpenCode 协议',
+        openCodeProtocolEnabledHint: '默认关闭。仅对 OpenAI Responses HTTP 请求统一出站 User-Agent、originator 和会话头为 OpenCode 身份；不会改变 TLS、HTTP/2 或 WebSocket 指纹。',
+        openCodeProtocolVersion: 'OpenCode 版本',
+        openCodeProtocolVersionHint: '用于出站 OpenCode User-Agent 的点分数字版本，例如 1.18.21。',
         codexHardeningTitle: 'Codex 设置',
         codexClientRestrictionTitle: 'Codex 客户端限制',
         codexHardeningDesc:

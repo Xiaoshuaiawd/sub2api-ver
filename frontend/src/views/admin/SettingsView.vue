@@ -5813,6 +5813,49 @@
                 </div>
               </section>
 
+              <!-- OpenCode HTTP protocol identity -->
+              <section
+                data-testid="opencode-protocol-settings"
+                class="space-y-4 rounded-lg border border-gray-200 p-4 dark:border-dark-700"
+              >
+                <div class="flex items-center justify-between gap-4">
+                  <div>
+                    <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      {{ t("admin.settings.gatewayForwarding.openCodeProtocolEnabled") }}
+                    </label>
+                    <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.gatewayForwarding.openCodeProtocolEnabledHint") }}
+                    </p>
+                  </div>
+                  <Toggle
+                    v-model="form.opencode_protocol_enabled"
+                    :aria-label="t('admin.settings.gatewayForwarding.openCodeProtocolEnabled')"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    for="opencode-protocol-version"
+                    class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                  >
+                    {{ t("admin.settings.gatewayForwarding.openCodeProtocolVersion") }}
+                  </label>
+                  <input
+                    id="opencode-protocol-version"
+                    v-model="form.opencode_protocol_version"
+                    type="text"
+                    inputmode="decimal"
+                    class="input w-full font-mono text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                    :aria-label="t('admin.settings.gatewayForwarding.openCodeProtocolVersion')"
+                    :disabled="!form.opencode_protocol_enabled"
+                    placeholder="1.18.21"
+                  />
+                  <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.gatewayForwarding.openCodeProtocolVersionHint") }}
+                  </p>
+                </div>
+              </section>
+
               <!-- OpenAI Codex UA -->
               <div>
                 <label
@@ -9889,6 +9932,8 @@ const form = reactive<SettingsForm>({
   antigravity_user_agent_version: "",
   openai_codex_user_agent: "",
   openai_codex_client_version: "",
+  opencode_protocol_enabled: false,
+  opencode_protocol_version: "1.18.21",
   openai_default_proxy_enabled: true,
   openai_default_proxy_url: "socks5h://warp-proxy:1080",
   openai_default_proxy_failure_policy: "fail_closed",
@@ -11549,6 +11594,9 @@ async function saveSettings() {
         form.openai_codex_client_version?.trim() || "",
       openai_codex_version_auto_sync_enabled:
         form.openai_codex_version_auto_sync_enabled,
+      opencode_protocol_enabled: form.opencode_protocol_enabled,
+      opencode_protocol_version:
+        form.opencode_protocol_version?.trim() || "1.18.21",
       min_codex_version: form.min_codex_version?.trim() || "",
       max_codex_version: form.max_codex_version?.trim() || "",
       codex_cli_only_allow_app_server_clients:
