@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
@@ -15,6 +16,13 @@ const (
 	openCodeProtocolSettingsContextKey = "opencode_protocol_settings"
 	openCodeUserAgentSuffix            = " (darwin 24.6.0; arm64) ai-sdk/provider-utils/4.0.38 runtime/bun/1.3.14"
 )
+
+func (s *OpenAIGatewayService) PrepareOpenCodeProtocolRequest(ctx context.Context, c *gin.Context) error {
+	if s == nil || s.settingService == nil {
+		return nil
+	}
+	return prepareOpenCodeProtocolRequest(c, s.settingService.GetOpenCodeProtocolSettings(ctx))
+}
 
 func prepareOpenCodeProtocolRequest(c *gin.Context, settings OpenCodeProtocolSettings) error {
 	if !settings.Enabled || c == nil || c.Request == nil {
@@ -97,4 +105,12 @@ func applyOpenCodeProtocolHeaders(headers http.Header, sessionID string, setting
 			headers.Del(key)
 		}
 	}
+}
+
+func applyStagedOpenCodeProtocolHeaders(c *gin.Context, headers http.Header) {
+	settings, ok := openCodeProtocolSettingsFromContext(c)
+	if !ok {
+		return
+	}
+	applyOpenCodeProtocolHeaders(headers, openCodeProtocolSessionFromContext(c), settings)
 }

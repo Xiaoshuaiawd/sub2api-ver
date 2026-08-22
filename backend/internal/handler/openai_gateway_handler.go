@@ -442,6 +442,13 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	// Get subscription info (may be nil)
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
 	requestPlatform := openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
+	if requestPlatform == service.PlatformOpenAI {
+		if err := h.gatewayService.PrepareOpenCodeProtocolRequest(c.Request.Context(), c); err != nil {
+			reqLog.Error("openai.opencode_protocol_prepare_failed", zap.Error(err))
+			h.errorResponse(c, http.StatusInternalServerError, "internal_error", "Failed to prepare upstream request")
+			return
+		}
+	}
 
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
 	routingStart := time.Now()

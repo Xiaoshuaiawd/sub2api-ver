@@ -1,11 +1,13 @@
 package service
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -89,4 +91,85 @@ func TestApplyOpenCodeProtocolHeadersOverwritesIdentity(t *testing.T) {
 	require.Equal(t, "ses-shared", headers.Get(openCodeSessionHeader))
 	require.Equal(t, "ses-shared", headers.Get(openCodeSessionAffinityHeader))
 	require.Equal(t, "ses-shared", headers.Get(openCodeSessionIDHeader))
+}
+
+func TestOpenAIGatewayServicePrepareOpenCodeProtocolRequestLoadsRuntimePolicy(t *testing.T) {
+	repo := newRuntimeSettingRepoStub()
+	repo.values[SettingKeyOpenCodeProtocolEnabled] = "true"
+	repo.values[SettingKeyOpenCodeProtocolVersion] = "1.20.0"
+	svc := &OpenAIGatewayService{settingService: NewSettingService(repo, &config.Config{})}
+	c := newOpenCodeProtocolTestContext(t, map[string]string{openCodeSessionIDHeader: "ses-runtime"})
+
+	err := svc.PrepareOpenCodeProtocolRequest(context.Background(), c)
+
+	require.NoError(t, err)
+	require.Equal(t, "ses-runtime", c.GetHeader(openCodeSessionHeader))
+	settings, ok := openCodeProtocolSettingsFromContext(c)
+	require.True(t, ok)
+	require.Equal(t, "1.20.0", settings.Version)
+}
+
+func TestOpenCodeProtocolForwardBuildersApplyFinalIdentity(t *testing.T) {
+	tests := []struct {
+		name  string
+		build func(*OpenAIGatewayService, *gin.Context, *Account) (*http.Request, error)
+	}{
+		{
+			name: "normal",
+			build: func(svc *OpenAIGatewayService, c *gin.Context, account *Account) (*http.Request, error) {
+				return svc.buildUpstreamRequest(context.Background(), c, account, []byte(`{"model":"gpt-5"}`), "token", false, "", false)
+			},
+		},
+		{
+			name: "passthrough",
+			build: func(svc *OpenAIGatewayService, c *gin.Context, account *Account) (*http.Request, error) {
+				return svc.buildUpstreamRequestOpenAIPassthrough(context.Background(), c, account, []byte(`{"model":"gpt-5"}`), "token")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := newOpenCodeProtocolTestContext(t, map[string]string{openCodeSessionAffinityHeader: "ses-inbound"})
+			require.NoError(t, prepareOpenCodeProtocolRequest(c, OpenCodeProtocolSettings{Enabled: true, Version: "1.19.0"}))
+
+			svc := &OpenAIGatewayService{cfg: &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}}}
+			account := &Account{
+				Platform: PlatformOpenAI,
+				Type:     AccountTypeAPIKey,
+				Credentials: map[string]any{
+					credKeyHeaderOverrideEnabled: true,
+					credKeyHeaderOverrides: map[string]any{
+						"user-agent": "account-override",
+						"originator": "account-override",
+						"version":    "0.0.0",
+					},
+				},
+			}
+
+			req, err := tt.build(svc, c, account)
+			require.NoError(t, err)
+			require.Equal(t, "opencode/1.19.0"+openCodeUserAgentSuffix, req.Header.Get("User-Agent"))
+			require.Equal(t, "opencode", req.Header.Get("Originator"))
+			require.Equal(t, "ses-inbound", req.Header.Get(openCodeSessionHeader))
+			require.Equal(t, "ses-inbound", req.Header.Get(openCodeSessionAffinityHeader))
+			require.Equal(t, "ses-inbound", req.Header.Get(openCodeSessionIDHeader))
+			require.Empty(t, req.Header.Get("Version"))
+		})
+	}
+}
+
+func TestOpenCodeProtocolForwardBuilderDisabledLeavesExistingIdentity(t *testing.T) {
+	c := newOpenCodeProtocolTestContext(t, map[string]string{"User-Agent": "client-agent", "Originator": "client-origin"})
+	svc := &OpenAIGatewayService{cfg: &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}}}
+	account := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+
+	req, err := svc.buildUpstreamRequest(context.Background(), c, account, []byte(`{"model":"gpt-5"}`), "token", false, "", false)
+
+	require.NoError(t, err)
+	require.Equal(t, "client-agent", req.Header.Get("User-Agent"))
+	require.Equal(t, "client-origin", req.Header.Get("Originator"))
+	require.Empty(t, req.Header.Get(openCodeSessionHeader))
+	require.Empty(t, req.Header.Get(openCodeSessionAffinityHeader))
+	require.Empty(t, req.Header.Get(openCodeSessionIDHeader))
 }
