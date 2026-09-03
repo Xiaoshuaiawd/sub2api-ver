@@ -2,6 +2,11 @@
 /docs-local/
 .codex
 
+# 本地工具生成的目录
+.video_agent/
+.zcode/
+.worktrees/
+
 # ===================
 # Go 后端
 # ===================
