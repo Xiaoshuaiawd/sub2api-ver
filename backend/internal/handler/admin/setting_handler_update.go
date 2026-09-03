@@ -288,6 +288,7 @@ type UpdateSettingsRequest struct {
 	OpenAIAdvancedSchedulerWeightErrorRate             *string  `json:"openai_advanced_scheduler_weight_error_rate"`
 	OpenAIAdvancedSchedulerWeightTTFT                  *string  `json:"openai_advanced_scheduler_weight_ttft"`
 	OpenAIAdvancedSchedulerWeightReset                 *string  `json:"openai_advanced_scheduler_weight_reset"`
+	OpenAIUsageRestThresholdPercent                    *string  `json:"openai_scheduling_usage_rest_threshold_percent"`
 	OpenAIAdvancedSchedulerWeightQuotaHeadroom         *string  `json:"openai_advanced_scheduler_weight_quota_headroom"`
 	OpenAIAdvancedSchedulerWeightUpstreamCost          *string  `json:"openai_advanced_scheduler_weight_upstream_cost"`
 	OpenAIAdvancedSchedulerWeightPreviousResponse      *string  `json:"openai_advanced_scheduler_weight_previous_response"`
@@ -1859,6 +1860,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		OpenAIAdvancedSchedulerWeightUpstreamCost:     stringSetting(req.OpenAIAdvancedSchedulerWeightUpstreamCost, previousSettings.OpenAIAdvancedSchedulerWeightUpstreamCost),
 		OpenAIAdvancedSchedulerWeightPreviousResponse: stringSetting(req.OpenAIAdvancedSchedulerWeightPreviousResponse, previousSettings.OpenAIAdvancedSchedulerWeightPreviousResponse),
 		OpenAIAdvancedSchedulerWeightSessionSticky:    stringSetting(req.OpenAIAdvancedSchedulerWeightSessionSticky, previousSettings.OpenAIAdvancedSchedulerWeightSessionSticky),
+		OpenAIUsageRestThresholdPercent:               stringSetting(req.OpenAIUsageRestThresholdPercent, previousSettings.OpenAIUsageRestThresholdPercent),
 		BalanceLowNotifyEnabled: func() bool {
 			if req.BalanceLowNotifyEnabled != nil {
 				return *req.BalanceLowNotifyEnabled
@@ -2343,6 +2345,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		OpenAIAdvancedSchedulerWeightUpstreamCost:              updatedSettings.OpenAIAdvancedSchedulerWeightUpstreamCost,
 		OpenAIAdvancedSchedulerWeightPreviousResponse:          updatedSettings.OpenAIAdvancedSchedulerWeightPreviousResponse,
 		OpenAIAdvancedSchedulerWeightSessionSticky:             updatedSettings.OpenAIAdvancedSchedulerWeightSessionSticky,
+		OpenAIUsageRestThresholdPercent:                        updatedSettings.OpenAIUsageRestThresholdPercent,
 		OpenAIAdvancedSchedulerEffectiveLBTopK:                 updatedSettings.OpenAIAdvancedSchedulerEffectiveLBTopK,
 		OpenAIAdvancedSchedulerEffectiveWeightPriority:         updatedSettings.OpenAIAdvancedSchedulerEffectiveWeightPriority,
 		OpenAIAdvancedSchedulerEffectiveWeightLoad:             updatedSettings.OpenAIAdvancedSchedulerEffectiveWeightLoad,

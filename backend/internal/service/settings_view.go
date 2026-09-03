@@ -273,6 +273,7 @@ type SystemSettings struct {
 	OpenAIAdvancedSchedulerWeightQueue                     string
 	OpenAIAdvancedSchedulerWeightErrorRate                 string
 	OpenAIAdvancedSchedulerWeightTTFT                      string
+	OpenAIUsageRestThresholdPercent                        string
 	OpenAIAdvancedSchedulerWeightReset                     string
 	OpenAIAdvancedSchedulerWeightQuotaHeadroom             string
 	OpenAIAdvancedSchedulerWeightUpstreamCost              string

@@ -259,6 +259,7 @@ type SystemSettings struct {
 	OpenAIAdvancedSchedulerWeightQueue                     string  `json:"openai_advanced_scheduler_weight_queue"`
 	OpenAIAdvancedSchedulerWeightErrorRate                 string  `json:"openai_advanced_scheduler_weight_error_rate"`
 	OpenAIAdvancedSchedulerWeightTTFT                      string  `json:"openai_advanced_scheduler_weight_ttft"`
+	OpenAIUsageRestThresholdPercent                        string  `json:"openai_scheduling_usage_rest_threshold_percent"`
 	OpenAIAdvancedSchedulerWeightReset                     string  `json:"openai_advanced_scheduler_weight_reset"`
 	OpenAIAdvancedSchedulerWeightQuotaHeadroom             string  `json:"openai_advanced_scheduler_weight_quota_headroom"`
 	OpenAIAdvancedSchedulerWeightUpstreamCost              string  `json:"openai_advanced_scheduler_weight_upstream_cost"`

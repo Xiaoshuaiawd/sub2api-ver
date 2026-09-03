@@ -263,6 +263,8 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyOpenAIAdvancedSchedulerWeightPreviousResponse:      "",
 		SettingKeyOpenAIAdvancedSchedulerWeightSessionSticky:         "",
 
+		SettingKeyOpenAIUsageRestThresholdPercent: "80",
+
 		SettingKeyAllowUserViewErrorRequests: "false",
 	}
 
@@ -927,6 +929,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.OpenAIAdvancedSchedulerWeightUpstreamCost = strings.TrimSpace(settings[SettingKeyOpenAIAdvancedSchedulerWeightUpstreamCost])
 	result.OpenAIAdvancedSchedulerWeightPreviousResponse = strings.TrimSpace(settings[SettingKeyOpenAIAdvancedSchedulerWeightPreviousResponse])
 	result.OpenAIAdvancedSchedulerWeightSessionSticky = strings.TrimSpace(settings[SettingKeyOpenAIAdvancedSchedulerWeightSessionSticky])
+	result.OpenAIUsageRestThresholdPercent = strings.TrimSpace(settings[SettingKeyOpenAIUsageRestThresholdPercent])
 	result.OpenAIAdvancedSchedulerEffectiveLBTopK = s.openAIAdvancedSchedulerEffectiveLBTopK()
 	effectiveWeights := s.openAIAdvancedSchedulerEffectiveWeights()
 	result.OpenAIAdvancedSchedulerEffectiveWeightPriority = formatOpenAIAdvancedSchedulerFloat(effectiveWeights.Priority)
@@ -1071,6 +1074,12 @@ func (s *SettingService) normalizeOpenAIAdvancedSchedulerOverrides(settings *Sys
 	}
 	settings.OpenAIAdvancedSchedulerLBTopK = lbTopK
 
+	threshold, err := normalizeOpenAIUsageRestThresholdPercent(settings.OpenAIUsageRestThresholdPercent)
+	if err != nil {
+		return infraerrors.BadRequest("INVALID_OPENAI_USAGE_REST_THRESHOLD", "openai usage rest threshold must be a percent integer in [0,100] or empty")
+	}
+	settings.OpenAIUsageRestThresholdPercent = threshold
+
 	weights := []*string{
 		&settings.OpenAIAdvancedSchedulerWeightPriority,
 		&settings.OpenAIAdvancedSchedulerWeightLoad,
@@ -1141,6 +1150,20 @@ func normalizeOptionalPositiveIntString(raw string) (string, error) {
 	value, err := strconv.Atoi(raw)
 	if err != nil || value <= 0 {
 		return "", fmt.Errorf("invalid positive integer")
+	}
+	return strconv.Itoa(value), nil
+}
+
+// normalizeOpenAIUsageRestThresholdPercent 归一化用量轮休阈值：空→"",
+// 合法值 0-100（0 表示关闭轮休），非法值报错。
+func normalizeOpenAIUsageRestThresholdPercent(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 0 || value > 100 {
+		return "", fmt.Errorf("invalid usage rest threshold")
 	}
 	return strconv.Itoa(value), nil
 }

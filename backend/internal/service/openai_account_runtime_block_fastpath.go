@@ -237,12 +237,34 @@ func (s *OpenAIGatewayService) shouldRetryOpenAIOAuth429OnSameAccountWithRespons
 	if disposition != openAIOAuth429Transient {
 		return false
 	}
+	// 用量轮休：主窗口用量已接近/达到阈值（默认 80%）时，429 大概率是配额
+	// 压力信号而非瞬时拥塞。跳过同账号 6-8s 重试、立即交给 failover 换号，
+	// 避免把重试延迟叠加到本就紧张的账号上，也避免账号被持续压到 100%。
+	if s.isOpenAIAccountUsageRested(account) {
+		return false
+	}
 	// markOpenAIOAuth429RateLimited parks the account once the window expires.
 	// Do not accidentally create a fresh window after that transition.
 	if s.isOpenAIAccountRuntimeBlocked(account) {
 		return false
 	}
 	return s.openAIOAuth429RetryWindowActive(account)
+}
+
+// isOpenAIAccountUsageRested 报告账号是否达到用量轮休阈值（语义同 GatewayService，
+// 供 429 同账号重试判定复用同一设置）。
+func (s *OpenAIGatewayService) isOpenAIAccountUsageRested(account *Account) bool {
+	if s == nil || account == nil {
+		return false
+	}
+	var settingService *SettingService
+	if s.settingService != nil {
+		settingService = s.settingService
+	} else if s.rateLimitService != nil {
+		settingService = s.rateLimitService.settingService
+	}
+	threshold := openAIUsageRestThresholdPercent(context.Background(), settingService)
+	return openAIAccountUsageRestedByThreshold(account, threshold)
 }
 
 // ShouldRetryOpenAIOAuth429 lets RateLimitService defer persistent account

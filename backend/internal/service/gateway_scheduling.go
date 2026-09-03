@@ -551,7 +551,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 					"rpm_ok", rpmOK,
 				)
 
-				if !clearSticky && platformOK && profitOK && modelSupported && modelSchedulable && quotaOK && windowCostOK && rpmOK && schedulable {
+				if !clearSticky && platformOK && profitOK && modelSupported && modelSchedulable && quotaOK && windowCostOK && rpmOK && schedulable && !s.isOpenAIAccountUsageRested(account) {
 					result, err := s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
 					if err == nil && result.Acquired {
 						// 会话数量限制检查
@@ -636,9 +636,18 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		"total_accounts", len(accounts),
 	)
 	candidates := make([]*Account, 0, len(accounts))
+	usageRested := make([]usageRestedCandidate, 0, 4)
 	for i := range accounts {
 		acc := &accounts[i]
 		if isExcluded(acc.ID) {
+			continue
+		}
+		// 用量轮休：主窗口用量达到阈值后暂停调度，避免账号被压到 100%
+		// 后由上游封到整窗口（实际观察为月度窗口，触顶即废一个月）。
+		// 轮休账号单独收集，供全池兜底使用。
+		if s.isOpenAIAccountUsageRested(acc) {
+			used, _ := openAIAccountPrimaryUsedPercent(acc)
+			usageRested = append(usageRested, usageRestedCandidate{account: acc, usedPercent: used})
 			continue
 		}
 		// Scheduler snapshots can be temporarily stale (bucket rebuild is throttled);
@@ -672,6 +681,25 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			continue
 		}
 		candidates = append(candidates, acc)
+	}
+
+	// 全池轮休兜底：若所有候选账号都被用量轮休，放回用量最低的少数账号，
+	// 保证整组仍有最小可用容量（比直接无可用账号更利于客户端自愈）。
+	if len(candidates) == 0 && len(usageRested) > 0 {
+		sort.SliceStable(usageRested, func(i, j int) bool {
+			if usageRested[i].usedPercent != usageRested[j].usedPercent {
+				return usageRested[i].usedPercent < usageRested[j].usedPercent
+			}
+			return usageRested[i].account.ID < usageRested[j].account.ID
+		})
+		backfill := min(len(usageRested), openAIUsageRestedFallbackMax)
+		for _, item := range usageRested[:backfill] {
+			candidates = append(candidates, item.account)
+		}
+		slog.Warn("openai.usage_rest_pool_backfill",
+			"rested_total", len(usageRested),
+			"backfilled", backfill,
+		)
 	}
 
 	if len(candidates) == 0 {
@@ -1097,6 +1125,22 @@ func (s *GatewayService) isAccountSchedulableForSelection(account *Account) bool
 		return false
 	}
 	return account.IsSchedulable()
+}
+
+// usageRestedCandidate 用量轮休候选（备选兜底放回）。
+type usageRestedCandidate struct {
+	account     *Account
+	usedPercent float64
+}
+
+// isOpenAIAccountUsageRested 报告 OpenAI OAuth 账号是否达到用量轮休阈值。
+// 阈值读取失败时按默认值处理，不影响径路其他判断。
+func (s *GatewayService) isOpenAIAccountUsageRested(account *Account) bool {
+	if s == nil || account == nil {
+		return false
+	}
+	threshold := openAIUsageRestThresholdPercent(context.Background(), s.settingService)
+	return openAIAccountUsageRestedByThreshold(account, threshold)
 }
 
 func (s *GatewayService) isAccountSchedulableForModelSelection(ctx context.Context, account *Account, requestedModel string) bool {

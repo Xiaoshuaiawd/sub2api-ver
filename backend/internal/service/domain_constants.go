@@ -620,6 +620,8 @@ const (
 	SettingKeyOpenAIAdvancedSchedulerWeightLoad                  = "openai_advanced_scheduler_weight_load"
 	SettingKeyOpenAIAdvancedSchedulerWeightQueue                 = "openai_advanced_scheduler_weight_queue"
 	SettingKeyOpenAIAdvancedSchedulerWeightErrorRate             = "openai_advanced_scheduler_weight_error_rate"
+	// SettingKeyOpenAIUsageRestThresholdPercent OpenAI 账号主窗口用量轮休阈值（百分比，0=关闭）。
+	SettingKeyOpenAIUsageRestThresholdPercent = "openai_scheduling_usage_rest_threshold_percent"
 	SettingKeyOpenAIAdvancedSchedulerWeightTTFT                  = "openai_advanced_scheduler_weight_ttft"
 	SettingKeyOpenAIAdvancedSchedulerWeightReset                 = "openai_advanced_scheduler_weight_reset"
 	SettingKeyOpenAIAdvancedSchedulerWeightQuotaHeadroom         = "openai_advanced_scheduler_weight_quota_headroom"
