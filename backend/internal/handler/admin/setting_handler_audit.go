@@ -533,6 +533,9 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	if before.OpenAIUsageRestThresholdPercent != after.OpenAIUsageRestThresholdPercent {
 		changed = append(changed, "openai_scheduling_usage_rest_threshold_percent")
 	}
+	if before.OpenAIOAuth429ImmediateFailover != after.OpenAIOAuth429ImmediateFailover {
+		changed = append(changed, "openai_oauth_429_immediate_failover")
+	}
 	if before.OpenAIAdvancedSchedulerWeightLoad != after.OpenAIAdvancedSchedulerWeightLoad {
 		changed = append(changed, "openai_advanced_scheduler_weight_load")
 	}

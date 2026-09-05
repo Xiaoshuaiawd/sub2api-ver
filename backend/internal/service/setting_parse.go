@@ -264,6 +264,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyOpenAIAdvancedSchedulerWeightSessionSticky:         "",
 
 		SettingKeyOpenAIUsageRestThresholdPercent: "80",
+		SettingKeyOpenAIOAuth429ImmediateFailover: "false",
 
 		SettingKeyAllowUserViewErrorRequests: "false",
 	}
@@ -930,6 +931,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.OpenAIAdvancedSchedulerWeightPreviousResponse = strings.TrimSpace(settings[SettingKeyOpenAIAdvancedSchedulerWeightPreviousResponse])
 	result.OpenAIAdvancedSchedulerWeightSessionSticky = strings.TrimSpace(settings[SettingKeyOpenAIAdvancedSchedulerWeightSessionSticky])
 	result.OpenAIUsageRestThresholdPercent = strings.TrimSpace(settings[SettingKeyOpenAIUsageRestThresholdPercent])
+	result.OpenAIOAuth429ImmediateFailover = settings[SettingKeyOpenAIOAuth429ImmediateFailover] == "true"
 	result.OpenAIAdvancedSchedulerEffectiveLBTopK = s.openAIAdvancedSchedulerEffectiveLBTopK()
 	effectiveWeights := s.openAIAdvancedSchedulerEffectiveWeights()
 	result.OpenAIAdvancedSchedulerEffectiveWeightPriority = formatOpenAIAdvancedSchedulerFloat(effectiveWeights.Priority)

@@ -5,6 +5,7 @@ package service
 import (
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -87,7 +88,7 @@ func TestShouldRetryOpenAIOAuth429_UsageRestedSkipsSameAccountRetry(t *testing.T
 	svc := &OpenAIGatewayService{}
 
 	rested := &Account{
-		ID:     1,
+		ID:       1,
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeOAuth,
 		Extra:    map[string]any{"codex_primary_used_percent": float64(85)},
@@ -96,7 +97,7 @@ func TestShouldRetryOpenAIOAuth429_UsageRestedSkipsSameAccountRetry(t *testing.T
 		"用量 >= 默认阈值 80 的账号收到瞬时 429 不应同账号重试")
 
 	healthy := &Account{
-		ID:     2,
+		ID:       2,
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeOAuth,
 		Extra:    map[string]any{"codex_primary_used_percent": float64(30)},
@@ -111,9 +112,34 @@ func TestShouldRetryOpenAIOAuth429_ExhaustedQuotaNeverSameAccountRetry(t *testin
 	account := &Account{ID: 3, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
 
 	headers := http.Header{
-		"X-Codex-Primary-Used-Percent":      []string{"100"},
+		"X-Codex-Primary-Used-Percent":        []string{"100"},
 		"X-Codex-Primary-Reset-After-Seconds": []string{"2590088"},
 	}
 	require.False(t, svc.shouldRetryOpenAIOAuth429OnSameAccountWithResponse(account, http.StatusTooManyRequests, false, headers, nil),
 		"主窗口 100% 的 429 必须立即切换账号，不做同账号重试")
+}
+
+// 开启 openai_oauth_429_immediate_failover 后：任何 429（包括健康账号的瞬时 429）
+// 一律跳过同账号重试，立即换号。
+func TestShouldRetryOpenAIOAuth429_ImmediateFailoverEnabledSkipsAllSameAccountRetry(t *testing.T) {
+	openAIOAuth429ImmediateFailoverCache.Store(&openAIOAuth429ImmediateFailoverCached{
+		enabled:   true,
+		expiresAt: time.Now().Add(time.Minute).UnixNano(),
+	})
+	defer openAIOAuth429ImmediateFailoverCache.Store(&openAIOAuth429ImmediateFailoverCached{
+		enabled:   false,
+		expiresAt: time.Now().Add(time.Minute).UnixNano(),
+	})
+
+	svc := &OpenAIGatewayService{}
+	healthy := &Account{
+		ID:       7,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Extra:    map[string]any{"codex_primary_used_percent": float64(30)},
+	}
+	require.False(t, svc.shouldRetryOpenAIOAuth429OnSameAccountWithResponse(healthy, http.StatusTooManyRequests, false, http.Header{}, nil),
+		"开启立即换号后，健康账号的瞬时 429 也不做同账号重试")
+	require.False(t, svc.ShouldRetryOpenAIOAuth429(healthy, http.Header{}, nil),
+		"开启立即换号后，RateLimitService 的延迟冷却判定同样直接放行换号")
 }

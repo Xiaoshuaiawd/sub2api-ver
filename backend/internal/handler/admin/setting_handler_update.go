@@ -289,6 +289,7 @@ type UpdateSettingsRequest struct {
 	OpenAIAdvancedSchedulerWeightTTFT                  *string  `json:"openai_advanced_scheduler_weight_ttft"`
 	OpenAIAdvancedSchedulerWeightReset                 *string  `json:"openai_advanced_scheduler_weight_reset"`
 	OpenAIUsageRestThresholdPercent                    *string  `json:"openai_scheduling_usage_rest_threshold_percent"`
+	OpenAIOAuth429ImmediateFailover                    *bool    `json:"openai_oauth_429_immediate_failover"`
 	OpenAIAdvancedSchedulerWeightQuotaHeadroom         *string  `json:"openai_advanced_scheduler_weight_quota_headroom"`
 	OpenAIAdvancedSchedulerWeightUpstreamCost          *string  `json:"openai_advanced_scheduler_weight_upstream_cost"`
 	OpenAIAdvancedSchedulerWeightPreviousResponse      *string  `json:"openai_advanced_scheduler_weight_previous_response"`
@@ -1861,6 +1862,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		OpenAIAdvancedSchedulerWeightPreviousResponse: stringSetting(req.OpenAIAdvancedSchedulerWeightPreviousResponse, previousSettings.OpenAIAdvancedSchedulerWeightPreviousResponse),
 		OpenAIAdvancedSchedulerWeightSessionSticky:    stringSetting(req.OpenAIAdvancedSchedulerWeightSessionSticky, previousSettings.OpenAIAdvancedSchedulerWeightSessionSticky),
 		OpenAIUsageRestThresholdPercent:               stringSetting(req.OpenAIUsageRestThresholdPercent, previousSettings.OpenAIUsageRestThresholdPercent),
+		OpenAIOAuth429ImmediateFailover: func() bool {
+			if req.OpenAIOAuth429ImmediateFailover != nil {
+				return *req.OpenAIOAuth429ImmediateFailover
+			}
+			return previousSettings.OpenAIOAuth429ImmediateFailover
+		}(),
 		BalanceLowNotifyEnabled: func() bool {
 			if req.BalanceLowNotifyEnabled != nil {
 				return *req.BalanceLowNotifyEnabled
@@ -2346,6 +2353,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		OpenAIAdvancedSchedulerWeightPreviousResponse:          updatedSettings.OpenAIAdvancedSchedulerWeightPreviousResponse,
 		OpenAIAdvancedSchedulerWeightSessionSticky:             updatedSettings.OpenAIAdvancedSchedulerWeightSessionSticky,
 		OpenAIUsageRestThresholdPercent:                        updatedSettings.OpenAIUsageRestThresholdPercent,
+		OpenAIOAuth429ImmediateFailover:                        updatedSettings.OpenAIOAuth429ImmediateFailover,
 		OpenAIAdvancedSchedulerEffectiveLBTopK:                 updatedSettings.OpenAIAdvancedSchedulerEffectiveLBTopK,
 		OpenAIAdvancedSchedulerEffectiveWeightPriority:         updatedSettings.OpenAIAdvancedSchedulerEffectiveWeightPriority,
 		OpenAIAdvancedSchedulerEffectiveWeightLoad:             updatedSettings.OpenAIAdvancedSchedulerEffectiveWeightLoad,

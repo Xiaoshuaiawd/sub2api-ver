@@ -6,7 +6,10 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -229,8 +232,79 @@ func (s *OpenAIGatewayService) shouldRetryOpenAIOAuth429OnSameAccount(account *A
 	return s.shouldRetryOpenAIOAuth429OnSameAccountWithResponse(account, statusCode, shouldDisable, nil, nil)
 }
 
+// openAIOAuth429ImmediateFailoverRepo 返回 429 立即换号设置的读取仓库。
+func openAIOAuth429ImmediateFailoverRepo(settingService *SettingService) SettingRepository {
+	if settingService == nil {
+		return nil
+	}
+	return settingService.settingRepo
+}
+
+var (
+	openAIOAuth429ImmediateFailoverCache atomic.Value // *openAIOAuth429ImmediateFailoverCached
+	openAIOAuth429ImmediateFailoverSF    singleflight.Group
+)
+
+const openAIOAuth429ImmediateFailoverCacheTTL = 5 * time.Second
+
+type openAIOAuth429ImmediateFailoverCached struct {
+	enabled   bool
+	expiresAt int64 // unix nano
+}
+
+// openAIOAuth429ImmediateFailoverEnabled 报告是否开启「429 立即换号」：
+// 开启后 OpenAI OAuth 账号的任何 429 都不做同账号重试，直接交给 failover 切到其他账号，
+// 不在触发 429 的账号上停留（默认关闭，保留原有同账号短重试行为）。
+func openAIOAuth429ImmediateFailoverEnabled(ctx context.Context, settingService *SettingService) bool {
+	if cached, ok := openAIOAuth429ImmediateFailoverCache.Load().(*openAIOAuth429ImmediateFailoverCached); ok && cached != nil && time.Now().UnixNano() < cached.expiresAt {
+		return cached.enabled
+	}
+	result, _, _ := openAIOAuth429ImmediateFailoverSF.Do(SettingKeyOpenAIOAuth429ImmediateFailover, func() (any, error) {
+		if cached, ok := openAIOAuth429ImmediateFailoverCache.Load().(*openAIOAuth429ImmediateFailoverCached); ok && cached != nil && time.Now().UnixNano() < cached.expiresAt {
+			return cached, nil
+		}
+		enabled := false
+		if repo := openAIOAuth429ImmediateFailoverRepo(settingService); repo != nil {
+			dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), openAIUsageRestSettingDBTimeout)
+			defer cancel()
+			if values, err := repo.GetMultiple(dbCtx, []string{SettingKeyOpenAIOAuth429ImmediateFailover}); err == nil {
+				enabled = strings.EqualFold(strings.TrimSpace(values[SettingKeyOpenAIOAuth429ImmediateFailover]), "true")
+			}
+		}
+		cached := &openAIOAuth429ImmediateFailoverCached{
+			enabled:   enabled,
+			expiresAt: time.Now().Add(openAIOAuth429ImmediateFailoverCacheTTL).UnixNano(),
+		}
+		openAIOAuth429ImmediateFailoverCache.Store(cached)
+		return cached, nil
+	})
+	if cached, ok := result.(*openAIOAuth429ImmediateFailoverCached); ok {
+		return cached.enabled
+	}
+	return false
+}
+
+// openAIOAuth429ImmediateFailoverEnabledForService 是 OpenAIGatewayService 侧的读取封装。
+func (s *OpenAIGatewayService) openAIOAuth429ImmediateFailoverEnabledForService() bool {
+	if s == nil {
+		return false
+	}
+	var settingService *SettingService
+	if s.settingService != nil {
+		settingService = s.settingService
+	} else if s.rateLimitService != nil {
+		settingService = s.rateLimitService.settingService
+	}
+	return openAIOAuth429ImmediateFailoverEnabled(context.Background(), settingService)
+}
+
 func (s *OpenAIGatewayService) shouldRetryOpenAIOAuth429OnSameAccountWithResponse(account *Account, statusCode int, shouldDisable bool, headers http.Header, responseBody []byte) bool {
 	if shouldDisable || statusCode != http.StatusTooManyRequests || !isOpenAIOAuthAccount(account) || account.IsShadow() {
+		return false
+	}
+	// openai_oauth_429_immediate_failover：开启后所有 429 一律跳过同账号重试，
+	// 立即交给 failover 切换账号，不在触发 429 的账号上停留。
+	if s.openAIOAuth429ImmediateFailoverEnabledForService() {
 		return false
 	}
 	disposition, _ := classifyOpenAIOAuth429(headers, responseBody)
@@ -271,6 +345,9 @@ func (s *OpenAIGatewayService) isOpenAIAccountUsageRested(account *Account) bool
 // cooldown until the gateway's same-account retry window is exhausted.
 func (s *OpenAIGatewayService) ShouldRetryOpenAIOAuth429(account *Account, headers http.Header, responseBody []byte) bool {
 	if s == nil || !isOpenAIOAuthAccount(account) || account.IsShadow() || s.isOpenAIAccountRuntimeBlocked(account) {
+		return false
+	}
+	if s.openAIOAuth429ImmediateFailoverEnabledForService() {
 		return false
 	}
 	disposition, _ := classifyOpenAIOAuth429(headers, responseBody)
