@@ -1874,6 +1874,13 @@ func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *se
 				msg = *rule.CustomMessage
 			}
 
+			// 透传文案里若回显了真实模型名（渠道/账号映射后的模型），
+			// 改为统一错误，避免把真实模型暴露给客户端。
+			if service.UpstreamErrorMessageLeaksModel(msg) {
+				leakStatus, _, leakMsg := service.UpstreamModelLeakClientError()
+				respCode, msg = leakStatus, leakMsg
+			}
+
 			if rule.SkipMonitoring {
 				c.Set(service.OpsSkipPassthroughKey, true)
 			}

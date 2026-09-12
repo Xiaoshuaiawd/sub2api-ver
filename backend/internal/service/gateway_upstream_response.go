@@ -444,6 +444,18 @@ func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Res
 		"upstream_error",
 		"Upstream request failed",
 	); matched {
+		// 透传文案里若回显了真实模型名，改为统一错误，避免暴露映射关系。
+		if UpstreamErrorMessageLeaksModel(errMsg) {
+			writeUpstreamModelLeakAnthropicError(c)
+			summary := upstreamMsg
+			if summary == "" {
+				summary = errMsg
+			}
+			if summary == "" {
+				return nil, fmt.Errorf("upstream error: %d (passthrough rule matched)", resp.StatusCode)
+			}
+			return nil, fmt.Errorf("upstream error: %d (passthrough rule matched) message=%s", resp.StatusCode, summary)
+		}
 		c.JSON(status, gin.H{
 			"type": "error",
 			"error": gin.H{
@@ -468,6 +480,16 @@ func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Res
 
 	switch resp.StatusCode {
 	case 400:
+		// 400 原样回写上游 body 便于客户端定位；但若 body 回显了真实模型名
+		// （渠道/账号映射后的模型），改为统一错误，避免暴露映射关系。
+		if UpstreamErrorMessageLeaksModel(string(body)) {
+			writeUpstreamModelLeakAnthropicError(c)
+			summary := upstreamMsg
+			if summary == "" {
+				return nil, fmt.Errorf("upstream error: %d", resp.StatusCode)
+			}
+			return nil, fmt.Errorf("upstream error: %d message=%s", resp.StatusCode, summary)
+		}
 		c.Data(http.StatusBadRequest, "application/json", body)
 		summary := upstreamMsg
 		if summary == "" {
@@ -607,6 +629,18 @@ func (s *GatewayService) handleRetryExhaustedError(ctx context.Context, resp *ht
 		"upstream_error",
 		"Upstream request failed after retries",
 	); matched {
+		// 透传文案里若回显了真实模型名，改为统一错误，避免暴露映射关系。
+		if UpstreamErrorMessageLeaksModel(errMsg) {
+			writeUpstreamModelLeakAnthropicError(c)
+			summary := upstreamMsg
+			if summary == "" {
+				summary = errMsg
+			}
+			if summary == "" {
+				return nil, fmt.Errorf("upstream error: %d (retries exhausted, passthrough rule matched)", resp.StatusCode)
+			}
+			return nil, fmt.Errorf("upstream error: %d (retries exhausted, passthrough rule matched) message=%s", resp.StatusCode, summary)
+		}
 		c.JSON(status, gin.H{
 			"type": "error",
 			"error": gin.H{
