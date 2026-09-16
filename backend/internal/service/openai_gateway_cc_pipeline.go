@@ -183,6 +183,12 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	grokCacheIdentity string,
 ) (*http.Response, error) {
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
+	// 客户端断开后仍要继续排空上游用于计费，所以上游 ctx 与客户端 ctx 解耦；
+	// 但入口设置的「单请求总时长上限」必须继续生效，否则超长请求会一直占着账号，
+	// 因此这里把截止时间显式转移到解耦后的上游 ctx 上。
+	if deadline, ok := ctx.Deadline(); ok {
+		upstreamCtx, _ = context.WithDeadline(upstreamCtx, deadline)
+	}
 	upstreamReq, err := http.NewRequestWithContext(upstreamCtx, http.MethodPost, targetURL, bytes.NewReader(body))
 	releaseUpstreamCtx()
 	if err != nil {

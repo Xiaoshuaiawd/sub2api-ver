@@ -383,6 +383,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	compactStartedAt := time.Now()
 	defer h.logOpenAIRemoteCompactOutcome(c, compactStartedAt)
 	setOpenAIClientTransportHTTP(c)
+	// 单请求总时长上限：超时即截断（上游随 ctx 取消，已下发的流保持原样）。
+	defer service.WithOpenAIRequestMaxDuration(c, h.gatewayService.OpenAIRequestMaxDuration())()
 
 	requestStart := time.Now()
 
@@ -470,7 +472,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	} else if changed {
 		body = cappedBody
 	}
-service.SetJuiceContext(c, service.BuildJuiceContext(body))
+	service.SetJuiceContext(c, service.BuildJuiceContext(body))
 
 	if normalizedBody, changed := normalizeCodexAutomationBootstrap(body); changed {
 		body = normalizedBody

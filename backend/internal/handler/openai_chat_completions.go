@@ -23,6 +23,8 @@ import (
 func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	streamStarted := false
 	defer h.recoverResponsesPanic(c, &streamStarted)
+	// 单请求总时长上限：超时即截断（上游随 ctx 取消，已下发的流保持原样）。
+	defer service.WithOpenAIRequestMaxDuration(c, h.gatewayService.OpenAIRequestMaxDuration())()
 
 	requestStart := time.Now()
 
