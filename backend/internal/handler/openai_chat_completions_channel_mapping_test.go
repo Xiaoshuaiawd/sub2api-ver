@@ -99,7 +99,7 @@ func TestOpenAIChatCompletions_ChannelMappingRestoresClientModel(t *testing.T) {
 					},
 				}},
 				groupPlatforms: map[int64]string{groupID: service.PlatformOpenAI},
-			}, nil, nil, nil)
+			}, nil, nil, nil, nil)
 			upstream := &openAIChatChannelMappingUpstream{}
 			cfg := &config.Config{RunMode: config.RunModeSimple}
 			cfg.Security.URLAllowlist.Enabled = false

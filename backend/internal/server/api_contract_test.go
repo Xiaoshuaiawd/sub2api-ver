@@ -921,9 +921,33 @@ func TestAPIContracts(t *testing.T) {
 					"payment_visible_method_wxpay_source": "official_wxpay",
 					"payment_visible_method_alipay_enabled": true,
 					"payment_visible_method_wxpay_enabled": false,
+					"openai_default_proxy_enabled": true,
+					"openai_default_proxy_failure_policy": "fail_closed",
+					"openai_default_proxy_url": "socks5h://warp-proxy:1080",
+					"openai_oauth_429_immediate_failover": false,
+					"openai_scheduling_usage_rest_threshold_percent": "",
+					"openai_default_proxy_status": {
+						"checked_at": "",
+						"egress_ip": "",
+						"error": "",
+						"healthy": false,
+						"instance_id": "",
+						"metrics": {
+							"attempts_by_source": {
+								"account": 0,
+								"backup": 0,
+								"direct": 0,
+								"node": 0
+							},
+							"candidate_switches": 0,
+							"direct_fallbacks": 0,
+							"fail_closed_exhaustions": 0,
+							"http_transport_failures": 0,
+							"websocket_transport_failures": 0
+						}
+					},
 					"openai_low_upstream_rate_priority_enabled": true,
 					"openai_oauth_scheduling_rate_multiplier": 0.05,
-					"openai_ttft_mode": "semantic",
 					"openai_advanced_scheduler_enabled": true,
 					"openai_advanced_scheduler_sticky_weighted_enabled": false,
 					"openai_advanced_scheduler_subscription_priority_enabled": false,
@@ -1238,9 +1262,33 @@ func TestAPIContracts(t *testing.T) {
 					"payment_visible_method_wxpay_source": "",
 					"payment_visible_method_alipay_enabled": false,
 					"payment_visible_method_wxpay_enabled": false,
+					"openai_default_proxy_enabled": true,
+					"openai_default_proxy_failure_policy": "fail_closed",
+					"openai_default_proxy_url": "socks5h://warp-proxy:1080",
+					"openai_oauth_429_immediate_failover": false,
+					"openai_scheduling_usage_rest_threshold_percent": "",
+					"openai_default_proxy_status": {
+						"checked_at": "",
+						"egress_ip": "",
+						"error": "",
+						"healthy": false,
+						"instance_id": "",
+						"metrics": {
+							"attempts_by_source": {
+								"account": 0,
+								"backup": 0,
+								"direct": 0,
+								"node": 0
+							},
+							"candidate_switches": 0,
+							"direct_fallbacks": 0,
+							"fail_closed_exhaustions": 0,
+							"http_transport_failures": 0,
+							"websocket_transport_failures": 0
+						}
+					},
 					"openai_low_upstream_rate_priority_enabled": false,
 					"openai_oauth_scheduling_rate_multiplier": 1,
-					"openai_ttft_mode": "semantic",
 					"openai_advanced_scheduler_enabled": false,
 					"openai_advanced_scheduler_sticky_weighted_enabled": false,
 					"openai_advanced_scheduler_subscription_priority_enabled": false,

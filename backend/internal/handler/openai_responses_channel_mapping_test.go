@@ -103,7 +103,7 @@ func TestOpenAIResponses_ChannelMappingRestoresClientModel(t *testing.T) {
 					},
 				}},
 				groupPlatforms: map[int64]string{groupID: service.PlatformOpenAI},
-			}, nil, nil, nil)
+			}, nil, nil, nil, nil)
 			upstream := &openAIResponsesChannelMappingUpstream{}
 			cfg := &config.Config{RunMode: config.RunModeSimple}
 			cfg.Security.URLAllowlist.Enabled = false
