@@ -16,7 +16,10 @@ services:
   # Sub2API Application
   # ===========================================================================
   sub2api:
-    image: weishaw/sub2api:latest
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: sub2api-local:me-hebing
     container_name: sub2api
     restart: unless-stopped
     security_opt:
@@ -63,8 +66,8 @@ services:
       - DATABASE_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - DATABASE_DBNAME=${POSTGRES_DB:-sub2api}
       - DATABASE_SSLMODE=disable
-      - DATABASE_MAX_OPEN_CONNS=${DATABASE_MAX_OPEN_CONNS:-50}
-      - DATABASE_MAX_IDLE_CONNS=${DATABASE_MAX_IDLE_CONNS:-10}
+      - DATABASE_MAX_OPEN_CONNS=${DATABASE_MAX_OPEN_CONNS:-256}
+      - DATABASE_MAX_IDLE_CONNS=${DATABASE_MAX_IDLE_CONNS:-128}
       - DATABASE_CONN_MAX_LIFETIME_MINUTES=${DATABASE_CONN_MAX_LIFETIME_MINUTES:-30}
       - DATABASE_CONN_MAX_IDLE_TIME_MINUTES=${DATABASE_CONN_MAX_IDLE_TIME_MINUTES:-5}
 
@@ -76,8 +79,8 @@ services:
       - REDIS_USERNAME=${REDIS_USERNAME:-}
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_DB=${REDIS_DB:-0}
-      - REDIS_POOL_SIZE=${REDIS_POOL_SIZE:-1024}
-      - REDIS_MIN_IDLE_CONNS=${REDIS_MIN_IDLE_CONNS:-10}
+      - REDIS_POOL_SIZE=${REDIS_POOL_SIZE:-4096}
+      - REDIS_MIN_IDLE_CONNS=${REDIS_MIN_IDLE_CONNS:-256}
       - REDIS_ENABLE_TLS=${REDIS_ENABLE_TLS:-false}
 
       # =======================================================================
@@ -246,6 +249,10 @@ services:
       -c shared_buffers=${POSTGRES_SHARED_BUFFERS:-128MB}
       -c effective_cache_size=${POSTGRES_EFFECTIVE_CACHE_SIZE:-4GB}
       -c maintenance_work_mem=${POSTGRES_MAINTENANCE_WORK_MEM:-64MB}
+      -c work_mem=${POSTGRES_WORK_MEM:-64MB}
+      -c max_wal_size=${POSTGRES_MAX_WAL_SIZE:-4GB}
+      -c wal_buffers=${POSTGRES_WAL_BUFFERS:-64MB}
+      -c checkpoint_completion_target=0.9
     volumes:
       - postgres_data:/var/lib/postgresql/data
     environment:
@@ -295,6 +302,9 @@ services:
         --save 60 1 \
         --appendonly yes \
         --appendfsync everysec \
+        --maxclients ${REDIS_MAXCLIENTS:-50000} \
+        --tcp-keepalive 60 \
+        --maxmemory-policy noeviction \
         ${REDIS_PASSWORD:+--requirepass "$REDIS_PASSWORD"}'
     environment:
       - TZ=${TZ:-Asia/Shanghai}
@@ -310,10 +320,38 @@ services:
       start_period: 5s
     # 注意：不暴露端口到宿主机，应用通过内部网络连接
     # 如需调试，可临时添加：ports: ["127.0.0.1:6379:6379"]
+  warp-proxy:
+    image: caomingjun/warp:2026.6.880.0-2.12.0@sha256:98d048b8996ca2e621d29887169c5c48a4f6878e2a2c647b7ea82d69540420da
+    restart: unless-stopped
+    device_cgroup_rules:
+      - "c 10:200 rwm"
+    cap_add:
+      - NET_ADMIN
+    environment:
+      WARP_SLEEP: "2"
+      WARP_LICENSE_KEY: "${WARP_LICENSE_KEY:-}"
+    sysctls:
+      net.ipv6.conf.all.disable_ipv6: "0"
+      net.ipv4.conf.all.src_valid_mark: "1"
+    volumes:
+      - warp-data:/var/lib/cloudflare-warp
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl -fsS --socks5-hostname 127.0.0.1:1080 https://www.cloudflare.com/cdn-cgi/trace | grep -Eq '^warp=(on|plus)$'
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+    networks:
+      - sub2api-network
+
 # =============================================================================
 # Volumes
 # =============================================================================
 volumes:
+  warp-data:
+    driver: local
   sub2api_data:
     driver: local
   postgres_data:
