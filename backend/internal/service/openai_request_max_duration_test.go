@@ -112,15 +112,17 @@ func TestWithOpenAIRequestMaxDurationTruncatesLongStream(t *testing.T) {
 	cfg.Gateway.OpenAIRequestMaxDurationSeconds = 600
 	svc := &OpenAIGatewayService{cfg: cfg, httpUpstream: upstream}
 
-	// 入口给请求上下文加总时长上限（这里用 200ms 代替配置里的 10 分钟）。
-	finish := WithOpenAIRequestMaxDuration(c, 200*time.Millisecond)
+	// 入口给请求上下文加总时长上限（这里用 2s 代替配置里的 10 分钟）。
+	// 取值要与「首块数据被读出」拉开足够余量，避免满载时先到点、首块还没读到的时序抖动。
+	finish := WithOpenAIRequestMaxDuration(c, 2*time.Second)
 	defer finish()
 
 	started := time.Now()
 	result, err := svc.forwardAsRawChatCompletions(c.Request.Context(), c, maxDurationTestAccount(), body, "")
 	elapsed := time.Since(started)
 
-	require.Less(t, elapsed, 5*time.Second, "超长请求必须在总时长上限处被截断")
+	require.GreaterOrEqual(t, elapsed, time.Second, "应在上限处才截断，而不是提前结束")
+	require.Less(t, elapsed, 10*time.Second, "超长请求必须在总时长上限处被截断")
 	require.NoError(t, err, "到点截断按正常收尾处理，不报上游错误")
 	require.NotNil(t, result)
 	require.Contains(t, rec.Body.String(), `"content":"partial"`, "截断前已下发的流式内容保持原样")
