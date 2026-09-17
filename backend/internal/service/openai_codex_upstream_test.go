@@ -1,7 +1,9 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -117,4 +119,80 @@ func TestCodexUpstreamOverrideRejectsInvalidURL(t *testing.T) {
 
 	_, wsErr := svc.buildOpenAIResponsesWSURL(context.Background(), account)
 	require.Error(t, wsErr)
+}
+
+func TestAccountTestUsesCustomCodexUpstream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	account := Account{
+		ID:          1,
+		Name:        "openai-oauth",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"access_token":       "oauth-token",
+			"chatgpt_account_id": "chatgpt-acc",
+		},
+	}
+	repo := &snapshotUpdateAccountRepo{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}}}
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid-probe"}},
+		Body:       io.NopCloser(strings.NewReader(compactProbeSSESuccessBody)),
+	}}
+	svc := &AccountTestService{
+		accountRepo:          repo,
+		httpUpstream:         upstream,
+		openaiGatewayService: codexUpstreamTestService(),
+	}
+	setCodexUpstreamOverride(t, "http://180.178.56.226:9620/v1/responses")
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/1/test", bytes.NewReader(nil))
+
+	err := svc.TestAccountConnection(c, account.ID, "gpt-5.4", "", AccountTestModeCompact)
+	require.NoError(t, err)
+	require.Equal(t, "http://180.178.56.226:9620/v1/responses", upstream.lastReq.URL.String())
+	// Host 头与线上转发保持一致：官方 OAuth 请求固定 Host: chatgpt.com，只换目标 URL。
+	require.Equal(t, "chatgpt.com", upstream.lastReq.Host)
+}
+
+func TestAccountTestRejectsInvalidCustomCodexUpstream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	account := Account{
+		ID:          1,
+		Name:        "openai-oauth",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"access_token":       "oauth-token",
+			"chatgpt_account_id": "chatgpt-acc",
+		},
+	}
+	repo := &snapshotUpdateAccountRepo{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}}}
+	upstream := &httpUpstreamRecorder{}
+	svc := &AccountTestService{
+		accountRepo:          repo,
+		httpUpstream:         upstream,
+		openaiGatewayService: codexUpstreamTestService(),
+	}
+	setCodexUpstreamOverride(t, "http://")
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/1/test", bytes.NewReader(nil))
+
+	err := svc.TestAccountConnection(c, account.ID, "gpt-5.4", "", AccountTestModeCompact)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), SettingKeyOpenAICodexUpstreamURL)
+	require.Contains(t, rec.Body.String(), "openai_codex_upstream_url")
+	require.Nil(t, upstream.lastReq, "校验失败时不应发出上游请求")
 }

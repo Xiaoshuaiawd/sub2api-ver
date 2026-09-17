@@ -753,6 +753,16 @@ func (s *AccountTestService) testBedrockAccountConnection(c *gin.Context, ctx co
 }
 
 // testOpenAIAccountConnection tests an OpenAI account's connection
+// codexTestUpstreamURL 解析账号测试使用的 Codex Responses 地址。
+// 管理端配置了自定义 Codex 上游时按同一出站策略校验后替换，否则回落到官方地址；
+// 校验失败直接返回错误，避免"测试打官方、线上打自定义"的误导性结果。
+func (s *AccountTestService) codexTestUpstreamURL(ctx context.Context) (string, error) {
+	if s == nil || s.openaiGatewayService == nil {
+		return chatgptCodexAPIURL, nil
+	}
+	return s.openaiGatewayService.resolveOpenAICodexResponsesTarget(ctx, chatgptCodexAPIURL)
+}
+
 func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account *Account, modelID string, prompt string, mode string) error {
 	ctx := c.Request.Context()
 	mode = normalizeAccountTestMode(mode)
@@ -808,8 +818,12 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			return s.sendErrorAndEnd(c, "No access token available")
 		}
 
-		// OAuth uses ChatGPT internal API
-		apiURL = chatgptCodexAPIURL
+		// OAuth uses ChatGPT internal API；命中管理端自定义 Codex 上游时改打该地址。
+		codexURL, codexErr := s.codexTestUpstreamURL(ctx)
+		if codexErr != nil {
+			return s.sendErrorAndEnd(c, codexErr.Error())
+		}
+		apiURL = codexURL
 	} else if credentialAccount.Type == "apikey" {
 		// API Key - use Platform API
 		authToken = credentialAccount.GetOpenAIProtocolAPIKey()
@@ -2161,7 +2175,11 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 		if authToken == "" && !credentialAccount.IsOpenAIAgentIdentity() {
 			return s.sendErrorAndEnd(c, "No access token available")
 		}
-		apiURL = chatgptCodexAPIURL
+		codexURL, codexErr := s.codexTestUpstreamURL(ctx)
+		if codexErr != nil {
+			return s.sendErrorAndEnd(c, codexErr.Error())
+		}
+		apiURL = codexURL
 	case account.Type == AccountTypeAPIKey:
 		authToken = account.GetOpenAIProtocolAPIKey()
 		if authToken == "" {
