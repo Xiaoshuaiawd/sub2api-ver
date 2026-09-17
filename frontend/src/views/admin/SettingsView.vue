@@ -5875,6 +5875,37 @@
                 </p>
               </div>
 
+              <!-- Codex 上游接口地址 -->
+              <div>
+                <label
+                  class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  {{
+                    t(
+                      "admin.settings.gatewayForwarding.openaiCodexUpstreamURL",
+                    )
+                  }}
+                </label>
+                <input
+                  v-model="form.openai_codex_upstream_url"
+                  type="text"
+                  class="input w-full font-mono text-sm"
+                  data-testid="openai-codex-upstream-url"
+                  :placeholder="
+                    t(
+                      'admin.settings.gatewayForwarding.openaiCodexUpstreamURLPlaceholder',
+                    )
+                  "
+                />
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{
+                    t(
+                      "admin.settings.gatewayForwarding.openaiCodexUpstreamURLHint",
+                    )
+                  }}
+                </p>
+              </div>
+
               <!-- Codex 版本号自动同步 -->
               <div class="flex items-center justify-between">
                 <div>
@@ -10012,6 +10043,7 @@ const form = reactive<SettingsForm>({
   // 只读展示：自动同步任务写入的官方最新稳定版，不参与提交（提交载荷按字段显式构造）
   openai_codex_client_version_synced: "",
   openai_codex_version_auto_sync_enabled: true,
+  openai_codex_upstream_url: "",
   // codex_cli_only 加固
   min_codex_version: "",
   max_codex_version: "",
@@ -11681,6 +11713,7 @@ async function saveSettings() {
         form.openai_codex_client_version?.trim() || "",
       openai_codex_version_auto_sync_enabled:
         form.openai_codex_version_auto_sync_enabled,
+      openai_codex_upstream_url: form.openai_codex_upstream_url.trim(),
       min_codex_version: form.min_codex_version?.trim() || "",
       max_codex_version: form.max_codex_version?.trim() || "",
       codex_cli_only_allow_app_server_clients:

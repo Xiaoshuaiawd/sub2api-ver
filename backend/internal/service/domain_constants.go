@@ -718,6 +718,10 @@ const (
 	// 由 OpenAICodexVersionSyncService 独占写入，面板只读展示；管理员覆写请用
 	// SettingKeyOpenAICodexClientVersion。
 	SettingKeyOpenAICodexClientVersionSynced = "openai_codex_client_version_synced"
+	// SettingKeyOpenAICodexUpstreamURL 自定义 Codex 上游接口地址（空值使用官方
+	// https://chatgpt.com/backend-api/codex/responses）。命中后只替换目标 URL，
+	// 请求体与请求头保持完全一致。
+	SettingKeyOpenAICodexUpstreamURL = "openai_codex_upstream_url"
 	// SettingKeyOpenAICodexVersionAutoSyncEnabled 是否启用 Codex 客户端版本号自动同步（默认 true）。
 	SettingKeyOpenAICodexVersionAutoSyncEnabled = "openai_codex_version_auto_sync_enabled"
 	// SettingKeyOpenAIAllowClaudeCodeCodexPlugin 已废弃：历史全局开关只作为升级迁移输入读取。

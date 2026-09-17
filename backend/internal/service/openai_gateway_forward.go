@@ -1391,11 +1391,19 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	var targetURL string
 	switch account.Type {
 	case AccountTypeOAuth:
-		// OAuth accounts use ChatGPT internal API
-		targetURL = chatgptCodexURL
+		// OAuth accounts use ChatGPT internal API；管理员可配置自定义 Codex 上游地址。
+		codexTarget, codexErr := s.resolveOpenAICodexResponsesTarget(ctx, chatgptCodexURL)
+		if codexErr != nil {
+			return nil, codexErr
+		}
+		targetURL = codexTarget
 	case AccountTypeSetupToken:
 		if account.IsOpenAIOAuthLike() {
-			targetURL = chatgptCodexURL
+			codexTarget, codexErr := s.resolveOpenAICodexResponsesTarget(ctx, chatgptCodexURL)
+			if codexErr != nil {
+				return nil, codexErr
+			}
+			targetURL = codexTarget
 		} else {
 			targetURL = openaiPlatformAPIURL
 		}

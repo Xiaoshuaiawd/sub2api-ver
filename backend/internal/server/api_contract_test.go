@@ -977,6 +977,7 @@ func TestAPIContracts(t *testing.T) {
 					"openai_codex_client_version":       "",
 					"openai_codex_client_version_synced": "",
 					"openai_codex_version_auto_sync_enabled": true,
+					"openai_codex_upstream_url": "",
 					"openai_fast_policy_settings": {
 						"rules": []
 					},
@@ -1318,6 +1319,7 @@ func TestAPIContracts(t *testing.T) {
 					"openai_codex_client_version":       "",
 					"openai_codex_client_version_synced": "",
 					"openai_codex_version_auto_sync_enabled": true,
+					"openai_codex_upstream_url": "",
 					"openai_fast_policy_settings": {
 						"rules": []
 					},

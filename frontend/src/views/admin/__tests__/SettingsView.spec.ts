@@ -890,6 +890,32 @@ describe("admin SettingsView payment visible method controls", () => {
     );
   });
 
+  it("loads and saves the Codex upstream endpoint override", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      openai_codex_upstream_url: "http://180.178.56.226:9620/v1/responses",
+    });
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openGatewayTab(wrapper);
+
+    const input = wrapper.get('[data-testid="openai-codex-upstream-url"]');
+    expect((input.element as HTMLInputElement).value).toBe(
+      "http://180.178.56.226:9620/v1/responses",
+    );
+
+    await input.setValue("https://codex-mirror.example/v1/responses");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        openai_codex_upstream_url: "https://codex-mirror.example/v1/responses",
+      }),
+    );
+  });
+
   it("人机验证切换到腾讯天御并保存四项配置", async () => {
     const wrapper = mountView();
     await flushPromises();
