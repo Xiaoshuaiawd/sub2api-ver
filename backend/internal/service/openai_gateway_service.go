@@ -590,7 +590,10 @@ func NewOpenAIGatewayService(
 }
 
 func openAIProxyPolicyFromSettingService(settings *SettingService) OpenAIProxyPolicyProvider {
-	if settings == nil {
+	// 必须显式判空再返回：直接返回未初始化的 *OpenAIProxyPolicyService 会得到
+	// 带类型的 nil 接口，下游的 policy == nil 兜底判断失效，nil 接收者的 Resolve
+	// 会退回默认设置并把流量指向默认 WARP 节点。
+	if settings == nil || settings.openAIProxyPolicy == nil {
 		return nil
 	}
 	return settings.openAIProxyPolicy
