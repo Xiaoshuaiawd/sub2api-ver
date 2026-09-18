@@ -30,6 +30,28 @@ socks5h://warp-proxy:1080
 账号本身配置了代理时，账号代理仍然排在第一位。关闭“节点默认代理”后，系统恢复
 为账号代理优先、无账号代理则直连的原有行为。
 
+## 两种部署方式
+
+**一体化部署（单机 / 单栈）**：`docker-compose.yml` 已内置 `warp-proxy` 服务，并与
+`sub2api` 挂在同一个 `sub2api-network` 上，因此应用容器直接以
+`socks5h://warp-proxy:1080` 访问它，无需额外 overlay：
+
+```bash
+cd deploy
+docker compose up -d
+```
+
+这种部署下整栈共用一个 WARP 出口，适合单机或不需要按节点区分出口的场景。可选的
+WARP+ License 由同目录 `.env` 的 `WARP_LICENSE_KEY` 注入。
+
+sidecar 同样需要宿主机提供 TUN 设备（见下文前置条件）。缺少时 `warp-proxy` 会因
+`restart: unless-stopped` 反复重启，但不会阻塞其他容器启动；此时应先在管理后台关闭
+“OpenAI 默认出口代理”，否则 `fail_closed` 会让 OpenAI 请求全部失败。
+
+**分布式部署（三节点，各自独立出口）**：使用
+`docker-compose.standalone.yml` + `docker-compose.warp.yml` overlay，下文按此展开。
+两种方式不要混用：主 compose 已包含 sidecar，再叠加 overlay 会声明重复服务。
+
 ## 前置条件
 
 - Linux 主机和 Docker Compose v2。

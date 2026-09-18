@@ -296,7 +296,9 @@ Deploy with Docker Compose, including PostgreSQL and Redis containers.
 
 For a distributed deployment that shares PostgreSQL and Redis while giving each
 Sub2API node its own Cloudflare WARP egress, use the pinned Compose overlay and
-rollout guide in [deploy/WARP_EGRESS.md](deploy/WARP_EGRESS.md). The proxy policy
+rollout guide in [deploy/WARP_EGRESS.md](deploy/WARP_EGRESS.md). The standard
+`deploy/docker-compose.yml` already bundles the same pinned WARP sidecar on the
+shared Compose network for single-stack deployments. The proxy policy
 applies only to OpenAI/ChatGPT/Codex upstream traffic; it does not replace the
 host or container default route.
 

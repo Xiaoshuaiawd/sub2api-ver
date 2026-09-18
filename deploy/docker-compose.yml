@@ -310,6 +310,36 @@ services:
       start_period: 5s
     # 注意：不暴露端口到宿主机，应用通过内部网络连接
     # 如需调试，可临时添加：ports: ["127.0.0.1:6379:6379"]
+  # ===========================================================================
+  # Cloudflare WARP Egress Proxy (OpenAI upstream traffic)
+  # ===========================================================================
+  # 与 sub2api 同网络（sub2api-network），应用以 socks5h://warp-proxy:1080 访问；
+  # 跨网络会导致容器 DNS 解析不到该服务名。仅 OpenAI/ChatGPT/Codex 出站流量走这里。
+  warp-proxy:
+    image: caomingjun/warp:2026.6.880.0-2.12.0@sha256:98d048b8996ca2e621d29887169c5c48a4f6878e2a2c647b7ea82d69540420da
+    restart: unless-stopped
+    device_cgroup_rules:
+      - "c 10:200 rwm"
+    cap_add:
+      - NET_ADMIN
+    environment:
+      WARP_SLEEP: "2"
+      WARP_LICENSE_KEY: "${WARP_LICENSE_KEY:-}"
+    sysctls:
+      net.ipv6.conf.all.disable_ipv6: "0"
+      net.ipv4.conf.all.src_valid_mark: "1"
+    volumes:
+      - warp-data:/var/lib/cloudflare-warp
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl -fsS --socks5-hostname 127.0.0.1:1080 https://www.cloudflare.com/cdn-cgi/trace | grep -Eq '^warp=(on|plus)$'
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+    networks:
+      - sub2api-network
 # =============================================================================
 # Volumes
 # =============================================================================
@@ -319,6 +349,8 @@ volumes:
   postgres_data:
     driver: local
   redis_data:
+    driver: local
+  warp-data:
     driver: local
 
 # =============================================================================
