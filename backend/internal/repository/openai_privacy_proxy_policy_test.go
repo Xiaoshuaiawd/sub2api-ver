@@ -136,7 +136,7 @@ func TestOpenAIPrivacyRejectsNonReplayableBodyBeforeSending(t *testing.T) {
 	require.Zero(t, attempts)
 }
 
-func TestOpenAIPrivacyClientKeepsChromeImpersonation(t *testing.T) {
+func TestOpenAIPrivacyClientUsesFirefoxImpersonation(t *testing.T) {
 	var userAgent string
 	var secCHUA string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -157,6 +157,8 @@ func TestOpenAIPrivacyClientKeepsChromeImpersonation(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, http.StatusNoContent, resp.StatusCode)
-	require.Contains(t, userAgent, "Chrome/120")
-	require.Contains(t, secCHUA, "Google Chrome")
+	// chatgpt.com 的 Cloudflare 会质询 req 内置的 Chrome/120 伪装，隐私客户端必须保持 Firefox 指纹。
+	require.Contains(t, userAgent, "Firefox/")
+	require.NotContains(t, userAgent, "Chrome/")
+	require.NotContains(t, secCHUA, "Google Chrome")
 }

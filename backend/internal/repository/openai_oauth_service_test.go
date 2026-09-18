@@ -70,7 +70,9 @@ func TestOpenAIOAuthExchangeCodeUsesOpenAIProxyProfileWithEmptyPrimary(t *testin
 		require.Equal(t, 1, accountConcurrency)
 		require.Equal(t, http.MethodPost, req.Method)
 		require.Equal(t, "application/x-www-form-urlencoded", req.Header.Get("Content-Type"))
-		require.Equal(t, "codex-cli/0.91.0", req.Header.Get("User-Agent"))
+		wantUA, wantOriginator := service.CodexCanonicalAuthIdentity()
+		require.Equal(t, wantUA, req.Header.Get("User-Agent"))
+		require.Equal(t, wantOriginator, req.Header.Get("originator"))
 		require.NoError(t, req.ParseForm())
 		gotForm = req.PostForm
 		return &http.Response{
