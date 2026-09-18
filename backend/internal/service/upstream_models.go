@@ -1075,6 +1075,7 @@ func (s *AccountTestService) buildOpenAIOAuthUpstreamModelsRequest(ctx context.C
 			s.accountRepo,
 			s.agentIdentityWS,
 			&s.agentIdentityTaskMu,
+			s.httpUpstream,
 			credentialAccount,
 		)
 		if authErr != nil {
