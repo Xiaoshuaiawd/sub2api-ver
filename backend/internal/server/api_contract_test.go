@@ -953,6 +953,24 @@ func TestAPIContracts(t *testing.T) {
 					"openai_codex_client_version":       "",
 					"openai_codex_client_version_synced": "",
 					"openai_codex_version_auto_sync_enabled": true,
+					"openai_default_proxy_enabled": true,
+					"openai_default_proxy_failure_policy": "fail_closed",
+					"openai_default_proxy_status": {
+						"checked_at": "",
+						"egress_ip": "",
+						"error": "",
+						"healthy": false,
+						"instance_id": "",
+						"metrics": {
+							"attempts_by_source": {"account": 0, "backup": 0, "direct": 0, "node": 0},
+							"candidate_switches": 0,
+							"direct_fallbacks": 0,
+							"fail_closed_exhaustions": 0,
+							"http_transport_failures": 0,
+							"websocket_transport_failures": 0
+						}
+					},
+					"openai_default_proxy_url": "socks5h://warp-proxy:1080",
 					"openai_fast_policy_settings": {
 						"rules": []
 					},
@@ -1270,6 +1288,24 @@ func TestAPIContracts(t *testing.T) {
 					"openai_codex_client_version":       "",
 					"openai_codex_client_version_synced": "",
 					"openai_codex_version_auto_sync_enabled": true,
+					"openai_default_proxy_enabled": true,
+					"openai_default_proxy_failure_policy": "fail_closed",
+					"openai_default_proxy_status": {
+						"checked_at": "",
+						"egress_ip": "",
+						"error": "",
+						"healthy": false,
+						"instance_id": "",
+						"metrics": {
+							"attempts_by_source": {"account": 0, "backup": 0, "direct": 0, "node": 0},
+							"candidate_switches": 0,
+							"direct_fallbacks": 0,
+							"fail_closed_exhaustions": 0,
+							"http_transport_failures": 0,
+							"websocket_transport_failures": 0
+						}
+					},
+					"openai_default_proxy_url": "socks5h://warp-proxy:1080",
 					"openai_fast_policy_settings": {
 						"rules": []
 					},
