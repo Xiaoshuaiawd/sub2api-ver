@@ -59,7 +59,7 @@ func TestFetchOpenAIModelsListUsesStandardRequestAndIsolatesCodexCache(t *testin
 
 func TestFetchOpenAIModelsListOAuthSharesManifestCache(t *testing.T) {
 	_, calls := newCodexModelsOAuthCacheServer(t, `{"models":[{"slug":"special-oauth-model","display_name":"Special OAuth Model","description":"manifest only"},{"slug":"gpt-image-1"}]}`)
-	s := &OpenAIGatewayService{}
+	s := newCodexModelsOAuthTestService()
 	account := newCodexModelsTestAccount()
 	response, err := s.FetchOpenAIModelsList(context.Background(), account)
 	require.NoError(t, err)
@@ -234,7 +234,11 @@ func TestFetchOpenAIModelsListEmptyAndMalformedResponses(t *testing.T) {
 func TestPinnedOpenAIModelsListMixedAccountsShareColdCacheAcrossGroups(t *testing.T) {
 	_, oauthCalls := newCodexModelsOAuthCacheServer(t, `{"models":[{"slug":"shared-model"},{"slug":"oauth-special"}]}`)
 	var apiCalls atomic.Int32
-	s := newCodexModelsAPIKeyTestService(&codexModelsHTTPUpstreamStub{do: func(_ *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+	s := newCodexModelsAPIKeyTestService(&codexModelsHTTPUpstreamStub{do: func(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+		// OAuth 账号经 httpUpstream 拉取 chatgpt 清单，API Key 账号走自定义 base_url，按主机分流。
+		if req.URL != nil && !strings.Contains(req.URL.Host, "models.example") {
+			return http.DefaultClient.Do(req)
+		}
 		apiCalls.Add(1)
 		return ordinaryModelsUpstreamResponse(`{"data":[{"id":"shared-model","owned_by":"api-provider"},{"id":"api-special"}]}`), nil
 	}})
@@ -296,7 +300,8 @@ func TestFetchOpenAIModelsListResolvesShadowOAuthCredentials(t *testing.T) {
 	_, calls := newCodexModelsOAuthCacheServer(t, `{"models":[{"slug":"parent-model"}]}`)
 	parent := newCodexModelsTestAccount()
 	shadow := &Account{ID: 9, Platform: PlatformOpenAI, Type: AccountTypeOAuth, ParentAccountID: &parent.ID}
-	s := &OpenAIGatewayService{accountRepo: newStubCredRepo(parent)}
+	s := newCodexModelsOAuthTestService()
+	s.accountRepo = newStubCredRepo(parent)
 	response, err := s.FetchOpenAIModelsList(context.Background(), shadow)
 	require.NoError(t, err)
 	require.Contains(t, string(response.Body), `"id":"parent-model"`)

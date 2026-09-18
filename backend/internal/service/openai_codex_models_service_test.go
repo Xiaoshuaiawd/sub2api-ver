@@ -2548,7 +2548,8 @@ func TestFetchCodexModelsManifestAcceptsConfiguredLimitAboveLegacyBoundary(t *te
 	chatgptCodexModelsURL = server.URL
 	defer func() { chatgptCodexModelsURL = original }()
 
-	s := &OpenAIGatewayService{cfg: &config.Config{}}
+	s := newCodexModelsOAuthTestService()
+	s.cfg = &config.Config{}
 	s.cfg.Gateway.ModelsListReadMaxBytes = 16 << 20
 	manifest, err := s.FetchCodexModelsManifest(context.Background(), newCodexModelsTestAccount(), "0.144.0", "")
 	require.NoError(t, err)
@@ -3505,7 +3506,7 @@ func expireCodexModelsManifestCache(s *OpenAIGatewayService, age time.Duration) 
 
 func TestFetchCodexModelsManifestOAuthFreshWindowZeroUpstreamRequests(t *testing.T) {
 	_, calls := newCodexModelsOAuthCacheServer(t, `{"models":[{"slug":"gpt-5.5"}]}`)
-	s := &OpenAIGatewayService{}
+	s := newCodexModelsOAuthTestService()
 	account := newCodexModelsTestAccount()
 
 	for i := 0; i < 10; i++ {
@@ -3535,7 +3536,7 @@ func TestFetchCodexModelsManifestOAuthStaleServesOldValueAndRefreshesInBackgroun
 	chatgptCodexModelsURL = server.URL
 	t.Cleanup(func() { chatgptCodexModelsURL = original })
 
-	s := &OpenAIGatewayService{}
+	s := newCodexModelsOAuthTestService()
 	account := newCodexModelsTestAccount()
 	first, err := s.FetchCodexModelsManifest(context.Background(), account, "0.137.0", "")
 	require.NoError(t, err)
@@ -3601,7 +3602,7 @@ func TestFetchCodexModelsManifestOAuthOverdueSynchronousRefreshAndFailure(t *tes
 		chatgptCodexModelsURL = server.URL
 		t.Cleanup(func() { chatgptCodexModelsURL = original })
 
-		s := &OpenAIGatewayService{}
+		s := newCodexModelsOAuthTestService()
 		account := newCodexModelsTestAccount()
 		_, err := s.FetchCodexModelsManifest(context.Background(), account, "0.137.0", "")
 		require.NoError(t, err)
@@ -3637,7 +3638,7 @@ func TestFetchCodexModelsManifestOAuthOverdueSynchronousRefreshAndFailure(t *tes
 		chatgptCodexModelsURL = server.URL
 		t.Cleanup(func() { chatgptCodexModelsURL = original })
 
-		s := &OpenAIGatewayService{}
+		s := newCodexModelsOAuthTestService()
 		account := newCodexModelsTestAccount()
 		_, err := s.FetchCodexModelsManifest(context.Background(), account, "0.137.0", "")
 		require.NoError(t, err)
@@ -3653,7 +3654,7 @@ func TestFetchCodexModelsManifestOAuthOverdueSynchronousRefreshAndFailure(t *tes
 
 func TestFetchCodexModelsManifestOAuthTokenChangeCacheMiss(t *testing.T) {
 	_, calls := newCodexModelsOAuthCacheServer(t, `{"models":[]}`)
-	s := &OpenAIGatewayService{}
+	s := newCodexModelsOAuthTestService()
 	account := newCodexModelsTestAccount()
 
 	_, err := s.FetchCodexModelsManifest(context.Background(), account, "0.137.0", "")
@@ -3685,12 +3686,11 @@ func TestFetchCodexModelsManifestOAuthSharedAcrossGroupsWithIndependentFiltering
 	chatgptCodexModelsURL = server.URL
 	t.Cleanup(func() { chatgptCodexModelsURL = original })
 
-	s := &OpenAIGatewayService{
-		accountRepo: codexModelsVisibilityAccountRepo{
-			byGroup: map[int64][]Account{
-				91: {},
-				92: {},
-			},
+	s := newCodexModelsOAuthTestService()
+	s.accountRepo = codexModelsVisibilityAccountRepo{
+		byGroup: map[int64][]Account{
+			91: {},
+			92: {},
 		},
 	}
 	account := newCodexModelsTestAccount()

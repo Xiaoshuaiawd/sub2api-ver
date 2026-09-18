@@ -15,7 +15,7 @@ func TestFetchOpenAIAccountModelsOAuthPopulatesPickerFields(t *testing.T) {
 		{"slug":"blank-display-name","display_name":"   "},
 		{"slug":"gpt-6-astra"}
 	]}`)
-	gateway := &OpenAIGatewayService{}
+	gateway := newCodexModelsOAuthTestService()
 	svc := &AccountTestService{openaiGatewayService: gateway}
 	account := newCodexModelsTestAccount()
 	ctx := context.Background()
@@ -84,7 +84,7 @@ func TestFetchOpenAIAccountModelsPreservesEmptyCatalog(t *testing.T) {
 
 func TestFetchOpenAIAccountModelsOAuthLabelsLocalImageModelsLikeUpstream(t *testing.T) {
 	newCodexModelsOAuthCacheServer(t, `{"models":[{"slug":"gpt-5.6-sol"}]}`)
-	svc := &AccountTestService{openaiGatewayService: &OpenAIGatewayService{}}
+	svc := &AccountTestService{openaiGatewayService: newCodexModelsOAuthTestService()}
 	account := newCodexModelsTestAccount()
 	account.Credentials["model_mapping"] = map[string]any{"gpt-image-2.5-flare": "gpt-image-2.5-flare"}
 	models, err := svc.FetchOpenAIAccountModels(context.Background(), account)
@@ -99,7 +99,7 @@ func TestFetchOpenAIAccountModelsOAuthLabelsLocalImageModelsLikeUpstream(t *test
 
 func TestFetchOpenAIAccountModelsOAuthRespectsImageAllowlist(t *testing.T) {
 	newCodexModelsOAuthCacheServer(t, `{"models":[{"slug":"gpt-6-astra"}]}`)
-	svc := &AccountTestService{openaiGatewayService: &OpenAIGatewayService{}}
+	svc := &AccountTestService{openaiGatewayService: newCodexModelsOAuthTestService()}
 	account := newCodexModelsTestAccount()
 	account.Credentials["model_mapping"] = map[string]any{"gpt-image-2.5-flare": "gpt-image-2.5-flare"}
 	models, err := svc.FetchOpenAIAccountModels(context.Background(), account)
