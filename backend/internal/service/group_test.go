@@ -31,6 +31,16 @@ func TestGroupBillingTypeCapabilities(t *testing.T) {
 	require.NoError(t, ValidatePeakRateConfig("subscription_balance", true, "09:00", "18:00", 1.5))
 }
 
+func TestGroupSubscriptionBillingRateMultiplierPreservesLegacyFallback(t *testing.T) {
+	quotaRate := 1.0
+	legacy := &Group{SubscriptionType: SubscriptionTypeSubscriptionBalance, RateMultiplier: 0.25}
+	require.Equal(t, 0.25, legacy.SubscriptionBillingRateMultiplier())
+	legacy.SubscriptionRateMultiplier = &quotaRate
+	require.Equal(t, 1.0, legacy.SubscriptionBillingRateMultiplier())
+	legacy.SubscriptionType = SubscriptionTypeStandard
+	require.Equal(t, 0.25, legacy.SubscriptionBillingRateMultiplier())
+}
+
 // TestGroup_GetImagePrice_1K 测试 1K 尺寸返回正确价格
 func TestGroup_GetImagePrice_1K(t *testing.T) {
 	price := 0.10

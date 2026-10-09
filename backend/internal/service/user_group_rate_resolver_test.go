@@ -81,3 +81,11 @@ func TestGatewayServiceGetUserGroupRateMultiplier_FallbacksAndUsesExistingResolv
 	require.Equal(t, rate, got)
 	require.Equal(t, 1, repo.calls)
 }
+
+func TestUserGroupRateResolverUsesEachDefaultWhenNoUserOverride(t *testing.T) {
+	repo := &userGroupRateResolverRepoStub{}
+	resolver := newUserGroupRateResolver(repo, nil, time.Minute, nil, "service.test")
+	require.Equal(t, 0.25, resolver.Resolve(context.Background(), 101, 202, 0.25))
+	require.Equal(t, 1.0, resolver.Resolve(context.Background(), 101, 202, 1.0))
+	require.Equal(t, 1, repo.calls)
+}

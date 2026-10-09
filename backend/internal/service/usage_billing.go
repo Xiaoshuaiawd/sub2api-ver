@@ -45,8 +45,13 @@ type UsageBillingCommand struct {
 	AccountQuotaCost    float64
 	// HybridGroupID > 0 enables subscription-first settlement with whole-request
 	// balance fallback. HybridCostUSD is the source-independent candidate charge.
-	HybridGroupID int64
-	HybridCostUSD float64
+	HybridGroupID             int64
+	HybridCostUSD             float64
+	HybridSplitPricing        bool
+	HybridSubscriptionCostUSD float64
+	HybridBalanceCostUSD      float64
+	HybridAPIKeyQuota         bool
+	HybridAPIKeyRateLimit     bool
 }
 
 func (c *UsageBillingCommand) Normalize() {
@@ -54,6 +59,10 @@ func (c *UsageBillingCommand) Normalize() {
 		return
 	}
 	c.RequestID = strings.TrimSpace(c.RequestID)
+	if c.HybridGroupID > 0 && !c.HybridSplitPricing {
+		c.HybridSubscriptionCostUSD = c.HybridCostUSD
+		c.HybridBalanceCostUSD = c.HybridCostUSD
+	}
 	if strings.TrimSpace(c.RequestFingerprint) == "" {
 		if c.HybridGroupID > 0 {
 			c.RequestFingerprint = buildHybridBillingFingerprint(c)
@@ -96,6 +105,8 @@ func (c *UsageBillingCommand) quantizeMonetaryFields() {
 	c.APIKeyRateLimitCost = QuantizeUsageBillingAmount(c.APIKeyRateLimitCost)
 	c.AccountQuotaCost = QuantizeUsageBillingAmount(c.AccountQuotaCost)
 	c.HybridCostUSD = QuantizeUsageBillingAmount(c.HybridCostUSD)
+	c.HybridSubscriptionCostUSD = QuantizeUsageBillingAmount(c.HybridSubscriptionCostUSD)
+	c.HybridBalanceCostUSD = QuantizeUsageBillingAmount(c.HybridBalanceCostUSD)
 }
 
 // QuantizeUsageBillingAmount 把金额舍入到 UsageBillingMonetaryScale 位小数，
@@ -150,6 +161,23 @@ func buildUsageBillingFingerprint(c *UsageBillingCommand) string {
 // subscription debit ultimately selects the wallet. Legacy fingerprints stay
 // byte-for-byte unchanged for standard and strict subscription requests.
 func buildHybridBillingFingerprint(c *UsageBillingCommand) string {
+	if c.HybridSplitPricing && c.HybridSubscriptionCostUSD != c.HybridBalanceCostUSD {
+		raw := fmt.Sprintf(
+			"hybrid:v2|%d|%d|%d|%d|%s|%s|%s|%s|%d|%d|%d|%d|%d|%s|%0.10f|%0.10f|%t|%t|%0.10f",
+			c.UserID, c.AccountID, c.APIKeyID, c.HybridGroupID,
+			strings.TrimSpace(c.AccountType), strings.TrimSpace(c.Model),
+			strings.TrimSpace(c.ServiceTier), strings.TrimSpace(c.ReasoningEffort),
+			c.InputTokens, c.OutputTokens, c.CacheCreationTokens, c.CacheReadTokens,
+			c.ImageCount, strings.TrimSpace(c.MediaType),
+			c.HybridSubscriptionCostUSD, c.HybridBalanceCostUSD,
+			c.HybridAPIKeyQuota, c.HybridAPIKeyRateLimit, c.AccountQuotaCost,
+		)
+		if payloadHash := strings.TrimSpace(c.RequestPayloadHash); payloadHash != "" {
+			raw += "|" + payloadHash
+		}
+		sum := sha256.Sum256([]byte(raw))
+		return hex.EncodeToString(sum[:])
+	}
 	raw := fmt.Sprintf(
 		"hybrid:v1|%d|%d|%d|%d|%s|%s|%s|%s|%d|%d|%d|%d|%d|%s|%0.10f|%0.10f|%0.10f|%0.10f",
 		c.UserID, c.AccountID, c.APIKeyID, c.HybridGroupID,

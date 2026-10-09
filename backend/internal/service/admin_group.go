@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -394,6 +395,9 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	if input.RateMultiplier <= 0 {
 		return nil, errors.New("rate_multiplier must be > 0")
 	}
+	if input.SubscriptionRateMultiplier != nil && (*input.SubscriptionRateMultiplier <= 0 || math.IsNaN(*input.SubscriptionRateMultiplier) || math.IsInf(*input.SubscriptionRateMultiplier, 0)) {
+		return nil, errors.New("subscription_rate_multiplier must be a finite value > 0")
+	}
 
 	platform := NormalizeGroupPlatform(input.Platform)
 	// 固定账号 manifest 配置：账号绑定发生在创建之后，创建时无法校验成员关系，
@@ -421,6 +425,10 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	subscriptionType := input.SubscriptionType
 	if subscriptionType == "" {
 		subscriptionType = SubscriptionTypeStandard
+	}
+	if subscriptionType == SubscriptionTypeSubscriptionBalance && input.SubscriptionRateMultiplier == nil {
+		one := 1.0
+		input.SubscriptionRateMultiplier = &one
 	}
 
 	// 限额字段：nil/负数 表示"无限制"，0 表示"不允许用量"，正数表示具体限额
@@ -567,6 +575,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		Description:                     input.Description,
 		Platform:                        platform,
 		RateMultiplier:                  input.RateMultiplier,
+		SubscriptionRateMultiplier:      input.SubscriptionRateMultiplier,
 		IsExclusive:                     input.IsExclusive,
 		Status:                          StatusActive,
 		SubscriptionType:                subscriptionType,
@@ -785,6 +794,12 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 		}
 		group.RateMultiplier = *input.RateMultiplier
 	}
+	if input.SubscriptionRateMultiplier != nil {
+		if *input.SubscriptionRateMultiplier <= 0 || math.IsNaN(*input.SubscriptionRateMultiplier) || math.IsInf(*input.SubscriptionRateMultiplier, 0) {
+			return nil, errors.New("subscription_rate_multiplier must be a finite value > 0")
+		}
+		group.SubscriptionRateMultiplier = input.SubscriptionRateMultiplier
+	}
 	if input.IsExclusive != nil {
 		group.IsExclusive = *input.IsExclusive
 	}
@@ -803,8 +818,13 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 
 	// 订阅相关字段
+	previousSubscriptionType := group.SubscriptionType
 	if input.SubscriptionType != "" {
 		group.SubscriptionType = input.SubscriptionType
+	}
+	if previousSubscriptionType != SubscriptionTypeSubscriptionBalance && group.SubscriptionType == SubscriptionTypeSubscriptionBalance && group.SubscriptionRateMultiplier == nil {
+		one := 1.0
+		group.SubscriptionRateMultiplier = &one
 	}
 	// 限额字段：nil 表示不修改，负数表示"无限制"，0 表示"不允许用量"，正数表示具体限额。
 	if input.DailyLimitUSD != nil {

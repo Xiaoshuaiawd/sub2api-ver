@@ -55,6 +55,23 @@ func newGatewayRecordUsageServiceWithBillingRepoForTest(usageRepo UsageLogReposi
 	return svc
 }
 
+func TestGatewayServiceRecordUsage_HybridPricesQuotaAndWalletSeparately(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true, BillingType: BillingTypeBalance}}
+	svc := newGatewayRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
+	groupID, quotaRate := int64(188), 1.0
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{RequestID: "hybrid-split-gateway", Model: "gpt-5.1", Usage: ClaudeUsage{InputTokens: 1000, OutputTokens: 500}},
+		APIKey: &APIKey{ID: 100, GroupID: &groupID, Group: &Group{ID: groupID, SubscriptionType: SubscriptionTypeSubscriptionBalance, RateMultiplier: 0.25, SubscriptionRateMultiplier: &quotaRate}},
+		User: &User{ID: 200}, Account: &Account{ID: 300}, Subscription: &UserSubscription{ID: 199},
+	})
+	require.NoError(t, err)
+	require.Greater(t, billingRepo.lastCmd.HybridSubscriptionCostUSD, 0.0)
+	require.InDelta(t, billingRepo.lastCmd.HybridSubscriptionCostUSD*0.25, billingRepo.lastCmd.HybridBalanceCostUSD, 1e-10)
+	require.InDelta(t, billingRepo.lastCmd.HybridBalanceCostUSD, usageRepo.lastLog.ActualCost, 1e-10)
+	require.InDelta(t, 0.25, usageRepo.lastLog.RateMultiplier, 1e-10)
+}
+
 type openAIRecordUsageBestEffortLogRepoStub struct {
 	UsageLogRepository
 

@@ -18,6 +18,10 @@ type userGroupRateResolver struct {
 	logComponent string
 }
 
+// A missing user override must not cache the caller's default: hybrid groups
+// supply different defaults for subscription quota and wallet billing.
+type userGroupRateNoOverride struct{}
+
 func newUserGroupRateResolver(repo UserGroupRateRepository, cache *gocache.Cache, cacheTTL time.Duration, sf *singleflight.Group, logComponent string) *userGroupRateResolver {
 	if cacheTTL <= 0 {
 		cacheTTL = defaultUserGroupRateCacheTTL
@@ -53,6 +57,10 @@ func (r *userGroupRateResolver) Resolve(ctx context.Context, userID, groupID int
 				userGroupRateCacheHitTotal.Add(1)
 				return multiplier
 			}
+			if _, noOverride := cached.(userGroupRateNoOverride); noOverride {
+				userGroupRateCacheHitTotal.Add(1)
+				return groupDefaultMultiplier
+			}
 		}
 	}
 	if r.repo == nil {
@@ -67,6 +75,10 @@ func (r *userGroupRateResolver) Resolve(ctx context.Context, userID, groupID int
 					userGroupRateCacheHitTotal.Add(1)
 					return multiplier, nil
 				}
+				if _, noOverride := cached.(userGroupRateNoOverride); noOverride {
+					userGroupRateCacheHitTotal.Add(1)
+					return userGroupRateNoOverride{}, nil
+				}
 			}
 		}
 
@@ -76,14 +88,14 @@ func (r *userGroupRateResolver) Resolve(ctx context.Context, userID, groupID int
 			return nil, repoErr
 		}
 
-		multiplier := groupDefaultMultiplier
+		var resolved any = userGroupRateNoOverride{}
 		if userRate != nil {
-			multiplier = *userRate
+			resolved = *userRate
 		}
 		if r.cache != nil {
-			r.cache.Set(key, multiplier, r.cacheTTL)
+			r.cache.Set(key, resolved, r.cacheTTL)
 		}
-		return multiplier, nil
+		return resolved, nil
 	})
 	if shared {
 		userGroupRateCacheSFSharedTotal.Add(1)
@@ -96,6 +108,9 @@ func (r *userGroupRateResolver) Resolve(ctx context.Context, userID, groupID int
 
 	multiplier, ok := value.(float64)
 	if !ok {
+		if _, noOverride := value.(userGroupRateNoOverride); noOverride {
+			return groupDefaultMultiplier
+		}
 		userGroupRateCacheFallbackTotal.Add(1)
 		return groupDefaultMultiplier
 	}

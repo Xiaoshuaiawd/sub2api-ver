@@ -348,6 +348,25 @@ describe('GroupsView duplicate action', () => {
     wrapper.unmount()
   })
 
+  it('saves separate quota and balance multipliers for a hybrid group', async () => {
+    listGroups.mockResolvedValueOnce({
+      items: [{ ...sourceGroup, subscription_type: 'subscription_balance', rate_multiplier: 0.25, subscription_rate_multiplier: 1 }],
+      total: 1, page: 1, page_size: 20, pages: 1
+    })
+    updateGroup.mockResolvedValue({ ...sourceGroup, subscription_type: 'subscription_balance' })
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === 'common.edit')!.trigger('click')
+    await flushPromises()
+    await wrapper.get('#edit-subscription-rate-multiplier').setValue('1.25')
+    await wrapper.get('#edit-group-form').trigger('submit')
+    await flushPromises()
+    expect(updateGroup).toHaveBeenCalledWith(42, expect.objectContaining({
+      rate_multiplier: 0.25, subscription_rate_multiplier: 1.25
+    }))
+    wrapper.unmount()
+  })
+
   it('clears invalid-request fallback when changing an existing group to hybrid', async () => {
     listGroups.mockResolvedValueOnce({
       items: [{ ...sourceGroup, fallback_group_id_on_invalid_request: 99 }],

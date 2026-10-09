@@ -263,10 +263,11 @@
             </div>
           </template>
 
-          <template #cell-rate_multiplier="{ value }">
-            <span class="text-sm text-gray-700 dark:text-gray-300"
-              >{{ value }}x</span
-            >
+          <template #cell-rate_multiplier="{ value, row }">
+            <span class="text-sm text-gray-700 dark:text-gray-300">
+              <template v-if="row.subscription_type === 'subscription_balance'">{{ t('admin.groups.balanceRateMultiplier') }}: {{ value }}x · {{ t('admin.groups.subscriptionRateMultiplier') }}: {{ row.subscription_rate_multiplier ?? value }}x</template>
+              <template v-else>{{ value }}x</template>
+            </span>
           </template>
 
           <template #cell-is_exclusive="{ value }">
@@ -615,7 +616,7 @@
         <template v-if="!authStore.isSimpleMode">
         <div>
           <label class="input-label">{{
-            t("admin.groups.form.rateMultiplier")
+            createForm.subscription_type === 'subscription_balance' ? t('admin.groups.balanceRateMultiplier') : t('admin.groups.form.rateMultiplier')
           }}</label>
           <input
             v-model.number="createForm.rate_multiplier"
@@ -627,6 +628,11 @@
             data-tour="group-form-multiplier"
           />
           <p class="input-hint">{{ t("admin.groups.rateMultiplierHint") }}</p>
+        </div>
+        <div v-if="createForm.subscription_type === 'subscription_balance'">
+          <label class="input-label" for="create-subscription-rate-multiplier">{{ t('admin.groups.subscriptionRateMultiplier') }}</label>
+          <input id="create-subscription-rate-multiplier" v-model.number="createForm.subscription_rate_multiplier" type="number" step="0.001" min="0.001" required class="input" />
+          <p class="input-hint">{{ t('admin.groups.subscriptionRateMultiplierHint') }}</p>
         </div>
         <div>
           <label class="input-label">{{ t("admin.groups.form.rpmLimit") }}</label>
@@ -2258,7 +2264,7 @@
         </div>
         <div>
           <label class="input-label">{{
-            t("admin.groups.form.rateMultiplier")
+            editForm.subscription_type === 'subscription_balance' ? t('admin.groups.balanceRateMultiplier') : t('admin.groups.form.rateMultiplier')
           }}</label>
           <input
             v-model.number="editForm.rate_multiplier"
@@ -2269,6 +2275,11 @@
             class="input"
             data-tour="group-form-multiplier"
           />
+        </div>
+        <div v-if="editForm.subscription_type === 'subscription_balance'">
+          <label class="input-label" for="edit-subscription-rate-multiplier">{{ t('admin.groups.subscriptionRateMultiplier') }}</label>
+          <input id="edit-subscription-rate-multiplier" v-model.number="editForm.subscription_rate_multiplier" type="number" step="0.001" min="0.001" required class="input" />
+          <p class="input-hint">{{ t('admin.groups.subscriptionRateMultiplierHint') }}</p>
         </div>
         <div>
           <label class="input-label">{{ t("admin.groups.form.rpmLimit") }}</label>
@@ -4956,6 +4967,7 @@ const createForm = reactive({
   description: "",
   platform: "anthropic" as GroupPlatform,
   rate_multiplier: 1.0,
+  subscription_rate_multiplier: 1.0,
   is_exclusive: false,
   subscription_type: "standard" as SubscriptionType,
   daily_limit_usd: null as number | null,
@@ -5320,6 +5332,7 @@ const editForm = reactive({
   description: "",
   platform: "anthropic" as GroupPlatform,
   rate_multiplier: 1.0,
+  subscription_rate_multiplier: 1.0,
   is_exclusive: false,
   status: "active" as "active" | "inactive",
   subscription_type: "standard" as SubscriptionType,
@@ -5783,6 +5796,7 @@ const closeCreateModal = () => {
   createForm.description = "";
   createForm.platform = "anthropic";
   createForm.rate_multiplier = 1.0;
+  createForm.subscription_rate_multiplier = 1.0;
   createForm.is_exclusive = false;
   createForm.subscription_type = "standard";
   createForm.daily_limit_usd = null;
@@ -5927,6 +5941,7 @@ const handleCreateGroup = async () => {
     // 构建请求数据，包含模型路由配置
     const requestData = {
       ...createGroupForm,
+      subscription_rate_multiplier: createForm.subscription_type === 'subscription_balance' ? createForm.subscription_rate_multiplier : undefined,
       force_openai_fast: normalizeGroupOpenAIFast(
         createForm.platform,
         createForm.force_openai_fast,
@@ -6064,6 +6079,7 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.description = group.description || "";
   editForm.platform = group.platform;
   editForm.rate_multiplier = group.rate_multiplier;
+  editForm.subscription_rate_multiplier = group.subscription_rate_multiplier ?? group.rate_multiplier;
   editForm.is_exclusive = group.is_exclusive;
   editForm.status = group.status;
   editForm.subscription_type = group.subscription_type || "standard";
@@ -6263,6 +6279,7 @@ const handleUpdateGroup = async () => {
     // 转换 fallback_group_id: null -> 0 (后端使用 0 表示清除)
     const payload = {
       ...editForm,
+      subscription_rate_multiplier: editForm.subscription_type === 'subscription_balance' ? editForm.subscription_rate_multiplier : undefined,
       force_openai_fast: normalizeGroupOpenAIFast(
         editForm.platform,
         editForm.force_openai_fast,

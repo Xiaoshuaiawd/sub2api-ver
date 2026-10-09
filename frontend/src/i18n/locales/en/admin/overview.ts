@@ -985,6 +985,9 @@ export default {
       groupUpdatedSuccess: 'Group updated successfully',
       groupDeletedSuccess: 'Group deleted successfully',
       rateMultiplierHint: 'Cost multiplier for this group (e.g., 1.5 = 150% of base cost)',
+      balanceRateMultiplier: 'Balance multiplier',
+      subscriptionRateMultiplier: 'Subscription quota multiplier',
+      subscriptionRateMultiplierHint: 'Applies only when this group uses subscription quota. Wallet fallback uses the balance multiplier above. Example: quota 1×, balance 0.25×.',
       exclusiveHint: 'Exclusive group, manually assign to specific users',
       exclusiveTooltip: {
         title: 'What is an exclusive group?',

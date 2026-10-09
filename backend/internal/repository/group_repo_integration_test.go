@@ -70,6 +70,17 @@ func (s *GroupRepoSuite) TestCreate() {
 	s.Require().Equal("test-create", got.Name)
 }
 
+func (s *GroupRepoSuite) TestHybridSeparateRatesPersist() {
+	quotaRate := 1.0
+	group := &service.Group{Name: "hybrid-separate-rates", Platform: service.PlatformOpenAI, RateMultiplier: 0.25, SubscriptionRateMultiplier: &quotaRate, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeSubscriptionBalance}
+	s.Require().NoError(s.repo.Create(s.ctx, group))
+	loaded, err := s.repo.GetByID(s.ctx, group.ID)
+	s.Require().NoError(err)
+	s.Require().Equal(0.25, loaded.RateMultiplier)
+	s.Require().NotNil(loaded.SubscriptionRateMultiplier)
+	s.Require().Equal(1.0, *loaded.SubscriptionRateMultiplier)
+}
+
 func (s *GroupRepoSuite) TestCreateFromSourcePreservesPriorityAndFiltersIneligibleAccounts() {
 	source := &service.Group{
 		Name:             "duplicate-source",

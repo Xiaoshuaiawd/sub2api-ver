@@ -118,6 +118,33 @@ func (_u *GroupUpdate) AddRateMultiplier(v float64) *GroupUpdate {
 	return _u
 }
 
+// SetSubscriptionRateMultiplier sets the "subscription_rate_multiplier" field.
+func (_u *GroupUpdate) SetSubscriptionRateMultiplier(v float64) *GroupUpdate {
+	_u.mutation.ResetSubscriptionRateMultiplier()
+	_u.mutation.SetSubscriptionRateMultiplier(v)
+	return _u
+}
+
+// SetNillableSubscriptionRateMultiplier sets the "subscription_rate_multiplier" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableSubscriptionRateMultiplier(v *float64) *GroupUpdate {
+	if v != nil {
+		_u.SetSubscriptionRateMultiplier(*v)
+	}
+	return _u
+}
+
+// AddSubscriptionRateMultiplier adds value to the "subscription_rate_multiplier" field.
+func (_u *GroupUpdate) AddSubscriptionRateMultiplier(v float64) *GroupUpdate {
+	_u.mutation.AddSubscriptionRateMultiplier(v)
+	return _u
+}
+
+// ClearSubscriptionRateMultiplier clears the value of the "subscription_rate_multiplier" field.
+func (_u *GroupUpdate) ClearSubscriptionRateMultiplier() *GroupUpdate {
+	_u.mutation.ClearSubscriptionRateMultiplier()
+	return _u
+}
+
 // SetPeakRateEnabled sets the "peak_rate_enabled" field.
 func (_u *GroupUpdate) SetPeakRateEnabled(v bool) *GroupUpdate {
 	_u.mutation.SetPeakRateEnabled(v)
@@ -1587,6 +1614,15 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.AddedRateMultiplier(); ok {
 		_spec.AddField(group.FieldRateMultiplier, field.TypeFloat64, value)
 	}
+	if value, ok := _u.mutation.SubscriptionRateMultiplier(); ok {
+		_spec.SetField(group.FieldSubscriptionRateMultiplier, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedSubscriptionRateMultiplier(); ok {
+		_spec.AddField(group.FieldSubscriptionRateMultiplier, field.TypeFloat64, value)
+	}
+	if _u.mutation.SubscriptionRateMultiplierCleared() {
+		_spec.ClearField(group.FieldSubscriptionRateMultiplier, field.TypeFloat64)
+	}
 	if value, ok := _u.mutation.PeakRateEnabled(); ok {
 		_spec.SetField(group.FieldPeakRateEnabled, field.TypeBool, value)
 	}
@@ -2309,6 +2345,33 @@ func (_u *GroupUpdateOne) SetNillableRateMultiplier(v *float64) *GroupUpdateOne 
 // AddRateMultiplier adds value to the "rate_multiplier" field.
 func (_u *GroupUpdateOne) AddRateMultiplier(v float64) *GroupUpdateOne {
 	_u.mutation.AddRateMultiplier(v)
+	return _u
+}
+
+// SetSubscriptionRateMultiplier sets the "subscription_rate_multiplier" field.
+func (_u *GroupUpdateOne) SetSubscriptionRateMultiplier(v float64) *GroupUpdateOne {
+	_u.mutation.ResetSubscriptionRateMultiplier()
+	_u.mutation.SetSubscriptionRateMultiplier(v)
+	return _u
+}
+
+// SetNillableSubscriptionRateMultiplier sets the "subscription_rate_multiplier" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableSubscriptionRateMultiplier(v *float64) *GroupUpdateOne {
+	if v != nil {
+		_u.SetSubscriptionRateMultiplier(*v)
+	}
+	return _u
+}
+
+// AddSubscriptionRateMultiplier adds value to the "subscription_rate_multiplier" field.
+func (_u *GroupUpdateOne) AddSubscriptionRateMultiplier(v float64) *GroupUpdateOne {
+	_u.mutation.AddSubscriptionRateMultiplier(v)
+	return _u
+}
+
+// ClearSubscriptionRateMultiplier clears the value of the "subscription_rate_multiplier" field.
+func (_u *GroupUpdateOne) ClearSubscriptionRateMultiplier() *GroupUpdateOne {
+	_u.mutation.ClearSubscriptionRateMultiplier()
 	return _u
 }
 
@@ -3810,6 +3873,15 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if value, ok := _u.mutation.AddedRateMultiplier(); ok {
 		_spec.AddField(group.FieldRateMultiplier, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.SubscriptionRateMultiplier(); ok {
+		_spec.SetField(group.FieldSubscriptionRateMultiplier, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedSubscriptionRateMultiplier(); ok {
+		_spec.AddField(group.FieldSubscriptionRateMultiplier, field.TypeFloat64, value)
+	}
+	if _u.mutation.SubscriptionRateMultiplierCleared() {
+		_spec.ClearField(group.FieldSubscriptionRateMultiplier, field.TypeFloat64)
 	}
 	if value, ok := _u.mutation.PeakRateEnabled(); ok {
 		_spec.SetField(group.FieldPeakRateEnabled, field.TypeBool, value)

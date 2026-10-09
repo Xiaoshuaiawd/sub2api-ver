@@ -17,7 +17,7 @@
         <template #cell-group_id="{ value, row }">
           <div class="flex max-w-sm flex-wrap gap-1">
             <template v-for="id in (row.group_ids?.length ? row.group_ids : [value])" :key="id">
-              <GroupBadge v-if="getGroup(id)" :name="getGroup(id)!.name" :platform="getGroup(id)!.platform" :rate-multiplier="getGroup(id)!.rate_multiplier" />
+              <GroupBadge v-if="getGroup(id)" :name="getGroup(id)!.name" :platform="getGroup(id)!.platform" :rate-multiplier="getPlanGroupRate(getGroup(id)!)" />
               <span v-else class="badge badge-danger">#{{ id }} {{ t('payment.admin.groupMissing') }}</span>
             </template>
           </div>
@@ -116,6 +116,12 @@ async function loadPaymentConfig() {
 
 function getGroup(id: number): AdminGroup | undefined {
   return groups.value.find(g => g.id === id)
+}
+
+function getPlanGroupRate(group: AdminGroup): number {
+  return group.subscription_type === 'subscription_balance'
+    ? group.subscription_rate_multiplier ?? group.rate_multiplier
+    : group.rate_multiplier
 }
 
 function getPlanNameClass(groupId: number): string {

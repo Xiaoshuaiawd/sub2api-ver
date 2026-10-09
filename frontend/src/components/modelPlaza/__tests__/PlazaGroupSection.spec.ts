@@ -92,6 +92,10 @@ function mountSection(g: ModelPlazaGroup) {
 const NOTE = 'modelPlaza.detail.longContextDisabledNote'
 
 describe('PlazaGroupSection 长上下文说明', () => {
+  it('explains separate rates for hybrid groups', () => {
+    const wrapper = mountSection(group({ subscription_type: 'subscription_balance', rate_multiplier: 0.25, subscription_rate_multiplier: 1 }))
+    expect(wrapper.text()).toContain('modelPlaza.detail.hybridRateNote')
+  })
   it('passes video-specific rates to the pricing table', () => {
     const wrapper = mountSection(group({ video_rate_independent: true, video_rate_multiplier: 0 }))
     expect(wrapper.findComponent(PlazaModelPricingTable).props()).toMatchObject({

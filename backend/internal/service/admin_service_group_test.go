@@ -516,6 +516,18 @@ func TestAdminService_CreateGroup_WithImagePricing(t *testing.T) {
 	require.InDelta(t, 0.30, *repo.created.ImagePrice4K, 0.0001)
 }
 
+func TestAdminService_CreateHybridGroupDefaultsQuotaRateToOne(t *testing.T) {
+	repo := &groupRepoStubForAdmin{}
+	svc := &adminServiceImpl{groupRepo: repo}
+	group, err := svc.CreateGroup(context.Background(), &CreateGroupInput{
+		Name: "hybrid", Platform: PlatformOpenAI, SubscriptionType: SubscriptionTypeSubscriptionBalance, RateMultiplier: 0.25,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 0.25, group.RateMultiplier)
+	require.NotNil(t, group.SubscriptionRateMultiplier)
+	require.Equal(t, 1.0, *group.SubscriptionRateMultiplier)
+}
+
 func TestAdminService_CreateGroup_WithVideoPricing(t *testing.T) {
 	repo := &groupRepoStubForAdmin{}
 	svc := &adminServiceImpl{groupRepo: repo}

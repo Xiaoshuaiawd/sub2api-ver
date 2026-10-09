@@ -4,6 +4,7 @@ package service
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -65,4 +66,42 @@ func TestCommittedHybridFundingSourceControlsLogAndCacheBranch(t *testing.T) {
 	applyCommittedBillingSource(log, p, &UsageBillingApplyResult{Applied: false, BillingType: BillingTypeBalance})
 	require.Equal(t, BillingTypeBalance, log.BillingType)
 	require.Nil(t, log.SubscriptionID)
+}
+
+func TestHybridBillingCandidatesUseSeparateSubscriptionAndBalanceRates(t *testing.T) {
+	groupID, subID := int64(40), int64(71)
+	quotaRate := 1.0
+	group := &Group{ID: groupID, SubscriptionType: SubscriptionTypeSubscriptionBalance, RateMultiplier: 0.25, SubscriptionRateMultiplier: &quotaRate}
+	p := &postUsageBillingParams{
+		Cost: &CostBreakdown{TotalCost: 1, ActualCost: 1}, User: &User{ID: 20},
+		APIKey: &APIKey{ID: 10, GroupID: &groupID, Group: group}, Account: &Account{ID: 30},
+		Subscription: &UserSubscription{ID: subID}, IsSubscriptionBill: true,
+		HybridSplitPricing: true, HybridSubscriptionActualCost: 1, HybridBalanceActualCost: 0.25,
+		HybridSubscriptionRateMultiplier: 1, HybridBalanceRateMultiplier: 0.25,
+	}
+	log := &UsageLog{BillingType: BillingTypeSubscription, SubscriptionID: &subID, ActualCost: 1, RateMultiplier: 1}
+	cmd := buildUsageBillingCommand("hybrid-split", log, p)
+	require.Equal(t, 1.0, cmd.HybridSubscriptionCostUSD)
+	require.Equal(t, 0.25, cmd.HybridBalanceCostUSD)
+	applyCommittedBillingSource(log, p, &UsageBillingApplyResult{Applied: true, BillingType: BillingTypeBalance})
+	require.Equal(t, 0.25, p.Cost.ActualCost)
+	require.Equal(t, 0.25, log.ActualCost)
+	require.Equal(t, 0.25, log.RateMultiplier)
+}
+
+func TestCalculateHybridPriceCandidatesKeepsIndependentImageRate(t *testing.T) {
+	quotaRate := 1.0
+	apiKey := &APIKey{Group: &Group{SubscriptionType: SubscriptionTypeSubscriptionBalance, RateMultiplier: 0.25, SubscriptionRateMultiplier: &quotaRate, ImageRateIndependent: true, ImageRateMultiplier: 0.5}}
+	pricing := calculateHybridPriceCandidates(apiKey, 1, 0, &CostBreakdown{TotalCost: 2, ActualCost: 1, BillingMode: string(BillingModeImage)}, time.Now(), 1, 0.25, true)
+	require.Equal(t, 1.0, pricing.subscriptionCost)
+	require.Equal(t, 1.0, pricing.balanceCost)
+	require.Equal(t, 0.5, pricing.balanceRate)
+}
+
+func TestCalculateHybridPriceCandidatesUsesChargedTierForWallet(t *testing.T) {
+	quotaRate := 1.0
+	apiKey := &APIKey{Group: &Group{SubscriptionType: SubscriptionTypeSubscriptionBalance, RateMultiplier: 0.25, SubscriptionRateMultiplier: &quotaRate}}
+	pricing := calculateHybridPriceCandidates(apiKey, 0, 0, &CostBreakdown{TotalCost: 10, ActualCost: 2, BillingMode: string(BillingModeToken)}, time.Now(), 1, 0.25, true)
+	require.Equal(t, 2.0, pricing.subscriptionCost)
+	require.Equal(t, 0.5, pricing.balanceCost)
 }

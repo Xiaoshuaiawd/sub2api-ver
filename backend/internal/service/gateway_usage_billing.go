@@ -73,16 +73,21 @@ type usageLogBestEffortWriter interface {
 
 // postUsageBillingParams 统一扣费所需的参数
 type postUsageBillingParams struct {
-	Cost                  *CostBreakdown
-	User                  *User
-	APIKey                *APIKey
-	Account               *Account
-	Subscription          *UserSubscription
-	RequestPayloadHash    string
-	IsSubscriptionBill    bool
-	AccountRateMultiplier float64
-	APIKeyService         APIKeyQuotaUpdater
-	Platform              string // 来自 APIKey 关联 Group 的平台标识
+	Cost                             *CostBreakdown
+	HybridSplitPricing               bool
+	HybridSubscriptionActualCost     float64
+	HybridBalanceActualCost          float64
+	HybridSubscriptionRateMultiplier float64
+	HybridBalanceRateMultiplier      float64
+	User                             *User
+	APIKey                           *APIKey
+	Account                          *Account
+	Subscription                     *UserSubscription
+	RequestPayloadHash               string
+	IsSubscriptionBill               bool
+	AccountRateMultiplier            float64
+	APIKeyService                    APIKeyQuotaUpdater
+	Platform                         string // 来自 APIKey 关联 Group 的平台标识
 	// SimpleModeKeyRateLimitOnly opts the request into the simple-mode billing
 	// path that records only API-key 5h/1d/7d window usage. It must not trigger
 	// balance, subscription, account, platform, or lifetime-key-quota effects.
@@ -330,6 +335,13 @@ func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsage
 	if p.APIKey.Group != nil && p.APIKey.Group.AllowsBalanceFallback() {
 		cmd.HybridGroupID = p.APIKey.Group.ID
 		cmd.HybridCostUSD = p.Cost.ActualCost
+		if p.HybridSplitPricing {
+			cmd.HybridSplitPricing = true
+			cmd.HybridSubscriptionCostUSD = p.HybridSubscriptionActualCost
+			cmd.HybridBalanceCostUSD = p.HybridBalanceActualCost
+			cmd.HybridAPIKeyQuota = p.APIKey.Quota > 0 && p.APIKeyService != nil
+			cmd.HybridAPIKeyRateLimit = p.APIKey.HasRateLimits() && p.APIKeyService != nil
+		}
 	}
 
 	// Record subscription / balance cost using ActualCost so the group (and any
@@ -421,6 +433,21 @@ func applyCommittedBillingSource(usageLog *UsageLog, p *postUsageBillingParams, 
 		return
 	}
 	p.IsSubscriptionBill = result.BillingType == BillingTypeSubscription
+	if p.HybridSplitPricing && p.Cost != nil {
+		if p.IsSubscriptionBill {
+			p.Cost.ActualCost = p.HybridSubscriptionActualCost
+		} else {
+			p.Cost.ActualCost = p.HybridBalanceActualCost
+		}
+		if usageLog != nil {
+			usageLog.ActualCost = p.Cost.ActualCost
+			if p.IsSubscriptionBill {
+				usageLog.RateMultiplier = p.HybridSubscriptionRateMultiplier
+			} else {
+				usageLog.RateMultiplier = p.HybridBalanceRateMultiplier
+			}
+		}
+	}
 	if !p.IsSubscriptionBill {
 		p.Subscription = nil
 	}
@@ -846,9 +873,19 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	if s.cfg != nil {
 		multiplier = s.cfg.Default.RateMultiplier
 	}
+	walletBaseMultiplier := multiplier
+	subscriptionBaseMultiplier := multiplier
+	selectedSubscription := subscription != nil && apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
 	if apiKey.GroupID != nil && apiKey.Group != nil {
-		groupDefault := apiKey.Group.RateMultiplier
-		multiplier = s.ResolveUserGroupRateMultiplier(ctx, user.ID, *apiKey.GroupID, groupDefault)
+		walletBaseMultiplier = s.ResolveUserGroupRateMultiplier(ctx, user.ID, *apiKey.GroupID, apiKey.Group.RateMultiplier)
+		subscriptionBaseMultiplier = walletBaseMultiplier
+		if apiKey.Group.AllowsBalanceFallback() {
+			subscriptionBaseMultiplier = s.ResolveUserGroupRateMultiplier(ctx, user.ID, *apiKey.GroupID, apiKey.Group.SubscriptionBillingRateMultiplier())
+		}
+	}
+	multiplier = walletBaseMultiplier
+	if selectedSubscription {
+		multiplier = subscriptionBaseMultiplier
 	}
 	// token 倍率叠加高峰因子（token 计费含图片 token，图片按次倍率不受影响）。高峰因子按请求时刻现算，
 	// 不并入上面的 getUserGroupRateMultiplier，以免污染 user:group 倍率缓存。
@@ -909,7 +946,8 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	}
 
 	// 判断计费方式：订阅模式 vs 余额模式
-	isSubscriptionBilling := subscription != nil && apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
+	isSubscriptionBilling := selectedSubscription
+	hybridPrices := calculateHybridPriceCandidates(apiKey, result.ImageCount, 0, cost, pricingAt, subscriptionBaseMultiplier, walletBaseMultiplier, isSubscriptionBilling)
 	billingType := BillingTypeBalance
 	if isSubscriptionBilling {
 		billingType = BillingTypeSubscription
@@ -958,17 +996,22 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	}
 	requestID := usageLog.RequestID
 	_, billingErr := applyUsageBilling(ctx, requestID, usageLog, &postUsageBillingParams{
-		Cost:                       cost,
-		User:                       user,
-		APIKey:                     apiKey,
-		Account:                    account,
-		Subscription:               subscription,
-		RequestPayloadHash:         resolveUsageBillingPayloadFingerprint(ctx, input.RequestPayloadHash),
-		IsSubscriptionBill:         isSubscriptionBilling && !simpleModeKeyRateLimitOnly,
-		AccountRateMultiplier:      accountRateMultiplier,
-		APIKeyService:              input.APIKeyService,
-		Platform:                   quotaPlatform,
-		SimpleModeKeyRateLimitOnly: simpleModeKeyRateLimitOnly,
+		Cost:                             cost,
+		HybridSplitPricing:               apiKey.Group != nil && apiKey.Group.AllowsBalanceFallback(),
+		HybridSubscriptionActualCost:     hybridPrices.subscriptionCost,
+		HybridBalanceActualCost:          hybridPrices.balanceCost,
+		HybridSubscriptionRateMultiplier: hybridPrices.subscriptionRate,
+		HybridBalanceRateMultiplier:      hybridPrices.balanceRate,
+		User:                             user,
+		APIKey:                           apiKey,
+		Account:                          account,
+		Subscription:                     subscription,
+		RequestPayloadHash:               resolveUsageBillingPayloadFingerprint(ctx, input.RequestPayloadHash),
+		IsSubscriptionBill:               isSubscriptionBilling && !simpleModeKeyRateLimitOnly,
+		AccountRateMultiplier:            accountRateMultiplier,
+		APIKeyService:                    input.APIKeyService,
+		Platform:                         quotaPlatform,
+		SimpleModeKeyRateLimitOnly:       simpleModeKeyRateLimitOnly,
 	}, s.billingDeps(), s.usageBillingRepo)
 
 	if billingErr != nil {

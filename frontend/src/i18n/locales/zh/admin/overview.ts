@@ -966,6 +966,9 @@ export default {
           '公开分组费率 0.8，您可以创建一个费率 0.7 的专属分组，手动分配给 VIP 用户，让他们享受更优惠的价格。'
       },
       rateMultiplierHint: '1.0 = 标准费率，0.5 = 半价，2.0 = 双倍',
+      balanceRateMultiplier: '余额倍率',
+      subscriptionRateMultiplier: '配额倍率',
+      subscriptionRateMultiplierHint: '仅用于本分组的订阅配额扣减；余额兜底使用上面的余额倍率。示例：配额 1 倍、余额 0.25 倍。',
       platforms: {
         all: '全部平台',
         anthropic: 'Anthropic',

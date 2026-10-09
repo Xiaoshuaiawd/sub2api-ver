@@ -264,15 +264,16 @@ func loadHybridBillingOutcome(ctx context.Context, tx *sql.Tx, requestID string,
 
 func settleHybridFunding(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand, result *service.UsageBillingApplyResult) error {
 	// A free request still records one source, matching the admission decision.
-	if cmd.HybridCostUSD <= 0 {
+	if cmd.HybridSubscriptionCostUSD <= 0 && cmd.HybridBalanceCostUSD <= 0 {
 		if cmd.SubscriptionID != nil {
 			result.BillingType = service.BillingTypeSubscription
 			result.SubscriptionID = cmd.SubscriptionID
+			setHybridFundingCost(cmd, true)
 		} else {
 			result.BillingType = service.BillingTypeBalance
 			result.SubscriptionID = nil
+			setHybridFundingCost(cmd, false)
 		}
-		cmd.BalanceCost, cmd.SubscriptionCost = 0, 0
 		return nil
 	}
 
@@ -361,7 +362,7 @@ func settleHybridFunding(ctx context.Context, tx *sql.Tx, cmd *service.UsageBill
 				  AND (COALESCE(CASE WHEN us.plan_id IS NULL THEN g.daily_limit_usd ELSE us.daily_limit_usd END, 1e30) >= us.daily_usage_usd + $1)
 				  AND (COALESCE(CASE WHEN us.plan_id IS NULL THEN g.weekly_limit_usd ELSE us.weekly_limit_usd END, 1e30) >= us.weekly_usage_usd + $1)
 				  AND (COALESCE(CASE WHEN us.plan_id IS NULL THEN g.monthly_limit_usd ELSE us.monthly_limit_usd END, 1e30) >= us.monthly_usage_usd + $1)
-			`, cmd.HybridCostUSD, *cmd.SubscriptionID, cmd.UserID, cmd.HybridGroupID)
+			`, cmd.HybridSubscriptionCostUSD, *cmd.SubscriptionID, cmd.UserID, cmd.HybridGroupID)
 				if updateErr != nil {
 					return updateErr
 				}
@@ -372,7 +373,7 @@ func settleHybridFunding(ctx context.Context, tx *sql.Tx, cmd *service.UsageBill
 				if rows == 1 {
 					result.BillingType = service.BillingTypeSubscription
 					result.SubscriptionID = cmd.SubscriptionID
-					cmd.SubscriptionCost, cmd.BalanceCost = cmd.HybridCostUSD, 0
+					setHybridFundingCost(cmd, true)
 					return nil
 				}
 			}
@@ -382,8 +383,27 @@ func settleHybridFunding(ctx context.Context, tx *sql.Tx, cmd *service.UsageBill
 	result.BillingType = service.BillingTypeBalance
 	result.SubscriptionID = nil
 	cmd.SubscriptionID = nil
-	cmd.BalanceCost, cmd.SubscriptionCost = cmd.HybridCostUSD, 0
+	setHybridFundingCost(cmd, false)
 	return nil
+}
+
+func setHybridFundingCost(cmd *service.UsageBillingCommand, subscription bool) {
+	amount := cmd.HybridBalanceCostUSD
+	cmd.BalanceCost, cmd.SubscriptionCost = amount, 0
+	if subscription {
+		amount = cmd.HybridSubscriptionCostUSD
+		cmd.BalanceCost, cmd.SubscriptionCost = 0, amount
+	}
+	if cmd.HybridSplitPricing {
+		cmd.APIKeyQuotaCost = 0
+		cmd.APIKeyRateLimitCost = 0
+		if cmd.HybridAPIKeyQuota {
+			cmd.APIKeyQuotaCost = amount
+		}
+		if cmd.HybridAPIKeyRateLimit {
+			cmd.APIKeyRateLimitCost = amount
+		}
+	}
 }
 
 func incrementUsageBillingSubscription(ctx context.Context, tx *sql.Tx, subscriptionID int64, costUSD float64, groupID int64) error {

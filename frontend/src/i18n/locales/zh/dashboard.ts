@@ -678,6 +678,7 @@ export default {
       noModels: '该分组暂未配置模型',
       noPricing: '未配置定价',
       peakNote: '高峰时段 {window} 计费倍率 ×{multiplier}',
+      hybridRateNote: '下方文本实付价按余额倍率 ×{balance} 展示；订阅配额按 ×{quota} 消耗（图片／视频独立倍率除外）。',
       longContextDisabledNote: '该分组未启用长上下文阶梯计费，超阈值请求仍按基础档计费，官方阶梯仅供参考'
     },
     table: {

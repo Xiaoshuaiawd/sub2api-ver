@@ -21,6 +21,9 @@ type Group struct {
 	Description    string
 	Platform       string
 	RateMultiplier float64
+	// SubscriptionRateMultiplier is used only when a hybrid group settles from
+	// subscription quota. Nil keeps the previous shared rate for old groups.
+	SubscriptionRateMultiplier *float64
 	// 高峰时段倍率：peak_rate_enabled 为 true 且当前时刻处于 [PeakStart, PeakEnd) 时，
 	// token 计费倍率额外乘以 PeakRateMultiplier。详见 PeakMultiplierAt。
 	PeakRateEnabled    bool
@@ -167,6 +170,16 @@ func (g *Group) RequiresSubscription() bool {
 
 func (g *Group) AllowsBalanceFallback() bool {
 	return g != nil && g.SubscriptionType == SubscriptionTypeSubscriptionBalance
+}
+
+func (g *Group) SubscriptionBillingRateMultiplier() float64 {
+	if g == nil {
+		return 1
+	}
+	if g.AllowsBalanceFallback() && g.SubscriptionRateMultiplier != nil {
+		return *g.SubscriptionRateMultiplier
+	}
+	return g.RateMultiplier
 }
 
 func (g *Group) HasDailyLimit() bool {

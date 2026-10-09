@@ -35,6 +35,9 @@
       <p v-if="group.description" class="mt-2 text-sm text-gray-500 dark:text-dark-400">
         {{ group.description }}
       </p>
+      <p v-if="group.subscription_type === 'subscription_balance'" class="mt-1.5 text-xs text-gray-500 dark:text-dark-400">
+        {{ t('modelPlaza.detail.hybridRateNote', { balance: group.user_rate_multiplier ?? group.rate_multiplier, quota: group.user_rate_multiplier ?? group.subscription_rate_multiplier ?? group.rate_multiplier }) }}
+      </p>
       <p
         v-if="peakNote"
         class="mt-1.5 inline-flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400"

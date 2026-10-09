@@ -91,6 +91,42 @@ func TestUsageBillingRepositoryApply_HybridUsesSubscriptionThenWholeBalance(t *t
 	require.InDelta(t, 99.4, balance, 0.00000001)
 }
 
+func TestUsageBillingRepositoryApply_HybridUsesSeparateQuotaAndWalletRates(t *testing.T) {
+	ctx := context.Background()
+	userID, keyID, subID := createHybridBillingFixture(t)
+	var groupID int64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT group_id FROM user_subscriptions WHERE id = $1`, subID).Scan(&groupID))
+	_, err := integrationDB.ExecContext(ctx, `UPDATE api_keys SET quota = 10 WHERE id = $1`, keyID)
+	require.NoError(t, err)
+	repo := NewUsageBillingRepository(testEntClient(t), integrationDB)
+	command := func(requestID string) *service.UsageBillingCommand {
+		return &service.UsageBillingCommand{
+			RequestID: requestID, UserID: userID, APIKeyID: keyID, SubscriptionID: &subID,
+			BillingType: service.BillingTypeSubscription, HybridGroupID: groupID,
+			HybridSplitPricing: true, HybridSubscriptionCostUSD: 1, HybridBalanceCostUSD: 0.25,
+			HybridCostUSD: 1, HybridAPIKeyQuota: true,
+		}
+	}
+	first, err := repo.Apply(ctx, command(uuid.NewString()))
+	require.NoError(t, err)
+	require.Equal(t, service.BillingTypeSubscription, first.BillingType)
+	secondCommand := command(uuid.NewString())
+	second, err := repo.Apply(ctx, secondCommand)
+	require.NoError(t, err)
+	require.Equal(t, service.BillingTypeBalance, second.BillingType)
+	replayed, err := repo.Apply(ctx, secondCommand)
+	require.NoError(t, err)
+	require.False(t, replayed.Applied)
+	require.Equal(t, service.BillingTypeBalance, replayed.BillingType)
+	var quotaUsage, balance, keyUsage float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT daily_usage_usd FROM user_subscriptions WHERE id = $1`, subID).Scan(&quotaUsage))
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT balance FROM users WHERE id = $1`, userID).Scan(&balance))
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT quota_used FROM api_keys WHERE id = $1`, keyID).Scan(&keyUsage))
+	require.InDelta(t, 1.0, quotaUsage, 1e-8)
+	require.InDelta(t, 99.75, balance, 1e-8)
+	require.InDelta(t, 1.25, keyUsage, 1e-8)
+}
+
 func TestUsageBillingRepositoryApply_HybridConcurrentCapHasOneWalletFallback(t *testing.T) {
 	userID, keyID, subID := createHybridBillingFixture(t)
 	var groupID int64

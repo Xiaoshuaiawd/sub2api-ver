@@ -11,14 +11,14 @@
         <div role="group" :aria-label="t('payment.admin.groups')" class="mt-2 max-h-44 space-y-1 overflow-y-auto rounded-lg border border-gray-200 p-2 dark:border-dark-600">
           <label v-for="group in filteredGroupOptions" :key="group.id" class="flex min-h-10 cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-gray-50 dark:hover:bg-dark-700">
             <input type="checkbox" :checked="planForm.group_ids.includes(group.id)" :value="group.id" @change="toggleGroup(group.id)" />
-            <span :class="platformTextClass(group.platform)">{{ group.name }} · {{ group.platform }} ({{ group.rate_multiplier }}x)<span v-if="group.status !== 'active'" class="ml-1 text-red-600 dark:text-red-400">({{ group.status }})</span></span>
+            <span :class="platformTextClass(group.platform)">{{ group.name }} · {{ group.platform }} ({{ subscriptionPlanRate(group) }}x)<span v-if="group.status !== 'active'" class="ml-1 text-red-600 dark:text-red-400">({{ group.status }})</span></span>
           </label>
           <p v-if="filteredGroupOptions.length === 0" class="px-2 py-1 text-sm text-gray-500">{{ t('payment.admin.noMatchingGroups') }}</p>
         </div>
         <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('payment.admin.groupsSelected', { count: planForm.group_ids.length }) }}</p>
       </div>
       <div v-if="selectedGroupInfos.length" class="flex flex-wrap gap-2">
-        <GroupBadge v-for="group in selectedGroupInfos" :key="group.id" :name="group.name" :platform="group.platform" :rate-multiplier="group.rate_multiplier" />
+        <GroupBadge v-for="group in selectedGroupInfos" :key="group.id" :name="group.name" :platform="group.platform" :rate-multiplier="subscriptionPlanRate(group)" />
       </div>
       <fieldset class="rounded-lg border border-gray-200 p-3 dark:border-dark-600">
         <legend class="px-1 text-sm font-medium text-gray-700 dark:text-gray-200">{{ t('payment.admin.sharedQuota') }}</legend>
@@ -139,6 +139,12 @@ const filteredGroupOptions = computed(() => groupOptions.value.filter(g =>
 const selectedGroupInfos = computed(() => planForm.group_ids
   .map(id => props.groups.find(g => g.id === id))
   .filter((g): g is AdminGroup => Boolean(g)))
+
+function subscriptionPlanRate(group: AdminGroup): number {
+  return group.subscription_type === 'subscription_balance'
+    ? group.subscription_rate_multiplier ?? group.rate_multiplier
+    : group.rate_multiplier
+}
 
 function toggleGroup(id: number) {
   const index = planForm.group_ids.indexOf(id)

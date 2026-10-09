@@ -194,6 +194,14 @@ describe('PlanEditDialog', () => {
     expect(labels.some(label => label.includes('Standard OpenAI'))).toBe(false)
   })
 
+  it('shows the subscription quota rate for hybrid groups', () => {
+    const wrapper = mountDialog({ groups: [groupFixture({
+      id: 12, name: 'Hybrid', subscription_type: 'subscription_balance', rate_multiplier: 0.25, subscription_rate_multiplier: 1,
+    })] })
+    expect(wrapper.text()).toContain('Hybrid · openai (1x)')
+    expect(wrapper.text()).not.toContain('Hybrid · openai (0.25x)')
+  })
+
   it('submits selected groups and one shared quota', async () => {
     vi.mocked(adminPaymentAPI.createPlan).mockResolvedValueOnce({ data: {} } as never)
     const wrapper = mountDialog({ groups: [
