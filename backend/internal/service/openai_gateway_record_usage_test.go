@@ -2027,6 +2027,31 @@ func TestOpenAIGatewayServiceRecordUsage_SubscriptionBillingSetsSubscriptionFiel
 	require.Equal(t, 0, userRepo.deductCalls)
 }
 
+func TestOpenAIGatewayServiceRecordUsage_HybridWalletFallbackLogsCommittedSource(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{
+		Applied: true, BillingType: BillingTypeBalance,
+	}}
+	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo,
+		&openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+	groupID := int64(188)
+	subscription := &UserSubscription{ID: 199}
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{RequestID: "hybrid-wallet-fallback", Model: "gpt-5.1",
+			Usage: OpenAIUsage{InputTokens: 100, OutputTokens: 50}, Duration: time.Second},
+		APIKey: &APIKey{ID: 100, GroupID: &groupID,
+			Group: &Group{ID: groupID, SubscriptionType: SubscriptionTypeSubscriptionBalance, RateMultiplier: 1}},
+		User: &User{ID: 200}, Account: &Account{ID: 300}, Subscription: subscription,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, billingRepo.lastCmd)
+	require.Equal(t, groupID, billingRepo.lastCmd.HybridGroupID)
+	require.Greater(t, billingRepo.lastCmd.HybridCostUSD, 0.0)
+	require.NotNil(t, usageRepo.lastLog)
+	require.Equal(t, BillingTypeBalance, usageRepo.lastLog.BillingType)
+	require.Nil(t, usageRepo.lastLog.SubscriptionID)
+}
+
 func TestOpenAIGatewayServiceRecordUsage_SimpleModeSkipsBillingAfterPersist(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	userRepo := &openAIRecordUsageUserRepoStub{}

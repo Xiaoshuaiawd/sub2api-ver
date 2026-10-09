@@ -910,7 +910,7 @@ func (r *groupRepository) deleteCascade(ctx context.Context, id int64, requireEm
 	}
 
 	var affectedUserIDs []int64
-	if subscriptionType == service.SubscriptionTypeSubscription {
+	if subscriptionType == service.SubscriptionTypeSubscription || subscriptionType == service.SubscriptionTypeSubscriptionBalance {
 		// 只查询未软删除的订阅，避免通知已取消订阅的用户
 		rows, err := exec.QueryContext(ctx, "SELECT user_id FROM user_subscriptions WHERE group_id = $1 AND deleted_at IS NULL", id)
 		if err != nil {

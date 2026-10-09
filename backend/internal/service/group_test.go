@@ -8,6 +8,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestGroupBillingTypeCapabilities(t *testing.T) {
+	for _, tt := range []struct {
+		name                 string
+		billingType          string
+		usesSubscription     bool
+		requiresSubscription bool
+		allowsBalance        bool
+	}{
+		{"standard", SubscriptionTypeStandard, false, false, false},
+		{"subscription", SubscriptionTypeSubscription, true, true, false},
+		{"subscription_balance", "subscription_balance", true, false, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			group := &Group{SubscriptionType: tt.billingType}
+			require.Equal(t, tt.usesSubscription, group.IsSubscriptionType())
+			require.Equal(t, tt.requiresSubscription, group.RequiresSubscription())
+			require.Equal(t, tt.allowsBalance, group.AllowsBalanceFallback())
+		})
+	}
+	// 混合计费仍属于订阅配额分组，允许配置订阅专用高峰倍率。
+	require.NoError(t, ValidatePeakRateConfig("subscription_balance", true, "09:00", "18:00", 1.5))
+}
+
 // TestGroup_GetImagePrice_1K 测试 1K 尺寸返回正确价格
 func TestGroup_GetImagePrice_1K(t *testing.T) {
 	price := 0.10

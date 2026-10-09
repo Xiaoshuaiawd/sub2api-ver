@@ -47,6 +47,13 @@ describe('buildApiKeyGroupFilterOptions', () => {
     expect(opts.find((o) => o.label === 'Exclusive')).toBeUndefined()
   })
 
+  it('lists hybrid groups in the subscription-capable section', () => {
+    const groups = [g({ id: 10, name: 'Hybrid', subscription_type: 'subscription_balance' as AdminGroup['subscription_type'] })]
+    const options = buildApiKeyGroupFilterOptions(groups, labels)
+    expect(options).toContainEqual({ value: -3, label: 'Subscription', kind: 'group', disabled: true })
+    expect(options).toContainEqual({ value: 10, label: 'Hybrid' })
+  })
+
   it('skips empty section headers', () => {
     const groups = [g({ id: 2, name: 'Pub', is_exclusive: false, subscription_type: 'standard' })]
     const opts = buildApiKeyGroupFilterOptions(groups, labels)

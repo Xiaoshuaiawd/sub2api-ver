@@ -729,7 +729,7 @@ func (s *adminServiceImpl) validateFallbackGroupOnInvalidRequest(ctx context.Con
 	if platform != PlatformAnthropic && platform != PlatformAntigravity {
 		return fmt.Errorf("invalid request fallback only supported for anthropic or antigravity groups")
 	}
-	if subscriptionType == SubscriptionTypeSubscription {
+	if isSubscriptionBillingType(subscriptionType) {
 		return fmt.Errorf("subscription groups cannot set invalid request fallback")
 	}
 	if currentGroupID > 0 && currentGroupID == fallbackGroupID {
@@ -743,7 +743,7 @@ func (s *adminServiceImpl) validateFallbackGroupOnInvalidRequest(ctx context.Con
 	if fallbackGroup.Platform != PlatformAnthropic {
 		return fmt.Errorf("fallback group must be anthropic platform")
 	}
-	if fallbackGroup.SubscriptionType == SubscriptionTypeSubscription {
+	if fallbackGroup.IsSubscriptionType() {
 		return fmt.Errorf("fallback group cannot be subscription type")
 	}
 	if fallbackGroup.FallbackGroupIDOnInvalidRequest != nil {
@@ -1356,16 +1356,21 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 		if group.Status != StatusActive {
 			return nil, infraerrors.BadRequest("GROUP_NOT_ACTIVE", "target group is not active")
 		}
-		// 订阅类型分组：用户须持有该分组的有效订阅才可绑定
+		// 纯订阅分组必须持有有效订阅；混合分组还允许绑定余额路径。
+		hasActiveSubscription := false
 		if group.IsSubscriptionType() {
 			if s.userSubRepo == nil {
 				return nil, infraerrors.InternalServer("SUBSCRIPTION_REPOSITORY_UNAVAILABLE", "subscription repository is not configured")
 			}
 			if _, err := s.userSubRepo.GetActiveByUserIDAndGroupID(ctx, apiKey.UserID, *groupID); err != nil {
-				if errors.Is(err, ErrSubscriptionNotFound) {
+				if errors.Is(err, ErrSubscriptionNotFound) && group.RequiresSubscription() {
 					return nil, infraerrors.BadRequest("SUBSCRIPTION_REQUIRED", "user does not have an active subscription for this group")
 				}
-				return nil, err
+				if !errors.Is(err, ErrSubscriptionNotFound) {
+					return nil, err
+				}
+			} else {
+				hasActiveSubscription = true
 			}
 		}
 
@@ -1373,8 +1378,8 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 		apiKey.GroupID = &gid
 		apiKey.Group = group
 
-		// 专属标准分组：使用事务保证「添加分组权限」与「更新 API Key」的原子性
-		if group.IsExclusive && !group.IsSubscriptionType() {
+		// 无订阅的专属分组走余额授权，事务保证授权和改绑原子性。
+		if group.IsExclusive && !hasActiveSubscription {
 			opCtx := ctx
 			var tx *dbent.Tx
 			if s.entClient == nil {
@@ -1459,7 +1464,7 @@ func (s *adminServiceImpl) ReplaceUserGroup(ctx context.Context, userID, oldGrou
 		return nil, infraerrors.BadRequest("SAME_GROUP", "old and new group must be different")
 	}
 
-	// 验证新分组存在且为活跃的专属标准分组
+	// 验证新分组存在且支持余额访问授权。
 	newGroup, err := s.groupRepo.GetByID(ctx, newGroupID)
 	if err != nil {
 		return nil, err
@@ -1470,7 +1475,7 @@ func (s *adminServiceImpl) ReplaceUserGroup(ctx context.Context, userID, oldGrou
 	if !newGroup.IsExclusive {
 		return nil, infraerrors.BadRequest("GROUP_NOT_EXCLUSIVE", "target group is not exclusive")
 	}
-	if newGroup.IsSubscriptionType() {
+	if newGroup.RequiresSubscription() {
 		return nil, infraerrors.BadRequest("GROUP_IS_SUBSCRIPTION", "subscription groups are not supported for replacement")
 	}
 

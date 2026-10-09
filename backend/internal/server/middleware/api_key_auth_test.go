@@ -1427,6 +1427,103 @@ func TestAPIKeyAuthRejectsExhaustedBalance(t *testing.T) {
 	requireAPIKeyAuthError(t, w, "INSUFFICIENT_BALANCE", "Insufficient account balance")
 }
 
+func TestAPIKeyAuthHybridGroupWalletFallbackWhenSubscriptionMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tt := range []struct {
+		name        string
+		billingType string
+		balance     float64
+		exclusive   bool
+		allowed     bool
+		wantStatus  int
+	}{
+		{"public hybrid uses balance", service.SubscriptionTypeSubscriptionBalance, 10, false, false, http.StatusOK},
+		{"public hybrid needs balance", service.SubscriptionTypeSubscriptionBalance, 0, false, false, http.StatusForbidden},
+		{"exclusive hybrid requires grant", service.SubscriptionTypeSubscriptionBalance, 10, true, false, http.StatusForbidden},
+		{"granted exclusive hybrid uses balance", service.SubscriptionTypeSubscriptionBalance, 10, true, true, http.StatusOK},
+		{"strict subscription stays blocked", service.SubscriptionTypeSubscription, 10, false, false, http.StatusForbidden},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			user := &service.User{ID: 705, Role: service.RoleUser, Status: service.StatusActive, Balance: tt.balance, Concurrency: 1}
+			group := &service.Group{ID: 801, Platform: service.PlatformOpenAI, Status: service.StatusActive,
+				Hydrated: true, IsExclusive: tt.exclusive, SubscriptionType: tt.billingType}
+			if tt.allowed {
+				user.AllowedGroups = []int64{group.ID}
+			}
+			key := &service.APIKey{ID: 901, UserID: user.ID, Key: "hybrid-auth-test", Status: service.StatusActive,
+				User: user, GroupID: &group.ID, Group: group}
+			cfg := &config.Config{RunMode: config.RunModeStandard}
+			keySvc := service.NewAPIKeyService(&stubApiKeyRepo{getByKey: func(context.Context, string) (*service.APIKey, error) {
+				copy := *key
+				return &copy, nil
+			}}, nil, nil, nil, nil, nil, cfg)
+			subSvc := service.NewSubscriptionService(nil, &stubUserSubscriptionRepo{getActive: func(context.Context, int64, int64) (*service.UserSubscription, error) {
+				return nil, service.ErrSubscriptionNotFound
+			}}, nil, nil, cfg)
+			t.Cleanup(subSvc.Stop)
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, "/t", nil)
+			request.Header.Set("x-api-key", key.Key)
+			newAuthTestRouter(keySvc, subSvc, cfg).ServeHTTP(response, request)
+			require.Equal(t, tt.wantStatus, response.Code, response.Body.String())
+		})
+	}
+}
+
+func TestAPIKeyAuthHybridGroupWalletFallbackOnQuotaOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tt := range []struct {
+		name            string
+		subscriptionErr error
+		usage           float64
+		exclusive       bool
+		wantStatus      int
+	}{
+		{"quota exhausted", nil, 10, false, http.StatusOK},
+		{"exclusive subscriber may use wallet fallback", nil, 10, true, http.StatusOK},
+		{"quota available", nil, 0, false, http.StatusOK},
+		{"lookup failed", errors.New("database unavailable"), 0, false, http.StatusInternalServerError},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			limit := 1.0
+			now := time.Now()
+			user := &service.User{ID: 721, Status: service.StatusActive, Role: service.RoleUser, Balance: 10, Concurrency: 1}
+			group := &service.Group{ID: 822, Status: service.StatusActive, Platform: service.PlatformOpenAI,
+				SubscriptionType: service.SubscriptionTypeSubscriptionBalance, DailyLimitUSD: &limit, IsExclusive: tt.exclusive, Hydrated: true}
+			key := &service.APIKey{ID: 923, UserID: user.ID, Key: "hybrid-limit", User: user, Group: group, GroupID: &group.ID, Status: service.StatusActive}
+			cfg := &config.Config{RunMode: config.RunModeStandard}
+			keySvc := service.NewAPIKeyService(&stubApiKeyRepo{getByKey: func(context.Context, string) (*service.APIKey, error) {
+				copy := *key
+				return &copy, nil
+			}}, nil, nil, nil, nil, nil, cfg)
+			subSvc := service.NewSubscriptionService(nil, &stubUserSubscriptionRepo{getActive: func(context.Context, int64, int64) (*service.UserSubscription, error) {
+				if tt.subscriptionErr != nil {
+					return nil, tt.subscriptionErr
+				}
+				return &service.UserSubscription{ID: 1024, UserID: user.ID, GroupID: group.ID,
+					Status: service.SubscriptionStatusActive, ExpiresAt: now.Add(time.Hour),
+					DailyWindowStart: &now, DailyUsageUSD: tt.usage}, nil
+			}}, nil, nil, cfg)
+			t.Cleanup(subSvc.Stop)
+			var sawSubscription bool
+			router := gin.New()
+			router.Use(gin.HandlerFunc(NewAPIKeyAuthMiddleware(keySvc, subSvc, cfg)))
+			router.GET("/t", func(c *gin.Context) {
+				_, sawSubscription = GetSubscriptionFromContext(c)
+				c.Status(http.StatusOK)
+			})
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, "/t", nil)
+			request.Header.Set("x-api-key", key.Key)
+			router.ServeHTTP(response, request)
+			require.Equal(t, tt.wantStatus, response.Code, response.Body.String())
+			if tt.wantStatus == http.StatusOK {
+				require.Equal(t, tt.usage == 0, sawSubscription)
+			}
+		})
+	}
+}
+
 func TestAPIKeyAuthOpenAIQuotaErrorFormat(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

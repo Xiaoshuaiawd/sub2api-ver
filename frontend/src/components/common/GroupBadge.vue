@@ -65,7 +65,7 @@ const props = withDefaults(defineProps<Props>(), {
 
 const { t } = useI18n()
 
-const isSubscription = computed(() => props.subscriptionType === 'subscription')
+const isSubscription = computed(() => props.subscriptionType === 'subscription' || props.subscriptionType === 'subscription_balance')
 
 // 是否有专属倍率（且与默认倍率不同）
 const hasCustomRate = computed(() => {
@@ -115,12 +115,16 @@ const labelText = computed(() => {
     // 如果有剩余天数，显示天数
     if (props.daysRemaining !== null && props.daysRemaining !== undefined) {
       if (props.daysRemaining <= 0) {
-        return t('admin.users.expired')
+        return props.subscriptionType === 'subscription_balance'
+          ? t('admin.groups.subscription.hybridBadge')
+          : t('admin.users.expired')
       }
       return t('admin.users.daysRemaining', { days: props.daysRemaining })
     }
     // 否则显示"订阅"
-    return t('groups.subscription')
+    return props.subscriptionType === 'subscription_balance'
+      ? t('admin.groups.subscription.hybridBadge')
+      : t('groups.subscription')
   }
   return rateLabel
 })

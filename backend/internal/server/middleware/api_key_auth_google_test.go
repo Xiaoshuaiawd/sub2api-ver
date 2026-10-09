@@ -908,3 +908,33 @@ func TestApiKeyAuthWithSubscriptionGoogle_SubscriptionLimitExceededReturns429(t 
 	require.Equal(t, "RESOURCE_EXHAUSTED", resp.Error.Status)
 	require.Contains(t, resp.Error.Message, "daily usage limit exceeded")
 }
+
+func TestApiKeyAuthWithSubscriptionGoogle_HybridFallsBackToBalance(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	group := &service.Group{ID: 177, Name: "hybrid", Status: service.StatusActive, Platform: service.PlatformGemini,
+		Hydrated: true, SubscriptionType: service.SubscriptionTypeSubscriptionBalance}
+	user := &service.User{ID: 188, Role: service.RoleUser, Status: service.StatusActive, Balance: 10, Concurrency: 1}
+	key := &service.APIKey{ID: 199, UserID: user.ID, Key: "google-hybrid", Status: service.StatusActive,
+		User: user, Group: group, GroupID: &group.ID}
+	keySvc := newTestAPIKeyService(fakeAPIKeyRepo{getByKey: func(context.Context, string) (*service.APIKey, error) {
+		copy := *key
+		return &copy, nil
+	}})
+	cfg := &config.Config{RunMode: config.RunModeStandard}
+	subSvc := service.NewSubscriptionService(nil, fakeGoogleSubscriptionRepo{getActive: func(context.Context, int64, int64) (*service.UserSubscription, error) {
+		return nil, service.ErrSubscriptionNotFound
+	}}, nil, nil, cfg)
+	t.Cleanup(subSvc.Stop)
+	router := gin.New()
+	router.Use(APIKeyAuthWithSubscriptionGoogle(keySvc, subSvc, cfg))
+	router.GET("/v1beta/test", func(c *gin.Context) {
+		_, exists := GetSubscriptionFromContext(c)
+		require.False(t, exists)
+		c.Status(http.StatusOK)
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1beta/test", nil)
+	req.Header.Set("Authorization", "Bearer "+key.Key)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+}

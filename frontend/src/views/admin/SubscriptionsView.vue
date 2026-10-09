@@ -1117,7 +1117,7 @@ const platformFilterOptions = computed(() => [
 // Group options for assign (only subscription type groups)
 const subscriptionGroupOptions = computed(() =>
   groups.value
-    .filter((g) => g.subscription_type === 'subscription' && g.status === 'active')
+    .filter((g) => (g.subscription_type === 'subscription' || g.subscription_type === 'subscription_balance') && g.status === 'active')
     .map((g) => ({
       value: g.id,
       label: g.name,

@@ -23,6 +23,32 @@ type balanceEligibilityCacheStub struct {
 	invalidateCalls          atomic.Int64
 }
 
+type hybridEligibilityCacheStub struct {
+	*balanceEligibilityCacheStub
+	subscription *SubscriptionCacheData
+}
+
+func (s *hybridEligibilityCacheStub) GetSubscriptionCache(context.Context, int64, int64) (*SubscriptionCacheData, error) {
+	return s.subscription, nil
+}
+
+func TestCheckBillingEligibility_HybridFallsBackWhenSubscriptionCacheIsExhausted(t *testing.T) {
+	limit := 1.0
+	cache := &hybridEligibilityCacheStub{
+		balanceEligibilityCacheStub: &balanceEligibilityCacheStub{balance: 2},
+		subscription: &SubscriptionCacheData{
+			Status: SubscriptionStatusActive, ExpiresAt: time.Now().Add(time.Hour), DailyUsage: limit,
+		},
+	}
+	group := &Group{ID: 10, SubscriptionType: SubscriptionTypeSubscriptionBalance, DailyLimitUSD: &limit}
+	svc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, &config.Config{}, nil)
+	t.Cleanup(svc.Stop)
+	require.NoError(t, svc.CheckBillingEligibility(context.Background(), &User{ID: 1}, nil, group, &UserSubscription{ID: 20}, ""))
+
+	cache.balance = 0
+	require.ErrorIs(t, svc.CheckBillingEligibility(context.Background(), &User{ID: 1}, nil, group, &UserSubscription{ID: 20}, ""), ErrInsufficientBalance)
+}
+
 func (s *balanceEligibilityCacheStub) GetUserBalance(context.Context, int64) (float64, error) {
 	if s.cacheMissAfterInvalidate && s.invalidated.Load() {
 		return 0, errors.New("cache miss")

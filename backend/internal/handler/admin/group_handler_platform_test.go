@@ -49,6 +49,17 @@ func TestGroupPlatformBinding_AllowedPlatforms(t *testing.T) {
 	}
 }
 
+func TestGroupBillingTypeBindingSubscriptionBalance(t *testing.T) {
+	var create CreateGroupRequest
+	require.NoError(t, bindGroupPlatformJSON(t, &create, `{"name":"shared","subscription_type":"subscription_balance"}`))
+	require.Equal(t, "subscription_balance", create.SubscriptionType)
+
+	var update UpdateGroupRequest
+	require.NoError(t, bindGroupPlatformJSON(t, &update, `{"platform":"openai","subscription_type":"subscription_balance"}`))
+	require.Equal(t, "openai", update.Platform)
+	require.Equal(t, "subscription_balance", update.SubscriptionType)
+}
+
 func TestGroupPlatformBinding_RejectsInvalidPlatforms(t *testing.T) {
 	invalid := []string{
 		"moonshot", // 厂商别名,不是平台标识

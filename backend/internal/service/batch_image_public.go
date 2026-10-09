@@ -994,6 +994,11 @@ func (s *BatchImagePublicService) ensureGroupAllowsBatchImage(ctx context.Contex
 	if group.Platform != PlatformGemini {
 		return ErrBatchImageGroupDisabled
 	}
+	// Batch jobs reserve and capture a wallet hold asynchronously. They cannot
+	// currently choose subscription first, so reject before creating a job.
+	if group.AllowsBalanceFallback() {
+		return ErrBatchImageHybridBillingUnsupported
+	}
 	return nil
 }
 

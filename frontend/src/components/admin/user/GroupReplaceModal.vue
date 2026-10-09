@@ -104,7 +104,7 @@ const submitting = ref(false)
 const availableGroups = computed(() => {
   if (!props.oldGroup) return []
   return props.allGroups.filter(
-    g => g.status === 'active' && g.is_exclusive && g.subscription_type === 'standard' && g.id !== props.oldGroup!.id
+    g => g.status === 'active' && g.is_exclusive && g.subscription_type !== 'subscription' && g.id !== props.oldGroup!.id
   )
 })
 

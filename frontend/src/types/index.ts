@@ -546,7 +546,7 @@ export type GroupPlatform = AccountPlatform | 'composite'
 
 export type VideoModelPrices = Record<string, Record<string, number>>
 
-export type SubscriptionType = 'standard' | 'subscription'
+export type SubscriptionType = 'standard' | 'subscription' | 'subscription_balance'
 
 export interface OpenAIMessagesDispatchModelConfig {
   opus_mapped_model?: string

@@ -152,7 +152,21 @@ func (g *Group) IsActive() bool {
 }
 
 func (g *Group) IsSubscriptionType() bool {
-	return g.SubscriptionType == SubscriptionTypeSubscription
+	return g != nil && isSubscriptionBillingType(g.SubscriptionType)
+}
+
+func isSubscriptionBillingType(subscriptionType string) bool {
+	return subscriptionType == SubscriptionTypeSubscription || subscriptionType == SubscriptionTypeSubscriptionBalance
+}
+
+// RequiresSubscription distinguishes strict subscription groups from groups
+// that can charge the same request to the user's balance.
+func (g *Group) RequiresSubscription() bool {
+	return g != nil && g.SubscriptionType == SubscriptionTypeSubscription
+}
+
+func (g *Group) AllowsBalanceFallback() bool {
+	return g != nil && g.SubscriptionType == SubscriptionTypeSubscriptionBalance
 }
 
 func (g *Group) HasDailyLimit() bool {
@@ -337,7 +351,7 @@ func ValidatePeakRateConfig(subscriptionType string, enabled bool, start, end st
 	if !enabled {
 		return nil
 	}
-	if subscriptionType != SubscriptionTypeSubscription {
+	if !isSubscriptionBillingType(subscriptionType) {
 		return errors.New("高峰时段倍率仅支持订阅类型分组")
 	}
 	if start == "" || end == "" {
@@ -369,7 +383,7 @@ func ValidatePeakRateConfig(subscriptionType string, enabled bool, start, end st
 // enabled=false 时校验放行，由本函数兜底清洗。调用顺序为先归一化、后校验，
 // 使"订阅转标准"这类更新能静默清空高峰配置而不是被校验拒绝。
 func NormalizePeakRateConfig(subscriptionType string, enabled bool, start, end string, multiplier float64) (bool, string, string, float64) {
-	if subscriptionType != SubscriptionTypeSubscription {
+	if !isSubscriptionBillingType(subscriptionType) {
 		return false, "", "", 1.0
 	}
 	if !enabled {

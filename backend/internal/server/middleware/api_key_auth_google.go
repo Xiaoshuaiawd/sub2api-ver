@@ -166,40 +166,61 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 		}
 
 		isSubscriptionType := apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
+		var subscription *service.UserSubscription
+		var hadSubscription bool
 		if isSubscriptionType && subscriptionService != nil {
-			subscription, err := subscriptionService.GetActiveSubscription(
+			var err error
+			subscription, err = subscriptionService.GetActiveSubscription(
 				c.Request.Context(),
 				apiKey.User.ID,
 				apiKey.Group.ID,
 			)
 			if err != nil {
-				abortWithGoogleError(c, 403, "No active subscription found for this group")
-				return
-			}
-
-			needsMaintenance, err := subscriptionService.ValidateAndCheckLimits(subscription, apiKey.Group)
-			if needsMaintenance {
-				refreshed, maintenanceErr := subscriptionService.EnsureWindowMaintenance(c.Request.Context(), subscription)
-				if maintenanceErr != nil {
-					abortWithGoogleError(c, 500, "Failed to maintain subscription usage windows")
+				if !(apiKey.Group.AllowsBalanceFallback() && errors.Is(err, service.ErrSubscriptionNotFound)) {
+					if apiKey.Group.AllowsBalanceFallback() {
+						abortWithGoogleError(c, 500, "Failed to check subscription")
+					} else {
+						abortWithGoogleError(c, 403, "No active subscription found for this group")
+					}
 					return
 				}
-				subscription = refreshed
-				_, err = subscriptionService.ValidateAndCheckLimits(subscription, apiKey.Group)
-			}
-			if err != nil {
-				status := 403
-				if errors.Is(err, service.ErrDailyLimitExceeded) ||
-					errors.Is(err, service.ErrWeeklyLimitExceeded) ||
-					errors.Is(err, service.ErrMonthlyLimitExceeded) {
-					status = 429
-				}
-				abortWithGoogleError(c, status, err.Error())
-				return
 			}
 
+			hadSubscription = subscription != nil
+			if subscription != nil {
+				needsMaintenance, validateErr := subscriptionService.ValidateAndCheckLimits(subscription, apiKey.Group)
+				if needsMaintenance {
+					refreshed, maintenanceErr := subscriptionService.EnsureWindowMaintenance(c.Request.Context(), subscription)
+					if maintenanceErr != nil {
+						abortWithGoogleError(c, 500, "Failed to maintain subscription usage windows")
+						return
+					}
+					subscription = refreshed
+					_, validateErr = subscriptionService.ValidateAndCheckLimits(subscription, apiKey.Group)
+				}
+				if validateErr != nil {
+					if apiKey.Group.AllowsBalanceFallback() && isSubscriptionQuotaExhausted(validateErr) {
+						subscription = nil
+					} else {
+						status := 403
+						if isSubscriptionQuotaExhausted(validateErr) {
+							status = 429
+						}
+						abortWithGoogleError(c, status, validateErr.Error())
+						return
+					}
+				}
+			}
+		}
+		if subscription != nil {
 			c.Set(string(ContextKeySubscription), subscription)
 		} else {
+			if apiKey.Group != nil && apiKey.Group.AllowsBalanceFallback() && !hadSubscription && !hybridWalletGroupAllowed(apiKey) {
+				service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonAPIKeyGroupUnavailable)
+				MarkIngressRejected(c, IngressRejectGroupNotAllowed)
+				abortWithGoogleError(c, 403, "API Key 所属专属分组不再允许当前用户使用")
+				return
+			}
 			if apiKeyBalanceBelowAuthThreshold(apiKey.User.Balance, cfg) {
 				abortWithGoogleError(c, 403, "Insufficient account balance")
 				return

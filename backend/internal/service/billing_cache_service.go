@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
@@ -751,9 +752,16 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 
 	if isSubscriptionMode {
 		if err := s.checkSubscriptionEligibility(ctx, user.ID, group, subscription); err != nil {
-			return err
+			// The auth snapshot and the billing cache can advance independently.
+			// A hybrid group must still try the wallet when either view has
+			// exhausted the subscription quota.
+			if !group.AllowsBalanceFallback() || !isSubscriptionQuotaError(err) {
+				return err
+			}
+			isSubscriptionMode = false
 		}
-	} else {
+	}
+	if !isSubscriptionMode {
 		if err := s.checkBalanceEligibility(ctx, user.ID); err != nil {
 			return err
 		}
@@ -779,6 +787,12 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 	}
 
 	return nil
+}
+
+func isSubscriptionQuotaError(err error) bool {
+	return errors.Is(err, ErrDailyLimitExceeded) ||
+		errors.Is(err, ErrWeeklyLimitExceeded) ||
+		errors.Is(err, ErrMonthlyLimitExceeded)
 }
 
 // checkSimpleModeAPIKeyRateLimits is deliberately DB-authoritative. Redis

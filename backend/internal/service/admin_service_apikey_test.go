@@ -504,6 +504,25 @@ func TestAdminService_AdminUpdateAPIKeyGroupID_SubscriptionGroup_Blocked(t *test
 	require.False(t, userRepo.addGroupCalled)
 }
 
+func TestAdminService_AdminUpdateAPIKeyGroupID_HybridGroupWithoutSubscription(t *testing.T) {
+	for _, exclusive := range []bool{false, true} {
+		t.Run(map[bool]string{false: "public", true: "exclusive"}[exclusive], func(t *testing.T) {
+			apiKeyRepo := &apiKeyRepoStubForGroupUpdate{key: &APIKey{ID: 1, UserID: 42, Key: "sk-test"}}
+			groupRepo := &groupRepoStubForGroupUpdate{group: &Group{ID: 10, Name: "Hybrid", Status: StatusActive,
+				IsExclusive: exclusive, SubscriptionType: SubscriptionTypeSubscriptionBalance}}
+			userRepo := &userRepoStubForGroupUpdate{}
+			subRepo := &userSubRepoStubForGroupUpdate{getActiveErr: ErrSubscriptionNotFound}
+			svc := &adminServiceImpl{apiKeyRepo: apiKeyRepo, groupRepo: groupRepo, userRepo: userRepo, userSubRepo: subRepo}
+
+			result, err := svc.AdminUpdateAPIKeyGroupID(context.Background(), 1, int64Ptr(10))
+			require.NoError(t, err)
+			require.Equal(t, int64(10), *result.APIKey.GroupID)
+			require.Equal(t, exclusive, result.AutoGrantedGroupAccess)
+			require.Equal(t, exclusive, userRepo.addGroupCalled)
+		})
+	}
+}
+
 func TestAdminService_AdminUpdateAPIKeyGroupID_SubscriptionGroup_RequiresRepo(t *testing.T) {
 	existing := &APIKey{ID: 1, UserID: 42, Key: "sk-test", GroupID: nil}
 	apiKeyRepo := &apiKeyRepoStubForGroupUpdate{key: existing}

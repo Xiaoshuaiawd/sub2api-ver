@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
+	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -47,12 +49,29 @@ func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBi
 		return nil, err
 	}
 	if !applied {
+		if cmd.HybridGroupID > 0 {
+			return loadHybridBillingOutcome(ctx, tx, cmd.RequestID, cmd.APIKeyID)
+		}
 		return &service.UsageBillingApplyResult{Applied: false}, nil
 	}
 
-	result := &service.UsageBillingApplyResult{Applied: true}
+	result := &service.UsageBillingApplyResult{
+		Applied: true, BillingType: cmd.BillingType, SubscriptionID: cmd.SubscriptionID,
+	}
 	if err := r.applyUsageBillingEffects(ctx, tx, cmd, result); err != nil {
 		return nil, err
+	}
+	if cmd.HybridGroupID > 0 {
+		var subscriptionID any
+		if result.SubscriptionID != nil {
+			subscriptionID = *result.SubscriptionID
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE usage_billing_dedup SET billing_type = $1, subscription_id = $2
+			WHERE request_id = $3 AND api_key_id = $4
+		`, result.BillingType, subscriptionID, cmd.RequestID, cmd.APIKeyID); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -172,7 +191,11 @@ func (r *usageBillingRepository) applyBatchImageBalanceHold(
 }
 
 func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand, result *service.UsageBillingApplyResult) error {
-	if cmd.SubscriptionCost > 0 && cmd.SubscriptionID != nil {
+	if cmd.HybridGroupID > 0 {
+		if err := settleHybridFunding(ctx, tx, cmd, result); err != nil {
+			return err
+		}
+	} else if cmd.SubscriptionCost > 0 && cmd.SubscriptionID != nil {
 		if err := incrementUsageBillingSubscription(ctx, tx, *cmd.SubscriptionID, cmd.SubscriptionCost); err != nil {
 			return err
 		}
@@ -210,6 +233,154 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 		result.QuotaState = quotaState
 	}
 
+	return nil
+}
+
+func loadHybridBillingOutcome(ctx context.Context, tx *sql.Tx, requestID string, apiKeyID int64) (*service.UsageBillingApplyResult, error) {
+	// An archived replay temporarily inserts a new, still-uncommitted hot
+	// dedup row while checking the archive. Prefer the committed cold result.
+	for _, table := range []string{"usage_billing_dedup_archive", "usage_billing_dedup"} {
+		var billingType, subscriptionID sql.NullInt64
+		query := `SELECT billing_type, subscription_id FROM ` + table + ` WHERE request_id = $1 AND api_key_id = $2`
+		err := tx.QueryRowContext(ctx, query, requestID, apiKeyID).Scan(&billingType, &subscriptionID)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !billingType.Valid {
+			return nil, fmt.Errorf("hybrid billing source missing for request %s", requestID)
+		}
+		result := &service.UsageBillingApplyResult{Applied: false, BillingType: int8(billingType.Int64)}
+		if subscriptionID.Valid {
+			id := subscriptionID.Int64
+			result.SubscriptionID = &id
+		}
+		return result, nil
+	}
+	return nil, fmt.Errorf("hybrid billing record missing for request %s", requestID)
+}
+
+func settleHybridFunding(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand, result *service.UsageBillingApplyResult) error {
+	// A free request still records one source, matching the admission decision.
+	if cmd.HybridCostUSD <= 0 {
+		if cmd.SubscriptionID != nil {
+			result.BillingType = service.BillingTypeSubscription
+			result.SubscriptionID = cmd.SubscriptionID
+		} else {
+			result.BillingType = service.BillingTypeBalance
+			result.SubscriptionID = nil
+		}
+		cmd.BalanceCost, cmd.SubscriptionCost = 0, 0
+		return nil
+	}
+
+	if cmd.SubscriptionID != nil {
+		// Lock the group so an admin limit/type edit cannot change the joined
+		// limit row between the guarded debit and commit. Concurrent bills use
+		// compatible SHARE locks; the subscription row serializes their debits.
+		var groupID int64
+		err := tx.QueryRowContext(ctx, `SELECT id FROM groups WHERE id = $1 AND deleted_at IS NULL FOR SHARE`, cmd.HybridGroupID).Scan(&groupID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err == nil {
+			var status string
+			var startsAt, expiresAt time.Time
+			var dailyWindow, weeklyWindow, monthlyWindow sql.NullTime
+			lookupErr := tx.QueryRowContext(ctx, `
+				SELECT status, starts_at, expires_at,
+				       daily_window_start, weekly_window_start, monthly_window_start
+				FROM user_subscriptions
+				WHERE id = $1 AND user_id = $2 AND group_id = $3 AND deleted_at IS NULL
+				FOR UPDATE
+			`, *cmd.SubscriptionID, cmd.UserID, cmd.HybridGroupID).Scan(
+				&status, &startsAt, &expiresAt, &dailyWindow, &weeklyWindow, &monthlyWindow,
+			)
+			if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
+				return lookupErr
+			}
+			if lookupErr == nil && status == service.SubscriptionStatusSuspended {
+				return service.ErrSubscriptionSuspended
+			}
+			now := time.Now()
+			if lookupErr == nil && status == service.SubscriptionStatusActive &&
+				!now.Before(startsAt) && now.Before(expiresAt) {
+				subscription := &service.UserSubscription{StartsAt: startsAt, ExpiresAt: expiresAt}
+				if dailyWindow.Valid {
+					subscription.DailyWindowStart = &dailyWindow.Time
+				}
+				if weeklyWindow.Valid {
+					subscription.WeeklyWindowStart = &weeklyWindow.Time
+				}
+				if monthlyWindow.Valid {
+					subscription.MonthlyWindowStart = &monthlyWindow.Time
+				}
+				dailyReset, weeklyReset, monthlyReset := subscription.WindowResetStartsAt(now)
+				if dailyReset != nil || weeklyReset != nil || monthlyReset != nil {
+					var dailyStart, weeklyStart, monthlyStart any
+					if dailyReset != nil {
+						dailyStart = *dailyReset
+					}
+					if weeklyReset != nil {
+						weeklyStart = *weeklyReset
+					}
+					if monthlyReset != nil {
+						monthlyStart = *monthlyReset
+					}
+					if _, resetErr := tx.ExecContext(ctx, `
+						UPDATE user_subscriptions
+						SET daily_usage_usd = CASE WHEN $1::timestamptz IS NULL THEN daily_usage_usd ELSE 0 END,
+						    daily_window_start = COALESCE($1::timestamptz, daily_window_start),
+						    weekly_usage_usd = CASE WHEN $2::timestamptz IS NULL THEN weekly_usage_usd ELSE 0 END,
+						    weekly_window_start = COALESCE($2::timestamptz, weekly_window_start),
+						    monthly_usage_usd = CASE WHEN $3::timestamptz IS NULL THEN monthly_usage_usd ELSE 0 END,
+						    monthly_window_start = COALESCE($3::timestamptz, monthly_window_start),
+						    updated_at = NOW()
+						WHERE id = $4
+					`, dailyStart, weeklyStart, monthlyStart, *cmd.SubscriptionID); resetErr != nil {
+						return resetErr
+					}
+					result.SubscriptionWindowReset = true
+				}
+				res, updateErr := tx.ExecContext(ctx, `
+				UPDATE user_subscriptions AS us
+				SET daily_usage_usd = us.daily_usage_usd + $1,
+				    weekly_usage_usd = us.weekly_usage_usd + $1,
+				    monthly_usage_usd = us.monthly_usage_usd + $1,
+				    updated_at = NOW()
+				FROM groups AS g
+				WHERE us.id = $2 AND us.user_id = $3 AND us.group_id = $4
+				  AND g.id = $4 AND g.deleted_at IS NULL
+				  AND g.subscription_type = 'subscription_balance'
+				  AND us.deleted_at IS NULL AND us.status = 'active'
+				  AND us.starts_at <= NOW() AND us.expires_at > NOW()
+				  AND (g.daily_limit_usd IS NULL OR us.daily_usage_usd + $1 <= g.daily_limit_usd)
+				  AND (g.weekly_limit_usd IS NULL OR us.weekly_usage_usd + $1 <= g.weekly_limit_usd)
+				  AND (g.monthly_limit_usd IS NULL OR us.monthly_usage_usd + $1 <= g.monthly_limit_usd)
+			`, cmd.HybridCostUSD, *cmd.SubscriptionID, cmd.UserID, cmd.HybridGroupID)
+				if updateErr != nil {
+					return updateErr
+				}
+				rows, rowsErr := res.RowsAffected()
+				if rowsErr != nil {
+					return rowsErr
+				}
+				if rows == 1 {
+					result.BillingType = service.BillingTypeSubscription
+					result.SubscriptionID = cmd.SubscriptionID
+					cmd.SubscriptionCost, cmd.BalanceCost = cmd.HybridCostUSD, 0
+					return nil
+				}
+			}
+		}
+	}
+
+	result.BillingType = service.BillingTypeBalance
+	result.SubscriptionID = nil
+	cmd.SubscriptionID = nil
+	cmd.BalanceCost, cmd.SubscriptionCost = cmd.HybridCostUSD, 0
 	return nil
 }
 

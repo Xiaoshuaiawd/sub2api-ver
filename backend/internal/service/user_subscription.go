@@ -105,6 +105,21 @@ func (s *UserSubscription) NeedsMonthlyResetAt(now time.Time) bool {
 	return !now.Before(s.MonthlyWindowStart.Add(30 * 24 * time.Hour))
 }
 
+// WindowResetStartsAt shares the existing calendar-day and rolling-window
+// rules with the transactional hybrid settlement path.
+func (s *UserSubscription) WindowResetStartsAt(now time.Time) (daily, weekly, monthly *time.Time) {
+	if start, ok := s.automaticDailyWindowStartAt(now); ok {
+		daily = &start
+	}
+	if start, ok := s.automaticWindowStartAt(s.WeeklyWindowStart, 7*24*time.Hour, now); ok {
+		weekly = &start
+	}
+	if start, ok := s.automaticWindowStartAt(s.MonthlyWindowStart, 30*24*time.Hour, now); ok {
+		monthly = &start
+	}
+	return
+}
+
 func (s *UserSubscription) canAutomaticallyResetDailyAt(now time.Time) bool {
 	_, ok := s.automaticDailyWindowStartAt(now)
 	return ok

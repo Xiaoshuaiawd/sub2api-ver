@@ -325,6 +325,69 @@ describe('GroupsView duplicate action', () => {
     wrapper.unmount()
   })
 
+  it('edits the platform and billing type of an existing group', async () => {
+    updateGroup.mockResolvedValue({ ...sourceGroup, platform: 'gemini', subscription_type: 'subscription_balance' })
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === 'common.edit')!.trigger('click')
+    await flushPromises()
+
+    const platform = wrapper.getComponent('[data-testid="edit-group-platform"]')
+    const billingType = wrapper.getComponent('[data-testid="edit-group-billing-type"]')
+    expect(platform.props('disabled')).not.toBe(true)
+    expect(billingType.props('disabled')).not.toBe(true)
+    platform.vm.$emit('update:modelValue', 'gemini')
+    billingType.vm.$emit('update:modelValue', 'subscription_balance')
+    await flushPromises()
+    await wrapper.get('#edit-group-form').trigger('submit')
+    await flushPromises()
+
+    expect(updateGroup).toHaveBeenCalledWith(42, expect.objectContaining({
+      platform: 'gemini', subscription_type: 'subscription_balance'
+    }))
+    wrapper.unmount()
+  })
+
+  it('clears invalid-request fallback when changing an existing group to hybrid', async () => {
+    listGroups.mockResolvedValueOnce({
+      items: [{ ...sourceGroup, fallback_group_id_on_invalid_request: 99 }],
+      total: 1, page: 1, page_size: 20, pages: 1
+    })
+    updateGroup.mockResolvedValue({ ...sourceGroup, subscription_type: 'subscription_balance' })
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === 'common.edit')!.trigger('click')
+    await flushPromises()
+    wrapper.getComponent('[data-testid="edit-group-billing-type"]').vm.$emit('update:modelValue', 'subscription_balance')
+    await flushPromises()
+    await wrapper.get('#edit-group-form').trigger('submit')
+    await flushPromises()
+    expect(updateGroup).toHaveBeenCalledWith(42, expect.objectContaining({
+      subscription_type: 'subscription_balance', fallback_group_id_on_invalid_request: 0
+    }))
+    wrapper.unmount()
+  })
+
+  it('disables asynchronous batch images when changing a Gemini group to hybrid', async () => {
+    listGroups.mockResolvedValueOnce({
+      items: [{ ...sourceGroup, platform: 'gemini', allow_image_generation: true, allow_batch_image_generation: true }],
+      total: 1, page: 1, page_size: 20, pages: 1
+    })
+    updateGroup.mockResolvedValue({ ...sourceGroup, platform: 'gemini', subscription_type: 'subscription_balance' })
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === 'common.edit')!.trigger('click')
+    await flushPromises()
+    wrapper.getComponent('[data-testid="edit-group-billing-type"]').vm.$emit('update:modelValue', 'subscription_balance')
+    await flushPromises()
+    await wrapper.get('#edit-group-form').trigger('submit')
+    await flushPromises()
+    expect(updateGroup).toHaveBeenCalledWith(42, expect.objectContaining({
+      subscription_type: 'subscription_balance', allow_batch_image_generation: false
+    }))
+    wrapper.unmount()
+  })
+
   it('loads, edits, and saves custom reasoning multipliers for group pricing', async () => {
     const group = {
       ...sourceGroup,

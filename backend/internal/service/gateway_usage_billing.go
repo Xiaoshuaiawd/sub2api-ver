@@ -324,6 +324,10 @@ func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsage
 		cmd.Normalize()
 		return cmd
 	}
+	if p.APIKey.Group != nil && p.APIKey.Group.AllowsBalanceFallback() {
+		cmd.HybridGroupID = p.APIKey.Group.ID
+		cmd.HybridCostUSD = p.Cost.ActualCost
+	}
 
 	// Record subscription / balance cost using ActualCost so the group (and any
 	// user-specific) rate multiplier consumes subscription quota at the expected
@@ -357,6 +361,9 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 
 	cmd := buildUsageBillingCommand(requestID, usageLog, p)
 	if cmd == nil || cmd.RequestID == "" || repo == nil {
+		if cmd != nil && cmd.HybridGroupID > 0 {
+			return false, ErrBillingServiceUnavailable
+		}
 		if p.SimpleModeKeyRateLimitOnly {
 			return false, ErrSimpleModeKeyRateLimitBillingUnavailable
 		}
@@ -373,6 +380,13 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 	if err != nil {
 		return false, err
 	}
+	if cmd.HybridGroupID > 0 {
+		if result != nil && result.Applied && p.IsSubscriptionBill && result.BillingType == BillingTypeBalance {
+			logger.LegacyPrintf("service.gateway", "ALERT: hybrid subscription quota lost at settlement; wallet charged after subscription preflight user=%d group=%d request=%s",
+				cmd.UserID, cmd.HybridGroupID, cmd.RequestID)
+		}
+		applyCommittedBillingSource(usageLog, p, result)
+	}
 
 	if result == nil || !result.Applied {
 		deps.deferredService.ScheduleLastUsedUpdate(p.Account.ID)
@@ -384,9 +398,33 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 			invalidator.InvalidateAuthCacheByKey(billingCtx, p.APIKey.Key)
 		}
 	}
+	if cmd.HybridGroupID > 0 && result.BalanceOverdrafted {
+		balance := 0.0
+		if result.NewBalance != nil {
+			balance = *result.NewBalance
+		}
+		logger.LegacyPrintf("service.gateway", "ALERT: hybrid wallet fallback overdrafted user=%d group=%d request=%s balance=%f",
+			cmd.UserID, cmd.HybridGroupID, cmd.RequestID, balance)
+	}
 
 	finalizePostUsageBilling(billingCtx, p, deps, result)
 	return true, nil
+}
+
+// applyCommittedBillingSource updates the request's accounting view before
+// cache side effects and before either recorder persists its usage log.
+func applyCommittedBillingSource(usageLog *UsageLog, p *postUsageBillingParams, result *UsageBillingApplyResult) {
+	if p == nil || result == nil {
+		return
+	}
+	p.IsSubscriptionBill = result.BillingType == BillingTypeSubscription
+	if !p.IsSubscriptionBill {
+		p.Subscription = nil
+	}
+	if usageLog != nil {
+		usageLog.BillingType = result.BillingType
+		usageLog.SubscriptionID = result.SubscriptionID
+	}
 }
 
 func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *billingDeps, result *UsageBillingApplyResult) {
@@ -408,9 +446,16 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 		return
 	}
 
+	if result != nil && result.SubscriptionWindowReset && p.User != nil && p.APIKey != nil && p.APIKey.GroupID != nil && deps.billingCacheService != nil {
+		if err := deps.billingCacheService.InvalidateSubscription(ctx, p.User.ID, *p.APIKey.GroupID); err != nil {
+			logger.LegacyPrintf("service.gateway", "Warning: invalidate reset subscription cache failed user=%d group=%d: %v", p.User.ID, *p.APIKey.GroupID, err)
+		}
+	}
 	if p.IsSubscriptionBill {
-		if p.Cost.ActualCost > 0 && p.User != nil && p.APIKey != nil && p.APIKey.GroupID != nil {
-			deps.billingCacheService.QueueUpdateSubscriptionUsage(p.User.ID, *p.APIKey.GroupID, p.Cost.ActualCost)
+		if p.Cost.ActualCost > 0 && p.User != nil && p.APIKey != nil && p.APIKey.GroupID != nil && deps.billingCacheService != nil {
+			if result == nil || !result.SubscriptionWindowReset {
+				deps.billingCacheService.QueueUpdateSubscriptionUsage(p.User.ID, *p.APIKey.GroupID, p.Cost.ActualCost)
+			}
 		}
 	} else if p.Cost.ActualCost > 0 && p.User != nil {
 		syncBalanceCacheAfterDeduction(ctx, p, deps, result)

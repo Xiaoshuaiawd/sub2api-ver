@@ -201,7 +201,11 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 				apiKey.Group.ID,
 			)
 			if subErr != nil {
-				if !skipBilling {
+				if !skipBilling && !(apiKey.Group.AllowsBalanceFallback() && errors.Is(subErr, service.ErrSubscriptionNotFound)) {
+					if apiKey.Group.AllowsBalanceFallback() && !errors.Is(subErr, service.ErrSubscriptionNotFound) {
+						AbortWithError(c, 500, "SUBSCRIPTION_LOOKUP_FAILED", "Failed to check subscription")
+						return
+					}
 					AbortWithError(c, 403, "SUBSCRIPTION_NOT_FOUND", "No active subscription found for this group")
 					return
 				}
@@ -234,6 +238,9 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 				return
 			}
 
+			// An active subscription grants access to its exclusive hybrid group
+			// for this request, including a quota-triggered wallet fallback.
+			hadSubscription := subscription != nil
 			// 订阅模式：验证订阅限额
 			if subscription != nil {
 				needsMaintenance, validateErr := subscriptionService.ValidateAndCheckLimits(subscription, apiKey.Group)
@@ -247,19 +254,29 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 					_, validateErr = subscriptionService.ValidateAndCheckLimits(subscription, apiKey.Group)
 				}
 				if validateErr != nil {
-					code := "SUBSCRIPTION_INVALID"
-					status := 403
-					if errors.Is(validateErr, service.ErrDailyLimitExceeded) ||
-						errors.Is(validateErr, service.ErrWeeklyLimitExceeded) ||
-						errors.Is(validateErr, service.ErrMonthlyLimitExceeded) {
-						code = "USAGE_LIMIT_EXCEEDED"
-						status = 429
+					if apiKey.Group.AllowsBalanceFallback() && isSubscriptionQuotaExhausted(validateErr) {
+						subscription = nil
+					} else {
+						code := "SUBSCRIPTION_INVALID"
+						status := 403
+						if errors.Is(validateErr, service.ErrDailyLimitExceeded) ||
+							errors.Is(validateErr, service.ErrWeeklyLimitExceeded) ||
+							errors.Is(validateErr, service.ErrMonthlyLimitExceeded) {
+							code = "USAGE_LIMIT_EXCEEDED"
+							status = 429
+						}
+						AbortWithError(c, status, code, validateErr.Error())
+						return
 					}
-					AbortWithError(c, status, code, validateErr.Error())
+				}
+			}
+			if subscription == nil {
+				if apiKey.Group != nil && apiKey.Group.AllowsBalanceFallback() && !hadSubscription && !hybridWalletGroupAllowed(apiKey) {
+					service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonAPIKeyGroupUnavailable)
+					MarkIngressRejected(c, IngressRejectGroupNotAllowed)
+					AbortWithError(c, 403, "GROUP_NOT_ALLOWED", "API Key 所属专属分组不再允许当前用户使用")
 					return
 				}
-			} else {
-				// 非订阅模式 或 订阅模式但 subscriptionService 未注入：回退到余额检查
 				if apiKeyBalanceBelowAuthThreshold(apiKey.User.Balance, cfg) {
 					AbortWithError(c, 403, "INSUFFICIENT_BALANCE", "Insufficient account balance")
 					return
@@ -285,6 +302,18 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 
 		c.Next()
 	}
+}
+
+func isSubscriptionQuotaExhausted(err error) bool {
+	return errors.Is(err, service.ErrDailyLimitExceeded) ||
+		errors.Is(err, service.ErrWeeklyLimitExceeded) ||
+		errors.Is(err, service.ErrMonthlyLimitExceeded)
+}
+
+func hybridWalletGroupAllowed(apiKey *service.APIKey) bool {
+	return apiKey != nil && apiKey.Group != nil && apiKey.User != nil &&
+		apiKey.Group.AllowsBalanceFallback() &&
+		apiKey.User.CanBindGroup(apiKey.Group.ID, apiKey.Group.IsExclusive)
 }
 
 func apiKeyHeadersTooLarge(c *gin.Context) bool {

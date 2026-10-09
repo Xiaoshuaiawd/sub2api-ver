@@ -43,6 +43,45 @@ type visibilityGroupRepo struct {
 	groups []Group
 }
 
+type hybridBindingSubRepo struct {
+	UserSubscriptionRepository
+	subscribed map[int64]bool
+	err        error
+}
+
+func (r *hybridBindingSubRepo) GetActiveByUserIDAndGroupID(_ context.Context, _, groupID int64) (*UserSubscription, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	if r.subscribed[groupID] {
+		return &UserSubscription{GroupID: groupID}, nil
+	}
+	return nil, ErrSubscriptionNotFound
+}
+
+func TestHybridGroupBindingUsesSubscriptionOrBalanceEntitlement(t *testing.T) {
+	user := &User{ID: 1, AllowedGroups: []int64{20}}
+	svc := &APIKeyService{userSubRepo: &hybridBindingSubRepo{subscribed: map[int64]bool{30: true}}}
+	for _, tt := range []struct {
+		name         string
+		group        Group
+		wantBindable bool
+	}{
+		{"public hybrid without subscription", Group{ID: 10, SubscriptionType: SubscriptionTypeSubscriptionBalance}, true},
+		{"granted exclusive hybrid without subscription", Group{ID: 20, IsExclusive: true, SubscriptionType: SubscriptionTypeSubscriptionBalance}, true},
+		{"exclusive hybrid without grant", Group{ID: 21, IsExclusive: true, SubscriptionType: SubscriptionTypeSubscriptionBalance}, false},
+		{"exclusive hybrid with subscription", Group{ID: 30, IsExclusive: true, SubscriptionType: SubscriptionTypeSubscriptionBalance}, true},
+		{"strict subscription without subscription", Group{ID: 40, SubscriptionType: SubscriptionTypeSubscription}, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.wantBindable, svc.canUserBindGroup(context.Background(), user, &tt.group))
+		})
+	}
+	svc.userSubRepo = &hybridBindingSubRepo{err: errors.New("database unavailable")}
+	require.False(t, svc.canUserBindGroup(context.Background(), user, &Group{ID: 10, SubscriptionType: SubscriptionTypeSubscriptionBalance}),
+		"subscription repository failures must not silently grant wallet access")
+}
+
 func (r *visibilityGroupRepo) ListActive(context.Context) ([]Group, error) { return r.groups, nil }
 
 func TestGetUserGroupVisibilityIncludesActiveSubscriptions(t *testing.T) {

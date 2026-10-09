@@ -54,6 +54,19 @@ func TestBatchImagePublicService_Submit(t *testing.T) {
 		require.ErrorIs(t, err, ErrBatchImageDisabled)
 	})
 
+	t.Run("hybrid group cannot silently settle batch images from wallet", func(t *testing.T) {
+		svc, repo, queue, gemini, _ := newTestBatchImagePublicService(true)
+		groupID := int64(7)
+		svc.GroupRepo = &publicBatchImageGroupRepo{groups: map[int64]*Group{
+			groupID: {ID: groupID, Platform: PlatformGemini, SubscriptionType: SubscriptionTypeSubscriptionBalance, AllowBatchImageGeneration: true},
+		}}
+		_, err := svc.Submit(ctx, BatchImageOwner{UserID: 11, APIKeyID: 22, GroupID: &groupID}, validBatchImageSubmitRequest(), "")
+		require.ErrorIs(t, err, ErrBatchImageHybridBillingUnsupported)
+		require.Empty(t, repo.jobs)
+		require.Empty(t, queue.enqueued)
+		require.Empty(t, gemini.submits)
+	})
+
 	t.Run("accepts valid request stores refs and enqueues once", func(t *testing.T) {
 		svc, repo, queue, gemini, _ := newTestBatchImagePublicService(true)
 		req := validBatchImageSubmitRequest()

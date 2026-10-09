@@ -172,7 +172,7 @@
               <span
                 :class="[
                   'inline-block rounded-full px-2 py-0.5 text-xs font-medium',
-                  row.subscription_type === 'subscription'
+                  row.subscription_type !== 'standard'
                     ? 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400'
                     : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300',
                 ]"
@@ -180,12 +180,14 @@
                 {{
                   row.subscription_type === "subscription"
                     ? t("admin.groups.subscription.subscription")
-                    : t("admin.groups.subscription.standard")
+                    : row.subscription_type === "subscription_balance"
+                      ? t("admin.groups.subscription.hybrid")
+                      : t("admin.groups.subscription.standard")
                 }}
               </span>
               <!-- Subscription Limits - compact single line -->
               <div
-                v-if="row.subscription_type === 'subscription'"
+                v-if="isSubscriptionQuotaGroup(row.subscription_type)"
                 class="space-y-0.5 text-xs text-gray-500 dark:text-gray-400"
               >
                 <div
@@ -723,7 +725,7 @@
 
           <!-- Subscription limits (only show when subscription type is selected) -->
           <div
-            v-if="createForm.subscription_type === 'subscription'"
+            v-if="isSubscriptionQuotaGroup(createForm.subscription_type)"
             class="space-y-4 border-l-2 border-primary-200 pl-4 dark:border-primary-800"
           >
             <div>
@@ -987,7 +989,10 @@
               </div>
             </div>
           </div>
-          <div v-if="createForm.platform === 'gemini' && createForm.allow_image_generation" class="mt-4 border-t border-dashed border-gray-200 pt-4 dark:border-dark-700">
+          <p v-if="createForm.platform === 'gemini' && createForm.subscription_type === 'subscription_balance'" class="mt-3 text-xs text-amber-700 dark:text-amber-400">
+            {{ t("admin.groups.imagePricing.hybridBatchUnsupported") }}
+          </p>
+          <div v-if="createForm.platform === 'gemini' && createForm.allow_image_generation && createForm.subscription_type !== 'subscription_balance'" class="mt-4 border-t border-dashed border-gray-200 pt-4 dark:border-dark-700">
             <label
               class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300"
             >
@@ -1173,7 +1178,7 @@
         </div>
 
         <!-- 高峰时段倍率配置（仅订阅类型分组） -->
-        <div v-if="createForm.subscription_type === 'subscription'" class="border-t pt-4">
+        <div v-if="isSubscriptionQuotaGroup(createForm.subscription_type)" class="border-t pt-4">
           <div class="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2">
             <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
               <input
@@ -1879,7 +1884,7 @@
         <div
           v-if="
             ['anthropic', 'antigravity'].includes(createForm.platform) &&
-            createForm.subscription_type !== 'subscription'
+            createForm.subscription_type === 'standard'
           "
           class="border-t pt-4"
         >
@@ -2150,13 +2155,14 @@
           <label class="input-label">{{
             t("admin.groups.form.platform")
           }}</label>
-          <Select
-            v-model="editForm.platform"
-            :options="platformOptions"
-            :disabled="true"
-            data-tour="group-form-platform"
-          />
-          <p class="input-hint">{{ t("admin.groups.platformNotEditable") }}</p>
+            <Select
+              v-model="editForm.platform"
+              :options="platformOptions"
+              :disabled="authStore.isSimpleMode"
+              data-testid="edit-group-platform"
+              data-tour="group-form-platform"
+            />
+          <p class="input-hint">{{ t(authStore.isSimpleMode ? "admin.groups.platformSimpleModeHint" : "admin.groups.platformEditHint") }}</p>
         </div>
         <template v-if="!authStore.isSimpleMode">
         <!-- 从分组复制账号（编辑时） -->
@@ -2354,16 +2360,16 @@
             <Select
               v-model="editForm.subscription_type"
               :options="subscriptionTypeOptions"
-              :disabled="true"
+              data-testid="edit-group-billing-type"
             />
             <p class="input-hint">
-              {{ t("admin.groups.subscription.typeNotEditable") }}
+              {{ t("admin.groups.subscription.typeEditHint") }}
             </p>
           </div>
 
           <!-- Subscription limits (only show when subscription type is selected) -->
           <div
-            v-if="editForm.subscription_type === 'subscription'"
+            v-if="isSubscriptionQuotaGroup(editForm.subscription_type)"
             class="space-y-4 border-l-2 border-primary-200 pl-4 dark:border-primary-800"
           >
             <div>
@@ -2627,7 +2633,10 @@
               </div>
             </div>
           </div>
-          <div v-if="editForm.platform === 'gemini' && editForm.allow_image_generation" class="mt-4 border-t border-dashed border-gray-200 pt-4 dark:border-dark-700">
+          <p v-if="editForm.platform === 'gemini' && editForm.subscription_type === 'subscription_balance'" class="mt-3 text-xs text-amber-700 dark:text-amber-400">
+            {{ t("admin.groups.imagePricing.hybridBatchUnsupported") }}
+          </p>
+          <div v-if="editForm.platform === 'gemini' && editForm.allow_image_generation && editForm.subscription_type !== 'subscription_balance'" class="mt-4 border-t border-dashed border-gray-200 pt-4 dark:border-dark-700">
             <label
               class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300"
             >
@@ -2813,7 +2822,7 @@
         </div>
 
         <!-- 高峰时段倍率配置（仅订阅类型分组） -->
-        <div v-if="editForm.subscription_type === 'subscription'" class="border-t pt-4">
+        <div v-if="isSubscriptionQuotaGroup(editForm.subscription_type)" class="border-t pt-4">
           <div class="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2">
             <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
               <input
@@ -3528,7 +3537,7 @@
         <div
           v-if="
             ['anthropic', 'antigravity'].includes(editForm.platform) &&
-            editForm.subscription_type !== 'subscription'
+            editForm.subscription_type === 'standard'
           "
           class="border-t pt-4"
         >
@@ -4666,7 +4675,11 @@ const editStatusOptions = computed(() => [
 const subscriptionTypeOptions = computed(() => [
   { value: "standard", label: t("admin.groups.subscription.standard") },
   { value: "subscription", label: t("admin.groups.subscription.subscription") },
+  { value: "subscription_balance", label: t("admin.groups.subscription.hybrid") },
 ]);
+
+const isSubscriptionQuotaGroup = (type: SubscriptionType) =>
+  type === "subscription" || type === "subscription_balance";
 
 // 降级分组选项（创建时）- 仅包含 anthropic 平台且未启用 claude_code_only 的分组
 const fallbackGroupOptions = computed(() => {
@@ -4713,7 +4726,7 @@ const invalidRequestFallbackOptions = computed(() => {
     (g) =>
       g.platform === "anthropic" &&
       g.status === "active" &&
-      g.subscription_type !== "subscription" &&
+      !isSubscriptionQuotaGroup(g.subscription_type) &&
       g.fallback_group_id_on_invalid_request === null,
   );
   eligibleGroups.forEach((g) => {
@@ -4732,7 +4745,7 @@ const invalidRequestFallbackOptionsForEdit = computed(() => {
     (g) =>
       g.platform === "anthropic" &&
       g.status === "active" &&
-      g.subscription_type !== "subscription" &&
+      !isSubscriptionQuotaGroup(g.subscription_type) &&
       g.fallback_group_id_on_invalid_request === null &&
       g.id !== currentId,
   );
@@ -5530,9 +5543,9 @@ const resetDisabledBatchImagePricing = (
   form: Pick<
     ImagePricingFormState,
     "platform" | "allow_image_generation" | "allow_batch_image_generation" | "batch_image_discount_multiplier" | "batch_image_hold_multiplier"
-  >,
+  > & { subscription_type: SubscriptionType },
 ) => {
-  if (form.platform !== "gemini" || !form.allow_image_generation) {
+  if (form.platform !== "gemini" || !form.allow_image_generation || form.subscription_type === "subscription_balance") {
     form.allow_batch_image_generation = false;
   }
   if (!form.allow_batch_image_generation) {
@@ -5546,7 +5559,7 @@ const deleteConfirmMessage = computed(() => {
   if (!deletingGroup.value) {
     return "";
   }
-  if (deletingGroup.value.subscription_type === "subscription") {
+  if (isSubscriptionQuotaGroup(deletingGroup.value.subscription_type)) {
     return t("admin.groups.deleteConfirmSubscription", {
       name: deletingGroup.value.name,
     });
@@ -6651,15 +6664,16 @@ const confirmDelete = async () => {
 watch(
   () => createForm.subscription_type,
   (newVal) => {
-    if (newVal === "subscription") {
-      createForm.is_exclusive = true;
+    if (newVal !== "standard") {
       createForm.fallback_group_id_on_invalid_request = null;
+      if (newVal === "subscription") createForm.is_exclusive = true;
     } else {
       createForm.peak_rate_enabled = false;
       createForm.peak_start = "";
       createForm.peak_end = "";
       createForm.peak_rate_multiplier = 1.0;
     }
+    resetDisabledBatchImagePricing(createForm);
   },
 );
 
@@ -6667,12 +6681,15 @@ watch(
 watch(
   () => editForm.subscription_type,
   (newVal) => {
-    if (newVal !== "subscription") {
+    if (newVal !== "standard") {
+      editForm.fallback_group_id_on_invalid_request = null;
+    } else {
       editForm.peak_rate_enabled = false;
       editForm.peak_start = "";
       editForm.peak_end = "";
       editForm.peak_rate_multiplier = 1.0;
     }
+    resetDisabledBatchImagePricing(editForm);
   },
 );
 
@@ -6735,7 +6752,10 @@ watch(
 
 watch(
   () => editForm.platform,
-  (newVal) => {
+  (newVal, oldVal) => {
+    if (newVal !== oldVal) {
+      editForm.copy_accounts_from_group_ids = [];
+    }
     if (!["anthropic", "antigravity"].includes(newVal)) {
       editForm.fallback_group_id_on_invalid_request = null;
     }
