@@ -105,3 +105,19 @@ func TestAdminSubscriptionPlansForResponseIncludesCompositeGroupInfo(t *testing.
 		t.Fatalf("expected created_at/updated_at to be preserved, got %v / %v", got[0].CreatedAt, got[0].UpdatedAt)
 	}
 }
+
+func TestAdminSubscriptionPlansForResponseIncludesSharedGroupsAndPlanLimit(t *testing.T) {
+	limit := 10.0
+	plan := &dbent.SubscriptionPlan{ID: 21, GroupID: 7, GroupIds: []int64{7, 8}, DailyLimitUsd: &limit}
+	info := map[int64]service.PlanGroupInfo{
+		7: {Name: "OpenAI", Platform: service.PlatformOpenAI, RateMultiplier: 1},
+		8: {Name: "Gemini", Platform: service.PlatformGemini, RateMultiplier: 1.2},
+	}
+	got := adminSubscriptionPlansForResponse([]*dbent.SubscriptionPlan{plan}, info)
+	if len(got) != 1 || len(got[0].Groups) != 2 {
+		t.Fatalf("expected one plan with two groups, got %#v", got)
+	}
+	if got[0].Groups[1].Name != "Gemini" || got[0].DailyLimitUSD == nil || *got[0].DailyLimitUSD != limit {
+		t.Fatalf("expected secondary group and shared limit, got %#v", got[0])
+	}
+}

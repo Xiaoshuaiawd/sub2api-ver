@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
+import { adminPaymentAPI } from '@/api/admin/payment'
 
 import PlanEditDialog from '../PlanEditDialog.vue'
 import type { AdminGroup } from '@/types'
@@ -147,7 +148,7 @@ describe('PlanEditDialog', () => {
       },
     })
 
-    await wrapper.find('input[type="number"]').setValue('9.99')
+    await wrapper.find('#plan-price').setValue('9.99')
 
     expect(wrapper.text()).toContain('preview')
     expect(wrapper.text()).toContain('¥71.43')
@@ -163,7 +164,7 @@ describe('PlanEditDialog', () => {
       },
     })
 
-    await wrapper.find('input[type="number"]').setValue('9.99')
+    await wrapper.find('#plan-price').setValue('9.99')
 
     expect(wrapper.text()).not.toContain('preview')
     expect(wrapper.text()).not.toContain('¥71.43')
@@ -188,9 +189,28 @@ describe('PlanEditDialog', () => {
       ],
     })
 
-    const options = wrapper.findAll('option').map(option => option.text())
+    const labels = wrapper.findAll('label').map(label => label.text())
+    expect(labels.some(label => label.includes('OpenAI + Claude + Gemini + Grok'))).toBe(true)
+    expect(labels.some(label => label.includes('Standard OpenAI'))).toBe(false)
+  })
 
-    expect(options).toContain('OpenAI + Claude + Gemini + Grok — composite (1.2x)')
-    expect(options).not.toContain('Standard OpenAI — openai (1x)')
+  it('submits selected groups and one shared quota', async () => {
+    vi.mocked(adminPaymentAPI.createPlan).mockResolvedValueOnce({ data: {} } as never)
+    const wrapper = mountDialog({ groups: [
+      groupFixture({ id: 10, name: 'OpenAI' }),
+      groupFixture({ id: 11, name: 'Gemini', platform: 'gemini' }),
+    ] })
+    await wrapper.find('input[type="text"]').setValue('Shared plan')
+    await wrapper.findAll('input[type="checkbox"]')[0]!.setValue(true)
+    await wrapper.findAll('input[type="checkbox"]')[1]!.setValue(true)
+    await wrapper.find('#plan-daily-limit').setValue('10')
+    await wrapper.find('#plan-price').setValue('20')
+    await wrapper.find('input[min="1"]').setValue('30')
+    await wrapper.find('textarea').setValue('Two groups')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect(adminPaymentAPI.createPlan).toHaveBeenCalledWith(expect.objectContaining({
+      group_id: 10, group_ids: [10, 11], daily_limit_usd: 10,
+    }))
   })
 })

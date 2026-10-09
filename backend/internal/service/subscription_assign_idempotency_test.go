@@ -97,10 +97,17 @@ func (groupRepoNoop) UpdateSortOrders(context.Context, []GroupSortOrderUpdate) e
 
 type subscriptionGroupRepoStub struct {
 	groupRepoNoop
-	group *Group
+	group  *Group
+	groups map[int64]*Group
 }
 
-func (s *subscriptionGroupRepoStub) GetByID(context.Context, int64) (*Group, error) {
+func (s *subscriptionGroupRepoStub) GetByID(_ context.Context, id int64) (*Group, error) {
+	if s.groups != nil {
+		if group := s.groups[id]; group != nil {
+			return group, nil
+		}
+		return nil, ErrGroupNotFound
+	}
 	return s.group, nil
 }
 
@@ -251,6 +258,10 @@ func (s *subscriptionUserSubRepoStub) GetByID(_ context.Context, id int64) (*Use
 	}
 	cp := *sub
 	return &cp, nil
+}
+
+func (s *subscriptionUserSubRepoStub) GetByIDIncludeDeleted(ctx context.Context, id int64) (*UserSubscription, error) {
+	return s.GetByID(ctx, id)
 }
 
 func (s *subscriptionUserSubRepoStub) GetByIDForUpdate(ctx context.Context, id int64) (*UserSubscription, error) {

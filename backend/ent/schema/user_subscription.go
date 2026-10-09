@@ -37,6 +37,11 @@ func (UserSubscription) Fields() []ent.Field {
 	return []ent.Field{
 		field.Int64("user_id"),
 		field.Int64("group_id"),
+		field.JSON("group_ids", []int64{}).Default([]int64{}),
+		field.Int64("plan_id").Optional().Nillable(),
+		field.Float("daily_limit_usd").SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}).Optional().Nillable(),
+		field.Float("weekly_limit_usd").SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}).Optional().Nillable(),
+		field.Float("monthly_limit_usd").SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}).Optional().Nillable(),
 
 		field.Time("starts_at").
 			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}),

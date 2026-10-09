@@ -32,6 +32,22 @@ func TestUserSubscriptionRepoSuite(t *testing.T) {
 	suite.Run(t, new(UserSubscriptionRepoSuite))
 }
 
+func (s *UserSubscriptionRepoSuite) TestSharedBundleAccessibleFromEveryGroup() {
+	user := s.mustCreateUser("bundle-access@test.com", service.RoleUser)
+	first := s.mustCreateGroup("bundle-first")
+	second := s.mustCreateGroup("bundle-second")
+	planID := int64(101)
+	sub := s.mustCreateSubscription(user.ID, first.ID, func(create *dbent.UserSubscriptionCreate) {
+		create.SetGroupIds([]int64{first.ID, second.ID}).SetPlanID(planID)
+	})
+	for _, groupID := range []int64{first.ID, second.ID} {
+		got, err := s.repo.GetActiveByUserIDAndGroupID(s.ctx, user.ID, groupID)
+		s.Require().NoError(err)
+		s.Equal(sub.ID, got.ID)
+		s.Equal([]int64{first.ID, second.ID}, got.AccessibleGroupIDs())
+	}
+}
+
 func (s *UserSubscriptionRepoSuite) mustCreateUser(email string, role string) *service.User {
 	s.T().Helper()
 

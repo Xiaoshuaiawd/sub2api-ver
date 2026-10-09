@@ -43,6 +43,12 @@
         </div>
       </div>
 
+      <div v-if="plan.groups && plan.groups.length > 1" class="mb-3 flex flex-wrap items-center gap-1.5 text-xs">
+        <span class="text-gray-500 dark:text-dark-400">{{ t('payment.planCard.availableGroups') }}:</span>
+        <span v-for="group in plan.groups" :key="group.id" class="rounded-md bg-gray-100 px-2 py-1 text-gray-700 dark:bg-dark-700 dark:text-dark-200">{{ group.name }} (×{{ group.rate_multiplier }})</span>
+      </div>
+      <p v-if="plan.groups && plan.groups.length > 1" class="mb-2 text-xs text-gray-500 dark:text-dark-400">{{ t('payment.planCard.sharedQuotaHint') }}</p>
+
       <!-- Group quota info (compact) -->
       <div class="mb-3 grid grid-cols-2 gap-x-3 gap-y-1 rounded-lg bg-gray-50 px-3 py-2 text-xs dark:bg-dark-700/50">
         <div class="flex items-center justify-between">
@@ -141,7 +147,9 @@ const textClass = computed(() => platformTextClass(platform.value))
 const iconClass = computed(() => platformIconClass(platform.value))
 const btnClass = computed(() => platformButtonClass(platform.value))
 const discountClass = computed(() => platformDiscountClass(platform.value))
-const pLabel = computed(() => platformLabel(platform.value))
+const pLabel = computed(() => new Set(props.plan.groups?.map(group => group.platform) || []).size > 1
+  ? t('payment.planCard.multiplePlatforms')
+  : platformLabel(platform.value))
 
 const discountText = computed(() => {
   if (!props.plan.original_price || props.plan.original_price <= 0) return ''
@@ -150,6 +158,7 @@ const discountText = computed(() => {
 })
 
 const rateDisplay = computed(() => {
+  if ((props.plan.groups?.length || 0) > 1) return t('payment.planCard.variesByGroup')
   const rate = props.plan.rate_multiplier ?? 1
   return `×${Number(rate.toPrecision(10))}`
 })
@@ -157,7 +166,7 @@ const rateDisplay = computed(() => {
 const appStore = useAppStore()
 const planCurrencySymbol = computed(() => currencySymbol(props.plan.currency || 'USD'))
 
-const hasPeakRate = computed(() => groupHasPeakRate(props.plan))
+const hasPeakRate = computed(() => (props.plan.groups?.length || 0) <= 1 && groupHasPeakRate(props.plan))
 
 const peakRateDisplay = computed(() => {
   return formatPeakRateWindow(props.plan, serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset))
@@ -170,6 +179,7 @@ const MODEL_SCOPE_LABELS: Record<string, string> = {
 }
 
 const modelScopeLabels = computed(() => {
+  if ((props.plan.groups?.length || 0) > 1) return []
   if (platform.value !== 'antigravity') return []
   const scopes = props.plan.supported_model_scopes
   if (!scopes || scopes.length === 0) return []

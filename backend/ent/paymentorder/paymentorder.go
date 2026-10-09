@@ -50,6 +50,18 @@ const (
 	FieldPlanID = "plan_id"
 	// FieldSubscriptionGroupID holds the string denoting the subscription_group_id field in the database.
 	FieldSubscriptionGroupID = "subscription_group_id"
+	// FieldSubscriptionID holds the string denoting the subscription_id field in the database.
+	FieldSubscriptionID = "subscription_id"
+	// FieldSubscriptionGroupIds holds the string denoting the subscription_group_ids field in the database.
+	FieldSubscriptionGroupIds = "subscription_group_ids"
+	// FieldSubscriptionLimitsSnapshot holds the string denoting the subscription_limits_snapshot field in the database.
+	FieldSubscriptionLimitsSnapshot = "subscription_limits_snapshot"
+	// FieldSubscriptionDailyLimitUsd holds the string denoting the subscription_daily_limit_usd field in the database.
+	FieldSubscriptionDailyLimitUsd = "subscription_daily_limit_usd"
+	// FieldSubscriptionWeeklyLimitUsd holds the string denoting the subscription_weekly_limit_usd field in the database.
+	FieldSubscriptionWeeklyLimitUsd = "subscription_weekly_limit_usd"
+	// FieldSubscriptionMonthlyLimitUsd holds the string denoting the subscription_monthly_limit_usd field in the database.
+	FieldSubscriptionMonthlyLimitUsd = "subscription_monthly_limit_usd"
 	// FieldSubscriptionDays holds the string denoting the subscription_days field in the database.
 	FieldSubscriptionDays = "subscription_days"
 	// FieldProviderInstanceID holds the string denoting the provider_instance_id field in the database.
@@ -128,6 +140,12 @@ var Columns = []string{
 	FieldOrderType,
 	FieldPlanID,
 	FieldSubscriptionGroupID,
+	FieldSubscriptionID,
+	FieldSubscriptionGroupIds,
+	FieldSubscriptionLimitsSnapshot,
+	FieldSubscriptionDailyLimitUsd,
+	FieldSubscriptionWeeklyLimitUsd,
+	FieldSubscriptionMonthlyLimitUsd,
 	FieldSubscriptionDays,
 	FieldProviderInstanceID,
 	FieldProviderKey,
@@ -185,6 +203,10 @@ var (
 	DefaultOrderType string
 	// OrderTypeValidator is a validator for the "order_type" field. It is called by the builders before save.
 	OrderTypeValidator func(string) error
+	// DefaultSubscriptionGroupIds holds the default value on creation for the "subscription_group_ids" field.
+	DefaultSubscriptionGroupIds []int64
+	// DefaultSubscriptionLimitsSnapshot holds the default value on creation for the "subscription_limits_snapshot" field.
+	DefaultSubscriptionLimitsSnapshot bool
 	// ProviderInstanceIDValidator is a validator for the "provider_instance_id" field. It is called by the builders before save.
 	ProviderInstanceIDValidator func(string) error
 	// ProviderKeyValidator is a validator for the "provider_key" field. It is called by the builders before save.
@@ -307,6 +329,31 @@ func ByPlanID(opts ...sql.OrderTermOption) OrderOption {
 // BySubscriptionGroupID orders the results by the subscription_group_id field.
 func BySubscriptionGroupID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldSubscriptionGroupID, opts...).ToFunc()
+}
+
+// BySubscriptionID orders the results by the subscription_id field.
+func BySubscriptionID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSubscriptionID, opts...).ToFunc()
+}
+
+// BySubscriptionLimitsSnapshot orders the results by the subscription_limits_snapshot field.
+func BySubscriptionLimitsSnapshot(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSubscriptionLimitsSnapshot, opts...).ToFunc()
+}
+
+// BySubscriptionDailyLimitUsd orders the results by the subscription_daily_limit_usd field.
+func BySubscriptionDailyLimitUsd(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSubscriptionDailyLimitUsd, opts...).ToFunc()
+}
+
+// BySubscriptionWeeklyLimitUsd orders the results by the subscription_weekly_limit_usd field.
+func BySubscriptionWeeklyLimitUsd(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSubscriptionWeeklyLimitUsd, opts...).ToFunc()
+}
+
+// BySubscriptionMonthlyLimitUsd orders the results by the subscription_monthly_limit_usd field.
+func BySubscriptionMonthlyLimitUsd(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSubscriptionMonthlyLimitUsd, opts...).ToFunc()
 }
 
 // BySubscriptionDays orders the results by the subscription_days field.

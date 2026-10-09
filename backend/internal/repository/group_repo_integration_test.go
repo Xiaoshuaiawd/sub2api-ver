@@ -266,6 +266,21 @@ func (s *GroupRepoSuite) TestDeleteCascadeIfEmptyRejectsGroupWithNonDeletedAccou
 	s.Require().Equal(1, bindings)
 }
 
+func (s *GroupRepoSuite) TestDeleteCascadeProtectsActiveSharedSubscription() {
+	user := mustCreateUser(s.T(), s.tx.Client(), &service.User{Email: "bundle-delete@example.com", PasswordHash: "hash"})
+	first := &service.Group{Name: "bundle-delete-primary", Platform: service.PlatformOpenAI, RateMultiplier: 1, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeSubscription}
+	second := &service.Group{Name: "bundle-delete-secondary", Platform: service.PlatformOpenAI, RateMultiplier: 1, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeSubscription}
+	s.Require().NoError(s.repo.Create(s.ctx, first))
+	s.Require().NoError(s.repo.Create(s.ctx, second))
+	mustCreateSubscription(s.T(), s.tx.Client(), &service.UserSubscription{UserID: user.ID, GroupID: first.ID, GroupIDs: []int64{first.ID, second.ID}, Status: service.SubscriptionStatusActive})
+	_, err := s.repo.DeleteCascade(s.ctx, first.ID)
+	s.Require().ErrorIs(err, service.ErrGroupHasSharedSubscriptions)
+	_, err = s.repo.GetByID(s.ctx, first.ID)
+	s.Require().NoError(err)
+	_, err = s.repo.DeleteCascade(s.ctx, second.ID)
+	s.Require().ErrorIs(err, service.ErrGroupHasSharedSubscriptions)
+}
+
 func (s *GroupRepoSuite) TestDeleteCascadeIfEmptyDeletesEmptyGroup() {
 	group := &service.Group{Name: "guarded-empty", Platform: service.PlatformAnthropic, RateMultiplier: 1, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard}
 	s.Require().NoError(s.repo.Create(s.ctx, group))

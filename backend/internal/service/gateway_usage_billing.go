@@ -298,6 +298,9 @@ func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsage
 		AccountType:        p.Account.Type,
 		RequestPayloadHash: strings.TrimSpace(p.RequestPayloadHash),
 	}
+	if p.APIKey.GroupID != nil {
+		cmd.SubscriptionGroupID = *p.APIKey.GroupID
+	}
 	if usageLog != nil {
 		cmd.Model = usageLog.Model
 		cmd.BillingType = usageLog.BillingType
@@ -453,7 +456,13 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 	}
 	if p.IsSubscriptionBill {
 		if p.Cost.ActualCost > 0 && p.User != nil && p.APIKey != nil && p.APIKey.GroupID != nil && deps.billingCacheService != nil {
-			if result == nil || !result.SubscriptionWindowReset {
+			if p.Subscription != nil && len(p.Subscription.AccessibleGroupIDs()) > 1 {
+				for _, groupID := range p.Subscription.AccessibleGroupIDs() {
+					if err := deps.billingCacheService.InvalidateSubscription(ctx, p.User.ID, groupID); err != nil {
+						logger.LegacyPrintf("service.gateway", "Warning: invalidate shared subscription cache failed user=%d group=%d: %v", p.User.ID, groupID, err)
+					}
+				}
+			} else if result == nil || !result.SubscriptionWindowReset {
 				deps.billingCacheService.QueueUpdateSubscriptionUsage(p.User.ID, *p.APIKey.GroupID, p.Cost.ActualCost)
 			}
 		}

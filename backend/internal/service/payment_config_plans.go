@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
@@ -71,6 +72,32 @@ func validatePlanPatch(req UpdatePlanRequest) error {
 	return nil
 }
 
+func normalizeSharedPlanLimit(limit *float64) (*float64, error) {
+	if limit == nil || *limit == 0 {
+		return nil, nil
+	}
+	if math.IsNaN(*limit) || math.IsInf(*limit, 0) || *limit < 0 {
+		return nil, infraerrors.BadRequest("PLAN_LIMIT_INVALID", "shared limit must be a finite non-negative amount")
+	}
+	return limit, nil
+}
+
+func (s *PaymentConfigService) validatePlanGroups(ctx context.Context, ids []int64) error {
+	groups, err := s.entClient.Group.Query().Where(group.IDIn(ids...)).All(ctx)
+	if err != nil {
+		return err
+	}
+	if len(groups) != len(ids) {
+		return infraerrors.BadRequest("PLAN_GROUP_INVALID", "one or more subscription groups do not exist")
+	}
+	for _, g := range groups {
+		if !isSubscriptionBillingType(g.SubscriptionType) || g.Status != StatusActive {
+			return infraerrors.BadRequest("PLAN_GROUP_INVALID", "all selected groups must be active subscription groups")
+		}
+	}
+	return nil
+}
+
 // --- Plan CRUD ---
 
 // PlanGroupInfo holds the group details needed for subscription plan display.
@@ -88,14 +115,56 @@ type PlanGroupInfo struct {
 	ModelScopes        []string `json:"supported_model_scopes"`
 }
 
+type PlanGroupSummary struct {
+	ID             int64   `json:"id"`
+	Name           string  `json:"name"`
+	Platform       string  `json:"platform"`
+	RateMultiplier float64 `json:"rate_multiplier"`
+}
+
+func PlanGroupsForResponse(plan *dbent.SubscriptionPlan, groupInfo map[int64]PlanGroupInfo) []PlanGroupSummary {
+	if plan == nil {
+		return nil
+	}
+	ids := plan.GroupIds
+	if len(ids) == 0 {
+		ids = []int64{plan.GroupID}
+	}
+	result := make([]PlanGroupSummary, 0, len(ids))
+	for _, id := range ids {
+		info := groupInfo[id]
+		if info.Name == "" {
+			info.Name = fmt.Sprintf("#%d", id)
+		}
+		result = append(result, PlanGroupSummary{ID: id, Name: info.Name, Platform: info.Platform, RateMultiplier: info.RateMultiplier})
+	}
+	return result
+}
+
+func PlanLimitsForResponse(plan *dbent.SubscriptionPlan, primary PlanGroupInfo) (daily, weekly, monthly *float64) {
+	if plan == nil {
+		return nil, nil, nil
+	}
+	if len(plan.GroupIds) == 0 {
+		return primary.DailyLimitUSD, primary.WeeklyLimitUSD, primary.MonthlyLimitUSD
+	}
+	return plan.DailyLimitUsd, plan.WeeklyLimitUsd, plan.MonthlyLimitUsd
+}
+
 // GetGroupInfoMap returns a map of group_id → PlanGroupInfo for the given plans.
 func (s *PaymentConfigService) GetGroupInfoMap(ctx context.Context, plans []*dbent.SubscriptionPlan) map[int64]PlanGroupInfo {
 	ids := make([]int64, 0, len(plans))
 	seen := make(map[int64]bool)
 	for _, p := range plans {
-		if !seen[p.GroupID] {
-			seen[p.GroupID] = true
-			ids = append(ids, p.GroupID)
+		groupIDs := p.GroupIds
+		if len(groupIDs) == 0 {
+			groupIDs = []int64{p.GroupID}
+		}
+		for _, id := range groupIDs {
+			if !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
 		}
 	}
 	if len(ids) == 0 {
@@ -133,7 +202,43 @@ func (s *PaymentConfigService) ListPlansForSale(ctx context.Context) ([]*dbent.S
 }
 
 func (s *PaymentConfigService) CreatePlan(ctx context.Context, req CreatePlanRequest) (*dbent.SubscriptionPlan, error) {
-	if err := validatePlanRequired(req.Name, req.GroupID, req.Price, req.ValidityDays, req.ValidityUnit, req.OriginalPrice); err != nil {
+	groupIDs, err := normalizePlanGroupIDs(req.GroupID, req.GroupIDs)
+	if err != nil {
+		return nil, infraerrors.BadRequest("PLAN_GROUP_REQUIRED", err.Error())
+	}
+	if err := validatePlanRequired(req.Name, groupIDs[0], req.Price, req.ValidityDays, req.ValidityUnit, req.OriginalPrice); err != nil {
+		return nil, err
+	}
+	if err := s.validatePlanGroups(ctx, groupIDs); err != nil {
+		return nil, err
+	}
+	// Legacy single-group clients did not send plan caps; preserve their
+	// previous group-limit behavior when creating a plan.
+	if req.GroupIDs == nil {
+		g, err := s.entClient.Group.Get(ctx, groupIDs[0])
+		if err != nil {
+			return nil, err
+		}
+		if req.DailyLimitUSD == nil {
+			req.DailyLimitUSD = g.DailyLimitUsd
+		}
+		if req.WeeklyLimitUSD == nil {
+			req.WeeklyLimitUSD = g.WeeklyLimitUsd
+		}
+		if req.MonthlyLimitUSD == nil {
+			req.MonthlyLimitUSD = g.MonthlyLimitUsd
+		}
+	}
+	daily, err := normalizeSharedPlanLimit(req.DailyLimitUSD)
+	if err != nil {
+		return nil, err
+	}
+	weekly, err := normalizeSharedPlanLimit(req.WeeklyLimitUSD)
+	if err != nil {
+		return nil, err
+	}
+	monthly, err := normalizeSharedPlanLimit(req.MonthlyLimitUSD)
+	if err != nil {
 		return nil, err
 	}
 	currency, err := normalizePlanCurrency(req.Currency)
@@ -141,7 +246,9 @@ func (s *PaymentConfigService) CreatePlan(ctx context.Context, req CreatePlanReq
 		return nil, err
 	}
 	b := s.entClient.SubscriptionPlan.Create().
-		SetGroupID(req.GroupID).SetName(req.Name).SetDescription(req.Description).
+		SetGroupID(groupIDs[0]).SetGroupIds(groupIDs).
+		SetNillableDailyLimitUsd(daily).SetNillableWeeklyLimitUsd(weekly).SetNillableMonthlyLimitUsd(monthly).
+		SetName(req.Name).SetDescription(req.Description).
 		SetPrice(req.Price).SetCurrency(currency).SetValidityDays(req.ValidityDays).SetValidityUnit(req.ValidityUnit).
 		SetFeatures(req.Features).SetProductName(req.ProductName).
 		SetForSale(req.ForSale).SetSortOrder(req.SortOrder)
@@ -159,8 +266,97 @@ func (s *PaymentConfigService) UpdatePlan(ctx context.Context, id int64, req Upd
 		return nil, err
 	}
 	u := s.entClient.SubscriptionPlan.UpdateOneID(id)
-	if req.GroupID != nil {
-		u.SetGroupID(*req.GroupID)
+	if req.GroupID != nil || req.GroupIDs != nil {
+		primary := int64(0)
+		if req.GroupID != nil {
+			primary = *req.GroupID
+		}
+		groupIDs, err := normalizePlanGroupIDs(primary, req.GroupIDs)
+		if err != nil {
+			return nil, infraerrors.BadRequest("PLAN_GROUP_REQUIRED", err.Error())
+		}
+		if req.GroupIDs != nil {
+			current, err := s.entClient.SubscriptionPlan.Get(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			for _, groupID := range groupIDs {
+				if groupID == current.GroupID {
+					ordered := []int64{groupID}
+					for _, candidate := range groupIDs {
+						if candidate != groupID {
+							ordered = append(ordered, candidate)
+						}
+					}
+					groupIDs = ordered
+					break
+				}
+			}
+		}
+		if err := s.validatePlanGroups(ctx, groupIDs); err != nil {
+			return nil, err
+		}
+		u.SetGroupID(groupIDs[0]).SetGroupIds(groupIDs)
+		if req.GroupIDs == nil {
+			g, err := s.entClient.Group.Get(ctx, groupIDs[0])
+			if err != nil {
+				return nil, err
+			}
+			if req.DailyLimitUSD == nil {
+				if g.DailyLimitUsd == nil {
+					u.ClearDailyLimitUsd()
+				} else {
+					req.DailyLimitUSD = g.DailyLimitUsd
+				}
+			}
+			if req.WeeklyLimitUSD == nil {
+				if g.WeeklyLimitUsd == nil {
+					u.ClearWeeklyLimitUsd()
+				} else {
+					req.WeeklyLimitUSD = g.WeeklyLimitUsd
+				}
+			}
+			if req.MonthlyLimitUSD == nil {
+				if g.MonthlyLimitUsd == nil {
+					u.ClearMonthlyLimitUsd()
+				} else {
+					req.MonthlyLimitUSD = g.MonthlyLimitUsd
+				}
+			}
+		}
+	}
+	if req.DailyLimitUSD != nil {
+		limit, err := normalizeSharedPlanLimit(req.DailyLimitUSD)
+		if err != nil {
+			return nil, err
+		}
+		if limit == nil {
+			u.ClearDailyLimitUsd()
+		} else {
+			u.SetDailyLimitUsd(*limit)
+		}
+	}
+	if req.WeeklyLimitUSD != nil {
+		limit, err := normalizeSharedPlanLimit(req.WeeklyLimitUSD)
+		if err != nil {
+			return nil, err
+		}
+		if limit == nil {
+			u.ClearWeeklyLimitUsd()
+		} else {
+			u.SetWeeklyLimitUsd(*limit)
+		}
+	}
+	if req.MonthlyLimitUSD != nil {
+		limit, err := normalizeSharedPlanLimit(req.MonthlyLimitUSD)
+		if err != nil {
+			return nil, err
+		}
+		if limit == nil {
+			u.ClearMonthlyLimitUsd()
+		} else {
+			u.SetMonthlyLimitUsd(*limit)
+		}
 	}
 	if req.Name != nil {
 		u.SetName(*req.Name)

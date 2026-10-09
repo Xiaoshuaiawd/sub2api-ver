@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"entgo.io/ent/dialect/sql"
+	"entgo.io/ent/dialect/sql/sqljson"
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
@@ -18,6 +20,12 @@ type userSubscriptionRepository struct {
 	client *dbent.Client
 }
 
+func subscriptionGroupPredicate(groupID int64) predicate.UserSubscription {
+	return usersubscription.Or(usersubscription.GroupIDEQ(groupID), func(selector *sql.Selector) {
+		selector.Where(sqljson.ValueContains(usersubscription.FieldGroupIds, []int64{groupID}))
+	})
+}
+
 func NewUserSubscriptionRepository(client *dbent.Client) service.UserSubscriptionRepository {
 	return &userSubscriptionRepository{client: client}
 }
@@ -31,6 +39,11 @@ func (r *userSubscriptionRepository) Create(ctx context.Context, sub *service.Us
 	builder := client.UserSubscription.Create().
 		SetUserID(sub.UserID).
 		SetGroupID(sub.GroupID).
+		SetGroupIds(sub.AccessibleGroupIDs()).
+		SetNillablePlanID(sub.PlanID).
+		SetNillableDailyLimitUsd(sub.DailyLimitUSD).
+		SetNillableWeeklyLimitUsd(sub.WeeklyLimitUSD).
+		SetNillableMonthlyLimitUsd(sub.MonthlyLimitUSD).
 		SetExpiresAt(sub.ExpiresAt).
 		SetNillableDailyWindowStart(sub.DailyWindowStart).
 		SetNillableWeeklyWindowStart(sub.WeeklyWindowStart).
@@ -119,12 +132,13 @@ func (r *userSubscriptionRepository) GetActiveByUserIDAndGroupID(ctx context.Con
 	m, err := client.UserSubscription.Query().
 		Where(
 			usersubscription.UserIDEQ(userID),
-			usersubscription.GroupIDEQ(groupID),
+			subscriptionGroupPredicate(groupID),
 			usersubscription.StatusEQ(service.SubscriptionStatusActive),
 			usersubscription.ExpiresAtGT(time.Now()),
 		).
 		WithGroup().
-		Only(ctx)
+		Order(usersubscription.ByStartsAt(sql.OrderDesc()), usersubscription.ByID(sql.OrderDesc())).
+		First(ctx)
 	if err != nil {
 		return nil, translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
 	}
@@ -140,6 +154,7 @@ func (r *userSubscriptionRepository) Update(ctx context.Context, sub *service.Us
 	builder := client.UserSubscription.UpdateOneID(sub.ID).
 		SetUserID(sub.UserID).
 		SetGroupID(sub.GroupID).
+		SetGroupIds(sub.AccessibleGroupIDs()).
 		SetStartsAt(sub.StartsAt).
 		SetExpiresAt(sub.ExpiresAt).
 		SetStatus(sub.Status).
@@ -152,6 +167,26 @@ func (r *userSubscriptionRepository) Update(ctx context.Context, sub *service.Us
 		SetNillableAssignedBy(sub.AssignedBy).
 		SetAssignedAt(sub.AssignedAt).
 		SetNotes(sub.Notes)
+	if sub.PlanID != nil {
+		builder.SetPlanID(*sub.PlanID)
+	} else {
+		builder.ClearPlanID()
+	}
+	if sub.DailyLimitUSD != nil {
+		builder.SetDailyLimitUsd(*sub.DailyLimitUSD)
+	} else {
+		builder.ClearDailyLimitUsd()
+	}
+	if sub.WeeklyLimitUSD != nil {
+		builder.SetWeeklyLimitUsd(*sub.WeeklyLimitUSD)
+	} else {
+		builder.ClearWeeklyLimitUsd()
+	}
+	if sub.MonthlyLimitUSD != nil {
+		builder.SetMonthlyLimitUsd(*sub.MonthlyLimitUSD)
+	} else {
+		builder.ClearMonthlyLimitUsd()
+	}
 
 	updated, err := builder.Save(ctx)
 	if err == nil {
@@ -214,7 +249,7 @@ func (r *userSubscriptionRepository) ListActiveByUserID(ctx context.Context, use
 
 func (r *userSubscriptionRepository) ListByGroupID(ctx context.Context, groupID int64, params pagination.PaginationParams) ([]service.UserSubscription, *pagination.PaginationResult, error) {
 	client := clientFromContext(ctx, r.client)
-	q := client.UserSubscription.Query().Where(usersubscription.GroupIDEQ(groupID))
+	q := client.UserSubscription.Query().Where(subscriptionGroupPredicate(groupID))
 
 	total, err := q.Clone().Count(ctx)
 	if err != nil {
@@ -341,7 +376,8 @@ func (r *userSubscriptionRepository) ExistsByUserIDAndGroupID(ctx context.Contex
 }
 
 func (r *userSubscriptionRepository) ExistsActiveByUserIDAndGroupID(ctx context.Context, userID, groupID int64) (bool, error) {
-	return r.ExistsByUserIDAndGroupID(ctx, userID, groupID)
+	client := clientFromContext(ctx, r.client)
+	return client.UserSubscription.Query().Where(usersubscription.UserIDEQ(userID), subscriptionGroupPredicate(groupID)).Exist(ctx)
 }
 
 func (r *userSubscriptionRepository) ExtendExpiry(ctx context.Context, subscriptionID int64, newExpiresAt time.Time) error {
@@ -532,7 +568,7 @@ func (r *userSubscriptionRepository) ListExpired(ctx context.Context) ([]service
 
 func (r *userSubscriptionRepository) CountByGroupID(ctx context.Context, groupID int64) (int64, error) {
 	client := clientFromContext(ctx, r.client)
-	count, err := client.UserSubscription.Query().Where(usersubscription.GroupIDEQ(groupID)).Count(ctx)
+	count, err := client.UserSubscription.Query().Where(subscriptionGroupPredicate(groupID)).Count(ctx)
 	return int64(count), err
 }
 
@@ -540,7 +576,7 @@ func (r *userSubscriptionRepository) CountActiveByGroupID(ctx context.Context, g
 	client := clientFromContext(ctx, r.client)
 	count, err := client.UserSubscription.Query().
 		Where(
-			usersubscription.GroupIDEQ(groupID),
+			subscriptionGroupPredicate(groupID),
 			usersubscription.StatusEQ(service.SubscriptionStatusActive),
 			usersubscription.ExpiresAtGT(time.Now()),
 		).
@@ -644,6 +680,11 @@ func userSubscriptionEntityToServiceWithStatusMapping(m *dbent.UserSubscription,
 		ID:                 m.ID,
 		UserID:             m.UserID,
 		GroupID:            m.GroupID,
+		GroupIDs:           m.GroupIds,
+		PlanID:             m.PlanID,
+		DailyLimitUSD:      m.DailyLimitUsd,
+		WeeklyLimitUSD:     m.WeeklyLimitUsd,
+		MonthlyLimitUSD:    m.MonthlyLimitUsd,
 		StartsAt:           m.StartsAt,
 		ExpiresAt:          m.ExpiresAt,
 		Status:             status,

@@ -14,18 +14,13 @@
         <template #cell-name="{ value, row }">
           <span class="text-sm font-medium" :class="getPlanNameClass(row.group_id)">{{ value }}</span>
         </template>
-        <template #cell-group_id="{ value }">
-          <span v-if="isGroupMissing(value)" class="text-sm">
-            <span class="text-gray-400">#{{ value }}</span>
-            <span class="ml-1 badge badge-danger">{{ t('payment.admin.groupMissing') }}</span>
-          </span>
-          <GroupBadge
-            v-else-if="getGroup(value)"
-            :name="getGroup(value)!.name"
-            :platform="getGroup(value)!.platform"
-            :rate-multiplier="getGroup(value)!.rate_multiplier"
-          />
-          <span v-else class="text-sm text-gray-400">-</span>
+        <template #cell-group_id="{ value, row }">
+          <div class="flex max-w-sm flex-wrap gap-1">
+            <template v-for="id in (row.group_ids?.length ? row.group_ids : [value])" :key="id">
+              <GroupBadge v-if="getGroup(id)" :name="getGroup(id)!.name" :platform="getGroup(id)!.platform" :rate-multiplier="getGroup(id)!.rate_multiplier" />
+              <span v-else class="badge badge-danger">#{{ id }} {{ t('payment.admin.groupMissing') }}</span>
+            </template>
+          </div>
         </template>
         <template #cell-price="{ value, row }">
           <div class="text-sm">
@@ -108,7 +103,7 @@ const paymentConfig = ref<AdminPaymentConfig | null>(null)
 
 async function loadGroups() {
   try {
-    groups.value = await adminAPI.groups.getAll()
+    groups.value = await adminAPI.groups.getAllIncludingInactive()
   } catch { /* ignore */ }
 }
 
@@ -121,10 +116,6 @@ async function loadPaymentConfig() {
 
 function getGroup(id: number): AdminGroup | undefined {
   return groups.value.find(g => g.id === id)
-}
-
-function isGroupMissing(id: number): boolean {
-  return id > 0 && !groups.value.find(g => g.id === id)
 }
 
 function getPlanNameClass(groupId: number): string {

@@ -52,6 +52,18 @@ const mountPlanCard = (groupPlatform: string, overrides: Partial<SubscriptionPla
   });
 
 describe("SubscriptionPlanCard", () => {
+  it("shows every group covered by a shared plan", () => {
+    const wrapper = mountPlanCard("openai", {
+      group_ids: [10, 11],
+      groups: [
+        { id: 10, name: "OpenAI", platform: "openai", rate_multiplier: 1 },
+        { id: 11, name: "Gemini", platform: "gemini", rate_multiplier: 1.2 },
+      ],
+    })
+    expect(wrapper.text()).toContain("OpenAI")
+    expect(wrapper.text()).toContain("Gemini")
+    expect(wrapper.text()).toContain("payment.planCard.variesByGroup")
+  })
   it("does not show Antigravity model scopes for OpenAI plans", () => {
     const text = mountPlanCard("openai").text();
 

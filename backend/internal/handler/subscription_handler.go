@@ -13,6 +13,7 @@ import (
 type SubscriptionSummaryItem struct {
 	ID              int64   `json:"id"`
 	GroupID         int64   `json:"group_id"`
+	GroupIDs        []int64 `json:"group_ids"`
 	GroupName       string  `json:"group_name"`
 	Status          string  `json:"status"`
 	DailyUsedUSD    float64 `json:"daily_used_usd,omitempty"`
@@ -142,6 +143,7 @@ func (h *SubscriptionHandler) GetSummary(c *gin.Context) {
 		item := SubscriptionSummaryItem{
 			ID:             sub.ID,
 			GroupID:        sub.GroupID,
+			GroupIDs:       sub.AccessibleGroupIDs(),
 			Status:         sub.Status,
 			DailyUsedUSD:   sub.DailyUsageUSD,
 			WeeklyUsedUSD:  sub.WeeklyUsageUSD,
@@ -151,15 +153,15 @@ func (h *SubscriptionHandler) GetSummary(c *gin.Context) {
 		// Add group info if preloaded
 		if sub.Group != nil {
 			item.GroupName = sub.Group.Name
-			if sub.Group.DailyLimitUSD != nil {
-				item.DailyLimitUSD = *sub.Group.DailyLimitUSD
-			}
-			if sub.Group.WeeklyLimitUSD != nil {
-				item.WeeklyLimitUSD = *sub.Group.WeeklyLimitUSD
-			}
-			if sub.Group.MonthlyLimitUSD != nil {
-				item.MonthlyLimitUSD = *sub.Group.MonthlyLimitUSD
-			}
+		}
+		if limit := sub.DailyLimit(sub.Group); limit != nil {
+			item.DailyLimitUSD = *limit
+		}
+		if limit := sub.WeeklyLimit(sub.Group); limit != nil {
+			item.WeeklyLimitUSD = *limit
+		}
+		if limit := sub.MonthlyLimit(sub.Group); limit != nil {
+			item.MonthlyLimitUSD = *limit
 		}
 
 		// Format expiration time

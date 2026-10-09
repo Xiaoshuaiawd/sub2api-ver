@@ -2107,6 +2107,11 @@ export interface UserSubscription {
   id: number
   user_id: number
   group_id: number
+  group_ids?: number[]
+  plan_id?: number | null
+  daily_limit_usd?: number | null
+  weekly_limit_usd?: number | null
+  monthly_limit_usd?: number | null
   status: 'active' | 'expired' | 'revoked' | 'suspended'
   starts_at: string
   daily_usage_usd: number

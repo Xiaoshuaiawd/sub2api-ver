@@ -1118,6 +1118,38 @@ func assertPaymentSubscriptionExpiry(t *testing.T, repo *subscriptionUserSubRepo
 	require.True(t, sub.ExpiresAt.Equal(expected), "subscription expiry changed from %s to %s", expected, sub.ExpiresAt)
 }
 
+func TestExecuteSubscriptionFulfillmentGrantsSharedGroupBundleOnce(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	ensurePaymentAuditOrderActionUniqueIndex(t, ctx, client)
+	order := createPaymentFulfillmentSubscriptionOrder(t, ctx, client, OrderStatusPaid, time.Now())
+	limit := 10.0
+	_, err := client.PaymentOrder.UpdateOneID(order.ID).
+		SetSubscriptionGroupIds([]int64{7, 8}).
+		SetSubscriptionLimitsSnapshot(true).
+		SetSubscriptionDailyLimitUsd(limit).
+		Save(ctx)
+	require.NoError(t, err)
+	groups := &subscriptionGroupRepoStub{groups: map[int64]*Group{
+		7: {ID: 7, Status: StatusActive, SubscriptionType: SubscriptionTypeSubscription},
+		8: {ID: 8, Status: StatusActive, SubscriptionType: SubscriptionTypeSubscriptionBalance},
+	}}
+	subRepo := newSubscriptionUserSubRepoStub()
+	subSvc := NewSubscriptionService(groups, subRepo, nil, nil, nil)
+	t.Cleanup(subSvc.Stop)
+	svc := &PaymentService{entClient: client, groupRepo: groups, subscriptionSvc: subSvc}
+	require.NoError(t, svc.ExecuteSubscriptionFulfillment(ctx, order.ID))
+	require.NoError(t, svc.ExecuteSubscriptionFulfillment(ctx, order.ID))
+	sub, err := subRepo.GetByUserIDAndGroupID(ctx, order.UserID, 7)
+	require.NoError(t, err)
+	require.Equal(t, []int64{7, 8}, sub.AccessibleGroupIDs())
+	require.Equal(t, &limit, sub.DailyLimitUSD)
+	require.Equal(t, 1, subRepo.createCalls)
+	completed, err := client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, err)
+	require.Equal(t, &sub.ID, completed.SubscriptionID)
+}
+
 func TestExecuteSubscriptionFulfillmentAppliesAffiliateRebate(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentConfigServiceTestClient(t)

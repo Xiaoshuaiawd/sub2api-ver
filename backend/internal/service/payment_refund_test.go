@@ -17,6 +17,55 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestPrepareSubscriptionRefundUsesOrderSubscriptionID(t *testing.T) {
+	repo := newSubscriptionUserSubRepoStub()
+	repo.seed(&UserSubscription{ID: 11, UserID: 1, GroupID: 7, Status: SubscriptionStatusActive, ExpiresAt: time.Now().Add(24 * time.Hour)})
+	subSvc := NewSubscriptionService(nil, repo, nil, nil, nil)
+	t.Cleanup(subSvc.Stop)
+	groupID, subscriptionID, days := int64(7), int64(11), 30
+	order := &dbent.PaymentOrder{UserID: 1, OrderType: payment.OrderTypeSubscription, SubscriptionGroupID: &groupID, SubscriptionID: &subscriptionID, SubscriptionDays: &days}
+	plan := &RefundPlan{}
+	svc := &PaymentService{subscriptionSvc: subSvc}
+	require.Nil(t, svc.prepDeduct(context.Background(), order, plan, false))
+	require.Equal(t, subscriptionID, plan.SubscriptionID)
+}
+
+type overlapRefundSubRepo struct {
+	*subscriptionUserSubRepoStub
+	newer *UserSubscription
+}
+
+func (r *overlapRefundSubRepo) GetActiveByUserIDAndGroupID(context.Context, int64, int64) (*UserSubscription, error) {
+	return r.newer, nil
+}
+
+func TestHistoricalRefundFindsOriginalSubscriptionByAssignmentNote(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	user, err := client.User.Create().SetEmail("refund-overlap@example.com").SetPasswordHash("hash").Save(ctx)
+	require.NoError(t, err)
+	first, err := client.Group.Create().SetName("refund-original").Save(ctx)
+	require.NoError(t, err)
+	second, err := client.Group.Create().SetName("refund-new-bundle").Save(ctx)
+	require.NoError(t, err)
+	now := time.Now()
+	oldRow, err := client.UserSubscription.Create().SetUserID(user.ID).SetGroupID(first.ID).SetStartsAt(now.Add(-time.Hour)).SetExpiresAt(now.Add(time.Hour)).SetAssignedAt(now).SetStatus(SubscriptionStatusActive).SetNotes("payment order 55").Save(ctx)
+	require.NoError(t, err)
+	newRow, err := client.UserSubscription.Create().SetUserID(user.ID).SetGroupID(second.ID).SetGroupIds([]int64{first.ID, second.ID}).SetStartsAt(now).SetExpiresAt(now.Add(time.Hour)).SetAssignedAt(now).SetStatus(SubscriptionStatusActive).SetNotes("payment order 99").Save(ctx)
+	require.NoError(t, err)
+	base := newSubscriptionUserSubRepoStub()
+	base.seed(&UserSubscription{ID: oldRow.ID, UserID: user.ID, GroupID: first.ID, Status: SubscriptionStatusActive, ExpiresAt: now.Add(time.Hour)})
+	newer := &UserSubscription{ID: newRow.ID, UserID: user.ID, GroupID: second.ID, GroupIDs: []int64{first.ID, second.ID}, Status: SubscriptionStatusActive, ExpiresAt: now.Add(time.Hour)}
+	base.seed(newer)
+	subSvc := NewSubscriptionService(nil, &overlapRefundSubRepo{subscriptionUserSubRepoStub: base, newer: newer}, nil, nil, nil)
+	t.Cleanup(subSvc.Stop)
+	svc := &PaymentService{entClient: client, subscriptionSvc: subSvc}
+	order := &dbent.PaymentOrder{ID: 55, UserID: user.ID, SubscriptionGroupID: &first.ID}
+	got, err := svc.subscriptionForRefund(ctx, order)
+	require.NoError(t, err)
+	require.Equal(t, oldRow.ID, got.ID)
+}
+
 func TestValidateRefundRequestRejectsLegacyGuessedProviderInstance(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentConfigServiceTestClient(t)

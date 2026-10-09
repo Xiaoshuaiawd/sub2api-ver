@@ -20,7 +20,7 @@ vi.mock('@/api/admin/payment', () => ({
 vi.mock('@/api/admin', () => ({
   default: {
     groups: {
-      getAll: getGroups,
+      getAllIncludingInactive: getGroups,
     },
   },
 }))

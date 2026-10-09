@@ -111,6 +111,27 @@ func TestGetUserGroupVisibilityIncludesActiveSubscriptions(t *testing.T) {
 	}
 }
 
+func TestGetAvailableGroupsIncludesEverySharedPlanGroup(t *testing.T) {
+	now := time.Now()
+	svc := &APIKeyService{
+		userRepo: &visibilityUserRepo{user: &User{ID: 1}},
+		userSubRepo: &visibilitySubRepo{subscriptions: []UserSubscription{{
+			UserID: 1, GroupID: 42, GroupIDs: []int64{42, 43}, Status: SubscriptionStatusActive, ExpiresAt: now.Add(time.Hour),
+		}}},
+		groupRepo: &visibilityGroupRepo{groups: []Group{
+			{ID: 42, IsExclusive: true, SubscriptionType: SubscriptionTypeSubscription},
+			{ID: 43, IsExclusive: true, SubscriptionType: SubscriptionTypeSubscription},
+		}},
+	}
+	available, err := svc.GetAvailableGroups(context.Background(), 1)
+	require.NoError(t, err)
+	require.Len(t, available, 2)
+	visible, _, err := svc.GetUserGroupVisibility(context.Background(), 1)
+	require.NoError(t, err)
+	require.Contains(t, visible, int64(42))
+	require.Contains(t, visible, int64(43))
+}
+
 func TestGetUserGroupVisibilityEmptyAndErrors(t *testing.T) {
 	failure := errors.New("repository unavailable")
 	for _, tc := range []struct {

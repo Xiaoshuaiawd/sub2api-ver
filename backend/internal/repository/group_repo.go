@@ -895,6 +895,20 @@ func (r *groupRepository) deleteCascade(ctx context.Context, id int64, requireEm
 	if lockedID == 0 {
 		return nil, service.ErrGroupNotFound
 	}
+	if subscriptionType == service.SubscriptionTypeSubscription || subscriptionType == service.SubscriptionTypeSubscriptionBalance {
+		var hasSharedSubscriptions bool
+		if err := scanSingleRow(ctx, exec, `SELECT EXISTS (
+			SELECT 1 FROM user_subscriptions
+			WHERE (group_id = $1 OR group_ids @> jsonb_build_array($1))
+			  AND deleted_at IS NULL AND status = 'active'
+			  AND expires_at > NOW() AND jsonb_array_length(group_ids) > 1
+		)`, []any{id}, &hasSharedSubscriptions); err != nil {
+			return nil, err
+		}
+		if hasSharedSubscriptions {
+			return nil, service.ErrGroupHasSharedSubscriptions
+		}
+	}
 	if requireEmpty {
 		var hasAccount bool
 		if err := scanSingleRow(ctx, exec, `SELECT EXISTS (

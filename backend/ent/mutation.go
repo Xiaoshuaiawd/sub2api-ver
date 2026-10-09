@@ -30101,62 +30101,73 @@ func (m *PaymentAuditLogMutation) ResetEdge(name string) error {
 // PaymentOrderMutation represents an operation that mutates the PaymentOrder nodes in the graph.
 type PaymentOrderMutation struct {
 	config
-	op                       Op
-	typ                      string
-	id                       *int64
-	user_email               *string
-	user_name                *string
-	user_notes               *string
-	amount                   *float64
-	addamount                *float64
-	pay_amount               *float64
-	addpay_amount            *float64
-	fee_rate                 *float64
-	addfee_rate              *float64
-	bonus_amount             *float64
-	addbonus_amount          *float64
-	recharge_code            *string
-	out_trade_no             *string
-	payment_type             *string
-	payment_trade_no         *string
-	pay_url                  *string
-	qr_code                  *string
-	qr_code_img              *string
-	order_type               *string
-	plan_id                  *int64
-	addplan_id               *int64
-	subscription_group_id    *int64
-	addsubscription_group_id *int64
-	subscription_days        *int
-	addsubscription_days     *int
-	provider_instance_id     *string
-	provider_key             *string
-	provider_snapshot        *map[string]interface{}
-	status                   *string
-	refund_amount            *float64
-	addrefund_amount         *float64
-	refund_reason            *string
-	refund_at                *time.Time
-	force_refund             *bool
-	refund_requested_at      *time.Time
-	refund_request_reason    *string
-	refund_requested_by      *string
-	expires_at               *time.Time
-	paid_at                  *time.Time
-	completed_at             *time.Time
-	failed_at                *time.Time
-	failed_reason            *string
-	client_ip                *string
-	src_host                 *string
-	src_url                  *string
-	created_at               *time.Time
-	updated_at               *time.Time
-	clearedFields            map[string]struct{}
-	user                     *int64
-	cleareduser              bool
-	done                     bool
-	oldValue                 func(context.Context) (*PaymentOrder, error)
-	predicates               []predicate.PaymentOrder
+	op                                Op
+	typ                               string
+	id                                *int64
+	user_email                        *string
+	user_name                         *string
+	user_notes                        *string
+	amount                            *float64
+	addamount                         *float64
+	pay_amount                        *float64
+	addpay_amount                     *float64
+	fee_rate                          *float64
+	addfee_rate                       *float64
+	bonus_amount                      *float64
+	addbonus_amount                   *float64
+	recharge_code                     *string
+	out_trade_no                      *string
+	payment_type                      *string
+	payment_trade_no                  *string
+	pay_url                           *string
+	qr_code                           *string
+	qr_code_img                       *string
+	order_type                        *string
+	plan_id                           *int64
+	addplan_id                        *int64
+	subscription_group_id             *int64
+	addsubscription_group_id          *int64
+	subscription_id                   *int64
+	addsubscription_id                *int64
+	subscription_group_ids            *[]int64
+	appendsubscription_group_ids      []int64
+	subscription_limits_snapshot      *bool
+	subscription_daily_limit_usd      *float64
+	addsubscription_daily_limit_usd   *float64
+	subscription_weekly_limit_usd     *float64
+	addsubscription_weekly_limit_usd  *float64
+	subscription_monthly_limit_usd    *float64
+	addsubscription_monthly_limit_usd *float64
+	subscription_days                 *int
+	addsubscription_days              *int
+	provider_instance_id              *string
+	provider_key                      *string
+	provider_snapshot                 *map[string]interface{}
+	status                            *string
+	refund_amount                     *float64
+	addrefund_amount                  *float64
+	refund_reason                     *string
+	refund_at                         *time.Time
+	force_refund                      *bool
+	refund_requested_at               *time.Time
+	refund_request_reason             *string
+	refund_requested_by               *string
+	expires_at                        *time.Time
+	paid_at                           *time.Time
+	completed_at                      *time.Time
+	failed_at                         *time.Time
+	failed_reason                     *string
+	client_ip                         *string
+	src_host                          *string
+	src_url                           *string
+	created_at                        *time.Time
+	updated_at                        *time.Time
+	clearedFields                     map[string]struct{}
+	user                              *int64
+	cleareduser                       bool
+	done                              bool
+	oldValue                          func(context.Context) (*PaymentOrder, error)
+	predicates                        []predicate.PaymentOrder
 }
 
 var _ ent.Mutation = (*PaymentOrderMutation)(nil)
@@ -31103,6 +31114,373 @@ func (m *PaymentOrderMutation) ResetSubscriptionGroupID() {
 	m.subscription_group_id = nil
 	m.addsubscription_group_id = nil
 	delete(m.clearedFields, paymentorder.FieldSubscriptionGroupID)
+}
+
+// SetSubscriptionID sets the "subscription_id" field.
+func (m *PaymentOrderMutation) SetSubscriptionID(i int64) {
+	m.subscription_id = &i
+	m.addsubscription_id = nil
+}
+
+// SubscriptionID returns the value of the "subscription_id" field in the mutation.
+func (m *PaymentOrderMutation) SubscriptionID() (r int64, exists bool) {
+	v := m.subscription_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSubscriptionID returns the old "subscription_id" field's value of the PaymentOrder entity.
+// If the PaymentOrder object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PaymentOrderMutation) OldSubscriptionID(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSubscriptionID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSubscriptionID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSubscriptionID: %w", err)
+	}
+	return oldValue.SubscriptionID, nil
+}
+
+// AddSubscriptionID adds i to the "subscription_id" field.
+func (m *PaymentOrderMutation) AddSubscriptionID(i int64) {
+	if m.addsubscription_id != nil {
+		*m.addsubscription_id += i
+	} else {
+		m.addsubscription_id = &i
+	}
+}
+
+// AddedSubscriptionID returns the value that was added to the "subscription_id" field in this mutation.
+func (m *PaymentOrderMutation) AddedSubscriptionID() (r int64, exists bool) {
+	v := m.addsubscription_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearSubscriptionID clears the value of the "subscription_id" field.
+func (m *PaymentOrderMutation) ClearSubscriptionID() {
+	m.subscription_id = nil
+	m.addsubscription_id = nil
+	m.clearedFields[paymentorder.FieldSubscriptionID] = struct{}{}
+}
+
+// SubscriptionIDCleared returns if the "subscription_id" field was cleared in this mutation.
+func (m *PaymentOrderMutation) SubscriptionIDCleared() bool {
+	_, ok := m.clearedFields[paymentorder.FieldSubscriptionID]
+	return ok
+}
+
+// ResetSubscriptionID resets all changes to the "subscription_id" field.
+func (m *PaymentOrderMutation) ResetSubscriptionID() {
+	m.subscription_id = nil
+	m.addsubscription_id = nil
+	delete(m.clearedFields, paymentorder.FieldSubscriptionID)
+}
+
+// SetSubscriptionGroupIds sets the "subscription_group_ids" field.
+func (m *PaymentOrderMutation) SetSubscriptionGroupIds(i []int64) {
+	m.subscription_group_ids = &i
+	m.appendsubscription_group_ids = nil
+}
+
+// SubscriptionGroupIds returns the value of the "subscription_group_ids" field in the mutation.
+func (m *PaymentOrderMutation) SubscriptionGroupIds() (r []int64, exists bool) {
+	v := m.subscription_group_ids
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSubscriptionGroupIds returns the old "subscription_group_ids" field's value of the PaymentOrder entity.
+// If the PaymentOrder object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PaymentOrderMutation) OldSubscriptionGroupIds(ctx context.Context) (v []int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSubscriptionGroupIds is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSubscriptionGroupIds requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSubscriptionGroupIds: %w", err)
+	}
+	return oldValue.SubscriptionGroupIds, nil
+}
+
+// AppendSubscriptionGroupIds adds i to the "subscription_group_ids" field.
+func (m *PaymentOrderMutation) AppendSubscriptionGroupIds(i []int64) {
+	m.appendsubscription_group_ids = append(m.appendsubscription_group_ids, i...)
+}
+
+// AppendedSubscriptionGroupIds returns the list of values that were appended to the "subscription_group_ids" field in this mutation.
+func (m *PaymentOrderMutation) AppendedSubscriptionGroupIds() ([]int64, bool) {
+	if len(m.appendsubscription_group_ids) == 0 {
+		return nil, false
+	}
+	return m.appendsubscription_group_ids, true
+}
+
+// ResetSubscriptionGroupIds resets all changes to the "subscription_group_ids" field.
+func (m *PaymentOrderMutation) ResetSubscriptionGroupIds() {
+	m.subscription_group_ids = nil
+	m.appendsubscription_group_ids = nil
+}
+
+// SetSubscriptionLimitsSnapshot sets the "subscription_limits_snapshot" field.
+func (m *PaymentOrderMutation) SetSubscriptionLimitsSnapshot(b bool) {
+	m.subscription_limits_snapshot = &b
+}
+
+// SubscriptionLimitsSnapshot returns the value of the "subscription_limits_snapshot" field in the mutation.
+func (m *PaymentOrderMutation) SubscriptionLimitsSnapshot() (r bool, exists bool) {
+	v := m.subscription_limits_snapshot
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSubscriptionLimitsSnapshot returns the old "subscription_limits_snapshot" field's value of the PaymentOrder entity.
+// If the PaymentOrder object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PaymentOrderMutation) OldSubscriptionLimitsSnapshot(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSubscriptionLimitsSnapshot is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSubscriptionLimitsSnapshot requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSubscriptionLimitsSnapshot: %w", err)
+	}
+	return oldValue.SubscriptionLimitsSnapshot, nil
+}
+
+// ResetSubscriptionLimitsSnapshot resets all changes to the "subscription_limits_snapshot" field.
+func (m *PaymentOrderMutation) ResetSubscriptionLimitsSnapshot() {
+	m.subscription_limits_snapshot = nil
+}
+
+// SetSubscriptionDailyLimitUsd sets the "subscription_daily_limit_usd" field.
+func (m *PaymentOrderMutation) SetSubscriptionDailyLimitUsd(f float64) {
+	m.subscription_daily_limit_usd = &f
+	m.addsubscription_daily_limit_usd = nil
+}
+
+// SubscriptionDailyLimitUsd returns the value of the "subscription_daily_limit_usd" field in the mutation.
+func (m *PaymentOrderMutation) SubscriptionDailyLimitUsd() (r float64, exists bool) {
+	v := m.subscription_daily_limit_usd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSubscriptionDailyLimitUsd returns the old "subscription_daily_limit_usd" field's value of the PaymentOrder entity.
+// If the PaymentOrder object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PaymentOrderMutation) OldSubscriptionDailyLimitUsd(ctx context.Context) (v *float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSubscriptionDailyLimitUsd is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSubscriptionDailyLimitUsd requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSubscriptionDailyLimitUsd: %w", err)
+	}
+	return oldValue.SubscriptionDailyLimitUsd, nil
+}
+
+// AddSubscriptionDailyLimitUsd adds f to the "subscription_daily_limit_usd" field.
+func (m *PaymentOrderMutation) AddSubscriptionDailyLimitUsd(f float64) {
+	if m.addsubscription_daily_limit_usd != nil {
+		*m.addsubscription_daily_limit_usd += f
+	} else {
+		m.addsubscription_daily_limit_usd = &f
+	}
+}
+
+// AddedSubscriptionDailyLimitUsd returns the value that was added to the "subscription_daily_limit_usd" field in this mutation.
+func (m *PaymentOrderMutation) AddedSubscriptionDailyLimitUsd() (r float64, exists bool) {
+	v := m.addsubscription_daily_limit_usd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearSubscriptionDailyLimitUsd clears the value of the "subscription_daily_limit_usd" field.
+func (m *PaymentOrderMutation) ClearSubscriptionDailyLimitUsd() {
+	m.subscription_daily_limit_usd = nil
+	m.addsubscription_daily_limit_usd = nil
+	m.clearedFields[paymentorder.FieldSubscriptionDailyLimitUsd] = struct{}{}
+}
+
+// SubscriptionDailyLimitUsdCleared returns if the "subscription_daily_limit_usd" field was cleared in this mutation.
+func (m *PaymentOrderMutation) SubscriptionDailyLimitUsdCleared() bool {
+	_, ok := m.clearedFields[paymentorder.FieldSubscriptionDailyLimitUsd]
+	return ok
+}
+
+// ResetSubscriptionDailyLimitUsd resets all changes to the "subscription_daily_limit_usd" field.
+func (m *PaymentOrderMutation) ResetSubscriptionDailyLimitUsd() {
+	m.subscription_daily_limit_usd = nil
+	m.addsubscription_daily_limit_usd = nil
+	delete(m.clearedFields, paymentorder.FieldSubscriptionDailyLimitUsd)
+}
+
+// SetSubscriptionWeeklyLimitUsd sets the "subscription_weekly_limit_usd" field.
+func (m *PaymentOrderMutation) SetSubscriptionWeeklyLimitUsd(f float64) {
+	m.subscription_weekly_limit_usd = &f
+	m.addsubscription_weekly_limit_usd = nil
+}
+
+// SubscriptionWeeklyLimitUsd returns the value of the "subscription_weekly_limit_usd" field in the mutation.
+func (m *PaymentOrderMutation) SubscriptionWeeklyLimitUsd() (r float64, exists bool) {
+	v := m.subscription_weekly_limit_usd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSubscriptionWeeklyLimitUsd returns the old "subscription_weekly_limit_usd" field's value of the PaymentOrder entity.
+// If the PaymentOrder object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PaymentOrderMutation) OldSubscriptionWeeklyLimitUsd(ctx context.Context) (v *float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSubscriptionWeeklyLimitUsd is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSubscriptionWeeklyLimitUsd requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSubscriptionWeeklyLimitUsd: %w", err)
+	}
+	return oldValue.SubscriptionWeeklyLimitUsd, nil
+}
+
+// AddSubscriptionWeeklyLimitUsd adds f to the "subscription_weekly_limit_usd" field.
+func (m *PaymentOrderMutation) AddSubscriptionWeeklyLimitUsd(f float64) {
+	if m.addsubscription_weekly_limit_usd != nil {
+		*m.addsubscription_weekly_limit_usd += f
+	} else {
+		m.addsubscription_weekly_limit_usd = &f
+	}
+}
+
+// AddedSubscriptionWeeklyLimitUsd returns the value that was added to the "subscription_weekly_limit_usd" field in this mutation.
+func (m *PaymentOrderMutation) AddedSubscriptionWeeklyLimitUsd() (r float64, exists bool) {
+	v := m.addsubscription_weekly_limit_usd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearSubscriptionWeeklyLimitUsd clears the value of the "subscription_weekly_limit_usd" field.
+func (m *PaymentOrderMutation) ClearSubscriptionWeeklyLimitUsd() {
+	m.subscription_weekly_limit_usd = nil
+	m.addsubscription_weekly_limit_usd = nil
+	m.clearedFields[paymentorder.FieldSubscriptionWeeklyLimitUsd] = struct{}{}
+}
+
+// SubscriptionWeeklyLimitUsdCleared returns if the "subscription_weekly_limit_usd" field was cleared in this mutation.
+func (m *PaymentOrderMutation) SubscriptionWeeklyLimitUsdCleared() bool {
+	_, ok := m.clearedFields[paymentorder.FieldSubscriptionWeeklyLimitUsd]
+	return ok
+}
+
+// ResetSubscriptionWeeklyLimitUsd resets all changes to the "subscription_weekly_limit_usd" field.
+func (m *PaymentOrderMutation) ResetSubscriptionWeeklyLimitUsd() {
+	m.subscription_weekly_limit_usd = nil
+	m.addsubscription_weekly_limit_usd = nil
+	delete(m.clearedFields, paymentorder.FieldSubscriptionWeeklyLimitUsd)
+}
+
+// SetSubscriptionMonthlyLimitUsd sets the "subscription_monthly_limit_usd" field.
+func (m *PaymentOrderMutation) SetSubscriptionMonthlyLimitUsd(f float64) {
+	m.subscription_monthly_limit_usd = &f
+	m.addsubscription_monthly_limit_usd = nil
+}
+
+// SubscriptionMonthlyLimitUsd returns the value of the "subscription_monthly_limit_usd" field in the mutation.
+func (m *PaymentOrderMutation) SubscriptionMonthlyLimitUsd() (r float64, exists bool) {
+	v := m.subscription_monthly_limit_usd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSubscriptionMonthlyLimitUsd returns the old "subscription_monthly_limit_usd" field's value of the PaymentOrder entity.
+// If the PaymentOrder object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PaymentOrderMutation) OldSubscriptionMonthlyLimitUsd(ctx context.Context) (v *float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSubscriptionMonthlyLimitUsd is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSubscriptionMonthlyLimitUsd requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSubscriptionMonthlyLimitUsd: %w", err)
+	}
+	return oldValue.SubscriptionMonthlyLimitUsd, nil
+}
+
+// AddSubscriptionMonthlyLimitUsd adds f to the "subscription_monthly_limit_usd" field.
+func (m *PaymentOrderMutation) AddSubscriptionMonthlyLimitUsd(f float64) {
+	if m.addsubscription_monthly_limit_usd != nil {
+		*m.addsubscription_monthly_limit_usd += f
+	} else {
+		m.addsubscription_monthly_limit_usd = &f
+	}
+}
+
+// AddedSubscriptionMonthlyLimitUsd returns the value that was added to the "subscription_monthly_limit_usd" field in this mutation.
+func (m *PaymentOrderMutation) AddedSubscriptionMonthlyLimitUsd() (r float64, exists bool) {
+	v := m.addsubscription_monthly_limit_usd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearSubscriptionMonthlyLimitUsd clears the value of the "subscription_monthly_limit_usd" field.
+func (m *PaymentOrderMutation) ClearSubscriptionMonthlyLimitUsd() {
+	m.subscription_monthly_limit_usd = nil
+	m.addsubscription_monthly_limit_usd = nil
+	m.clearedFields[paymentorder.FieldSubscriptionMonthlyLimitUsd] = struct{}{}
+}
+
+// SubscriptionMonthlyLimitUsdCleared returns if the "subscription_monthly_limit_usd" field was cleared in this mutation.
+func (m *PaymentOrderMutation) SubscriptionMonthlyLimitUsdCleared() bool {
+	_, ok := m.clearedFields[paymentorder.FieldSubscriptionMonthlyLimitUsd]
+	return ok
+}
+
+// ResetSubscriptionMonthlyLimitUsd resets all changes to the "subscription_monthly_limit_usd" field.
+func (m *PaymentOrderMutation) ResetSubscriptionMonthlyLimitUsd() {
+	m.subscription_monthly_limit_usd = nil
+	m.addsubscription_monthly_limit_usd = nil
+	delete(m.clearedFields, paymentorder.FieldSubscriptionMonthlyLimitUsd)
 }
 
 // SetSubscriptionDays sets the "subscription_days" field.
@@ -32181,7 +32559,7 @@ func (m *PaymentOrderMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *PaymentOrderMutation) Fields() []string {
-	fields := make([]string, 0, 40)
+	fields := make([]string, 0, 46)
 	if m.user != nil {
 		fields = append(fields, paymentorder.FieldUserID)
 	}
@@ -32235,6 +32613,24 @@ func (m *PaymentOrderMutation) Fields() []string {
 	}
 	if m.subscription_group_id != nil {
 		fields = append(fields, paymentorder.FieldSubscriptionGroupID)
+	}
+	if m.subscription_id != nil {
+		fields = append(fields, paymentorder.FieldSubscriptionID)
+	}
+	if m.subscription_group_ids != nil {
+		fields = append(fields, paymentorder.FieldSubscriptionGroupIds)
+	}
+	if m.subscription_limits_snapshot != nil {
+		fields = append(fields, paymentorder.FieldSubscriptionLimitsSnapshot)
+	}
+	if m.subscription_daily_limit_usd != nil {
+		fields = append(fields, paymentorder.FieldSubscriptionDailyLimitUsd)
+	}
+	if m.subscription_weekly_limit_usd != nil {
+		fields = append(fields, paymentorder.FieldSubscriptionWeeklyLimitUsd)
+	}
+	if m.subscription_monthly_limit_usd != nil {
+		fields = append(fields, paymentorder.FieldSubscriptionMonthlyLimitUsd)
 	}
 	if m.subscription_days != nil {
 		fields = append(fields, paymentorder.FieldSubscriptionDays)
@@ -32346,6 +32742,18 @@ func (m *PaymentOrderMutation) Field(name string) (ent.Value, bool) {
 		return m.PlanID()
 	case paymentorder.FieldSubscriptionGroupID:
 		return m.SubscriptionGroupID()
+	case paymentorder.FieldSubscriptionID:
+		return m.SubscriptionID()
+	case paymentorder.FieldSubscriptionGroupIds:
+		return m.SubscriptionGroupIds()
+	case paymentorder.FieldSubscriptionLimitsSnapshot:
+		return m.SubscriptionLimitsSnapshot()
+	case paymentorder.FieldSubscriptionDailyLimitUsd:
+		return m.SubscriptionDailyLimitUsd()
+	case paymentorder.FieldSubscriptionWeeklyLimitUsd:
+		return m.SubscriptionWeeklyLimitUsd()
+	case paymentorder.FieldSubscriptionMonthlyLimitUsd:
+		return m.SubscriptionMonthlyLimitUsd()
 	case paymentorder.FieldSubscriptionDays:
 		return m.SubscriptionDays()
 	case paymentorder.FieldProviderInstanceID:
@@ -32435,6 +32843,18 @@ func (m *PaymentOrderMutation) OldField(ctx context.Context, name string) (ent.V
 		return m.OldPlanID(ctx)
 	case paymentorder.FieldSubscriptionGroupID:
 		return m.OldSubscriptionGroupID(ctx)
+	case paymentorder.FieldSubscriptionID:
+		return m.OldSubscriptionID(ctx)
+	case paymentorder.FieldSubscriptionGroupIds:
+		return m.OldSubscriptionGroupIds(ctx)
+	case paymentorder.FieldSubscriptionLimitsSnapshot:
+		return m.OldSubscriptionLimitsSnapshot(ctx)
+	case paymentorder.FieldSubscriptionDailyLimitUsd:
+		return m.OldSubscriptionDailyLimitUsd(ctx)
+	case paymentorder.FieldSubscriptionWeeklyLimitUsd:
+		return m.OldSubscriptionWeeklyLimitUsd(ctx)
+	case paymentorder.FieldSubscriptionMonthlyLimitUsd:
+		return m.OldSubscriptionMonthlyLimitUsd(ctx)
 	case paymentorder.FieldSubscriptionDays:
 		return m.OldSubscriptionDays(ctx)
 	case paymentorder.FieldProviderInstanceID:
@@ -32613,6 +33033,48 @@ func (m *PaymentOrderMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetSubscriptionGroupID(v)
+		return nil
+	case paymentorder.FieldSubscriptionID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSubscriptionID(v)
+		return nil
+	case paymentorder.FieldSubscriptionGroupIds:
+		v, ok := value.([]int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSubscriptionGroupIds(v)
+		return nil
+	case paymentorder.FieldSubscriptionLimitsSnapshot:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSubscriptionLimitsSnapshot(v)
+		return nil
+	case paymentorder.FieldSubscriptionDailyLimitUsd:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSubscriptionDailyLimitUsd(v)
+		return nil
+	case paymentorder.FieldSubscriptionWeeklyLimitUsd:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSubscriptionWeeklyLimitUsd(v)
+		return nil
+	case paymentorder.FieldSubscriptionMonthlyLimitUsd:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSubscriptionMonthlyLimitUsd(v)
 		return nil
 	case paymentorder.FieldSubscriptionDays:
 		v, ok := value.(int)
@@ -32794,6 +33256,18 @@ func (m *PaymentOrderMutation) AddedFields() []string {
 	if m.addsubscription_group_id != nil {
 		fields = append(fields, paymentorder.FieldSubscriptionGroupID)
 	}
+	if m.addsubscription_id != nil {
+		fields = append(fields, paymentorder.FieldSubscriptionID)
+	}
+	if m.addsubscription_daily_limit_usd != nil {
+		fields = append(fields, paymentorder.FieldSubscriptionDailyLimitUsd)
+	}
+	if m.addsubscription_weekly_limit_usd != nil {
+		fields = append(fields, paymentorder.FieldSubscriptionWeeklyLimitUsd)
+	}
+	if m.addsubscription_monthly_limit_usd != nil {
+		fields = append(fields, paymentorder.FieldSubscriptionMonthlyLimitUsd)
+	}
 	if m.addsubscription_days != nil {
 		fields = append(fields, paymentorder.FieldSubscriptionDays)
 	}
@@ -32820,6 +33294,14 @@ func (m *PaymentOrderMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedPlanID()
 	case paymentorder.FieldSubscriptionGroupID:
 		return m.AddedSubscriptionGroupID()
+	case paymentorder.FieldSubscriptionID:
+		return m.AddedSubscriptionID()
+	case paymentorder.FieldSubscriptionDailyLimitUsd:
+		return m.AddedSubscriptionDailyLimitUsd()
+	case paymentorder.FieldSubscriptionWeeklyLimitUsd:
+		return m.AddedSubscriptionWeeklyLimitUsd()
+	case paymentorder.FieldSubscriptionMonthlyLimitUsd:
+		return m.AddedSubscriptionMonthlyLimitUsd()
 	case paymentorder.FieldSubscriptionDays:
 		return m.AddedSubscriptionDays()
 	case paymentorder.FieldRefundAmount:
@@ -32875,6 +33357,34 @@ func (m *PaymentOrderMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddSubscriptionGroupID(v)
 		return nil
+	case paymentorder.FieldSubscriptionID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSubscriptionID(v)
+		return nil
+	case paymentorder.FieldSubscriptionDailyLimitUsd:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSubscriptionDailyLimitUsd(v)
+		return nil
+	case paymentorder.FieldSubscriptionWeeklyLimitUsd:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSubscriptionWeeklyLimitUsd(v)
+		return nil
+	case paymentorder.FieldSubscriptionMonthlyLimitUsd:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSubscriptionMonthlyLimitUsd(v)
+		return nil
 	case paymentorder.FieldSubscriptionDays:
 		v, ok := value.(int)
 		if !ok {
@@ -32914,6 +33424,18 @@ func (m *PaymentOrderMutation) ClearedFields() []string {
 	}
 	if m.FieldCleared(paymentorder.FieldSubscriptionGroupID) {
 		fields = append(fields, paymentorder.FieldSubscriptionGroupID)
+	}
+	if m.FieldCleared(paymentorder.FieldSubscriptionID) {
+		fields = append(fields, paymentorder.FieldSubscriptionID)
+	}
+	if m.FieldCleared(paymentorder.FieldSubscriptionDailyLimitUsd) {
+		fields = append(fields, paymentorder.FieldSubscriptionDailyLimitUsd)
+	}
+	if m.FieldCleared(paymentorder.FieldSubscriptionWeeklyLimitUsd) {
+		fields = append(fields, paymentorder.FieldSubscriptionWeeklyLimitUsd)
+	}
+	if m.FieldCleared(paymentorder.FieldSubscriptionMonthlyLimitUsd) {
+		fields = append(fields, paymentorder.FieldSubscriptionMonthlyLimitUsd)
 	}
 	if m.FieldCleared(paymentorder.FieldSubscriptionDays) {
 		fields = append(fields, paymentorder.FieldSubscriptionDays)
@@ -32988,6 +33510,18 @@ func (m *PaymentOrderMutation) ClearField(name string) error {
 		return nil
 	case paymentorder.FieldSubscriptionGroupID:
 		m.ClearSubscriptionGroupID()
+		return nil
+	case paymentorder.FieldSubscriptionID:
+		m.ClearSubscriptionID()
+		return nil
+	case paymentorder.FieldSubscriptionDailyLimitUsd:
+		m.ClearSubscriptionDailyLimitUsd()
+		return nil
+	case paymentorder.FieldSubscriptionWeeklyLimitUsd:
+		m.ClearSubscriptionWeeklyLimitUsd()
+		return nil
+	case paymentorder.FieldSubscriptionMonthlyLimitUsd:
+		m.ClearSubscriptionMonthlyLimitUsd()
 		return nil
 	case paymentorder.FieldSubscriptionDays:
 		m.ClearSubscriptionDays()
@@ -33092,6 +33626,24 @@ func (m *PaymentOrderMutation) ResetField(name string) error {
 		return nil
 	case paymentorder.FieldSubscriptionGroupID:
 		m.ResetSubscriptionGroupID()
+		return nil
+	case paymentorder.FieldSubscriptionID:
+		m.ResetSubscriptionID()
+		return nil
+	case paymentorder.FieldSubscriptionGroupIds:
+		m.ResetSubscriptionGroupIds()
+		return nil
+	case paymentorder.FieldSubscriptionLimitsSnapshot:
+		m.ResetSubscriptionLimitsSnapshot()
+		return nil
+	case paymentorder.FieldSubscriptionDailyLimitUsd:
+		m.ResetSubscriptionDailyLimitUsd()
+		return nil
+	case paymentorder.FieldSubscriptionWeeklyLimitUsd:
+		m.ResetSubscriptionWeeklyLimitUsd()
+		return nil
+	case paymentorder.FieldSubscriptionMonthlyLimitUsd:
+		m.ResetSubscriptionMonthlyLimitUsd()
 		return nil
 	case paymentorder.FieldSubscriptionDays:
 		m.ResetSubscriptionDays()
@@ -40938,32 +41490,40 @@ func (m *SettingMutation) ResetEdge(name string) error {
 // SubscriptionPlanMutation represents an operation that mutates the SubscriptionPlan nodes in the graph.
 type SubscriptionPlanMutation struct {
 	config
-	op                Op
-	typ               string
-	id                *int64
-	group_id          *int64
-	addgroup_id       *int64
-	name              *string
-	description       *string
-	price             *float64
-	addprice          *float64
-	original_price    *float64
-	addoriginal_price *float64
-	currency          *string
-	validity_days     *int
-	addvalidity_days  *int
-	validity_unit     *string
-	features          *string
-	product_name      *string
-	for_sale          *bool
-	sort_order        *int
-	addsort_order     *int
-	created_at        *time.Time
-	updated_at        *time.Time
-	clearedFields     map[string]struct{}
-	done              bool
-	oldValue          func(context.Context) (*SubscriptionPlan, error)
-	predicates        []predicate.SubscriptionPlan
+	op                   Op
+	typ                  string
+	id                   *int64
+	group_id             *int64
+	addgroup_id          *int64
+	group_ids            *[]int64
+	appendgroup_ids      []int64
+	daily_limit_usd      *float64
+	adddaily_limit_usd   *float64
+	weekly_limit_usd     *float64
+	addweekly_limit_usd  *float64
+	monthly_limit_usd    *float64
+	addmonthly_limit_usd *float64
+	name                 *string
+	description          *string
+	price                *float64
+	addprice             *float64
+	original_price       *float64
+	addoriginal_price    *float64
+	currency             *string
+	validity_days        *int
+	addvalidity_days     *int
+	validity_unit        *string
+	features             *string
+	product_name         *string
+	for_sale             *bool
+	sort_order           *int
+	addsort_order        *int
+	created_at           *time.Time
+	updated_at           *time.Time
+	clearedFields        map[string]struct{}
+	done                 bool
+	oldValue             func(context.Context) (*SubscriptionPlan, error)
+	predicates           []predicate.SubscriptionPlan
 }
 
 var _ ent.Mutation = (*SubscriptionPlanMutation)(nil)
@@ -41118,6 +41678,267 @@ func (m *SubscriptionPlanMutation) AddedGroupID() (r int64, exists bool) {
 func (m *SubscriptionPlanMutation) ResetGroupID() {
 	m.group_id = nil
 	m.addgroup_id = nil
+}
+
+// SetGroupIds sets the "group_ids" field.
+func (m *SubscriptionPlanMutation) SetGroupIds(i []int64) {
+	m.group_ids = &i
+	m.appendgroup_ids = nil
+}
+
+// GroupIds returns the value of the "group_ids" field in the mutation.
+func (m *SubscriptionPlanMutation) GroupIds() (r []int64, exists bool) {
+	v := m.group_ids
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldGroupIds returns the old "group_ids" field's value of the SubscriptionPlan entity.
+// If the SubscriptionPlan object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SubscriptionPlanMutation) OldGroupIds(ctx context.Context) (v []int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldGroupIds is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldGroupIds requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldGroupIds: %w", err)
+	}
+	return oldValue.GroupIds, nil
+}
+
+// AppendGroupIds adds i to the "group_ids" field.
+func (m *SubscriptionPlanMutation) AppendGroupIds(i []int64) {
+	m.appendgroup_ids = append(m.appendgroup_ids, i...)
+}
+
+// AppendedGroupIds returns the list of values that were appended to the "group_ids" field in this mutation.
+func (m *SubscriptionPlanMutation) AppendedGroupIds() ([]int64, bool) {
+	if len(m.appendgroup_ids) == 0 {
+		return nil, false
+	}
+	return m.appendgroup_ids, true
+}
+
+// ResetGroupIds resets all changes to the "group_ids" field.
+func (m *SubscriptionPlanMutation) ResetGroupIds() {
+	m.group_ids = nil
+	m.appendgroup_ids = nil
+}
+
+// SetDailyLimitUsd sets the "daily_limit_usd" field.
+func (m *SubscriptionPlanMutation) SetDailyLimitUsd(f float64) {
+	m.daily_limit_usd = &f
+	m.adddaily_limit_usd = nil
+}
+
+// DailyLimitUsd returns the value of the "daily_limit_usd" field in the mutation.
+func (m *SubscriptionPlanMutation) DailyLimitUsd() (r float64, exists bool) {
+	v := m.daily_limit_usd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDailyLimitUsd returns the old "daily_limit_usd" field's value of the SubscriptionPlan entity.
+// If the SubscriptionPlan object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SubscriptionPlanMutation) OldDailyLimitUsd(ctx context.Context) (v *float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDailyLimitUsd is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDailyLimitUsd requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDailyLimitUsd: %w", err)
+	}
+	return oldValue.DailyLimitUsd, nil
+}
+
+// AddDailyLimitUsd adds f to the "daily_limit_usd" field.
+func (m *SubscriptionPlanMutation) AddDailyLimitUsd(f float64) {
+	if m.adddaily_limit_usd != nil {
+		*m.adddaily_limit_usd += f
+	} else {
+		m.adddaily_limit_usd = &f
+	}
+}
+
+// AddedDailyLimitUsd returns the value that was added to the "daily_limit_usd" field in this mutation.
+func (m *SubscriptionPlanMutation) AddedDailyLimitUsd() (r float64, exists bool) {
+	v := m.adddaily_limit_usd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearDailyLimitUsd clears the value of the "daily_limit_usd" field.
+func (m *SubscriptionPlanMutation) ClearDailyLimitUsd() {
+	m.daily_limit_usd = nil
+	m.adddaily_limit_usd = nil
+	m.clearedFields[subscriptionplan.FieldDailyLimitUsd] = struct{}{}
+}
+
+// DailyLimitUsdCleared returns if the "daily_limit_usd" field was cleared in this mutation.
+func (m *SubscriptionPlanMutation) DailyLimitUsdCleared() bool {
+	_, ok := m.clearedFields[subscriptionplan.FieldDailyLimitUsd]
+	return ok
+}
+
+// ResetDailyLimitUsd resets all changes to the "daily_limit_usd" field.
+func (m *SubscriptionPlanMutation) ResetDailyLimitUsd() {
+	m.daily_limit_usd = nil
+	m.adddaily_limit_usd = nil
+	delete(m.clearedFields, subscriptionplan.FieldDailyLimitUsd)
+}
+
+// SetWeeklyLimitUsd sets the "weekly_limit_usd" field.
+func (m *SubscriptionPlanMutation) SetWeeklyLimitUsd(f float64) {
+	m.weekly_limit_usd = &f
+	m.addweekly_limit_usd = nil
+}
+
+// WeeklyLimitUsd returns the value of the "weekly_limit_usd" field in the mutation.
+func (m *SubscriptionPlanMutation) WeeklyLimitUsd() (r float64, exists bool) {
+	v := m.weekly_limit_usd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldWeeklyLimitUsd returns the old "weekly_limit_usd" field's value of the SubscriptionPlan entity.
+// If the SubscriptionPlan object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SubscriptionPlanMutation) OldWeeklyLimitUsd(ctx context.Context) (v *float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldWeeklyLimitUsd is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldWeeklyLimitUsd requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldWeeklyLimitUsd: %w", err)
+	}
+	return oldValue.WeeklyLimitUsd, nil
+}
+
+// AddWeeklyLimitUsd adds f to the "weekly_limit_usd" field.
+func (m *SubscriptionPlanMutation) AddWeeklyLimitUsd(f float64) {
+	if m.addweekly_limit_usd != nil {
+		*m.addweekly_limit_usd += f
+	} else {
+		m.addweekly_limit_usd = &f
+	}
+}
+
+// AddedWeeklyLimitUsd returns the value that was added to the "weekly_limit_usd" field in this mutation.
+func (m *SubscriptionPlanMutation) AddedWeeklyLimitUsd() (r float64, exists bool) {
+	v := m.addweekly_limit_usd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearWeeklyLimitUsd clears the value of the "weekly_limit_usd" field.
+func (m *SubscriptionPlanMutation) ClearWeeklyLimitUsd() {
+	m.weekly_limit_usd = nil
+	m.addweekly_limit_usd = nil
+	m.clearedFields[subscriptionplan.FieldWeeklyLimitUsd] = struct{}{}
+}
+
+// WeeklyLimitUsdCleared returns if the "weekly_limit_usd" field was cleared in this mutation.
+func (m *SubscriptionPlanMutation) WeeklyLimitUsdCleared() bool {
+	_, ok := m.clearedFields[subscriptionplan.FieldWeeklyLimitUsd]
+	return ok
+}
+
+// ResetWeeklyLimitUsd resets all changes to the "weekly_limit_usd" field.
+func (m *SubscriptionPlanMutation) ResetWeeklyLimitUsd() {
+	m.weekly_limit_usd = nil
+	m.addweekly_limit_usd = nil
+	delete(m.clearedFields, subscriptionplan.FieldWeeklyLimitUsd)
+}
+
+// SetMonthlyLimitUsd sets the "monthly_limit_usd" field.
+func (m *SubscriptionPlanMutation) SetMonthlyLimitUsd(f float64) {
+	m.monthly_limit_usd = &f
+	m.addmonthly_limit_usd = nil
+}
+
+// MonthlyLimitUsd returns the value of the "monthly_limit_usd" field in the mutation.
+func (m *SubscriptionPlanMutation) MonthlyLimitUsd() (r float64, exists bool) {
+	v := m.monthly_limit_usd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldMonthlyLimitUsd returns the old "monthly_limit_usd" field's value of the SubscriptionPlan entity.
+// If the SubscriptionPlan object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SubscriptionPlanMutation) OldMonthlyLimitUsd(ctx context.Context) (v *float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldMonthlyLimitUsd is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldMonthlyLimitUsd requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldMonthlyLimitUsd: %w", err)
+	}
+	return oldValue.MonthlyLimitUsd, nil
+}
+
+// AddMonthlyLimitUsd adds f to the "monthly_limit_usd" field.
+func (m *SubscriptionPlanMutation) AddMonthlyLimitUsd(f float64) {
+	if m.addmonthly_limit_usd != nil {
+		*m.addmonthly_limit_usd += f
+	} else {
+		m.addmonthly_limit_usd = &f
+	}
+}
+
+// AddedMonthlyLimitUsd returns the value that was added to the "monthly_limit_usd" field in this mutation.
+func (m *SubscriptionPlanMutation) AddedMonthlyLimitUsd() (r float64, exists bool) {
+	v := m.addmonthly_limit_usd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearMonthlyLimitUsd clears the value of the "monthly_limit_usd" field.
+func (m *SubscriptionPlanMutation) ClearMonthlyLimitUsd() {
+	m.monthly_limit_usd = nil
+	m.addmonthly_limit_usd = nil
+	m.clearedFields[subscriptionplan.FieldMonthlyLimitUsd] = struct{}{}
+}
+
+// MonthlyLimitUsdCleared returns if the "monthly_limit_usd" field was cleared in this mutation.
+func (m *SubscriptionPlanMutation) MonthlyLimitUsdCleared() bool {
+	_, ok := m.clearedFields[subscriptionplan.FieldMonthlyLimitUsd]
+	return ok
+}
+
+// ResetMonthlyLimitUsd resets all changes to the "monthly_limit_usd" field.
+func (m *SubscriptionPlanMutation) ResetMonthlyLimitUsd() {
+	m.monthly_limit_usd = nil
+	m.addmonthly_limit_usd = nil
+	delete(m.clearedFields, subscriptionplan.FieldMonthlyLimitUsd)
 }
 
 // SetName sets the "name" field.
@@ -41716,9 +42537,21 @@ func (m *SubscriptionPlanMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SubscriptionPlanMutation) Fields() []string {
-	fields := make([]string, 0, 14)
+	fields := make([]string, 0, 18)
 	if m.group_id != nil {
 		fields = append(fields, subscriptionplan.FieldGroupID)
+	}
+	if m.group_ids != nil {
+		fields = append(fields, subscriptionplan.FieldGroupIds)
+	}
+	if m.daily_limit_usd != nil {
+		fields = append(fields, subscriptionplan.FieldDailyLimitUsd)
+	}
+	if m.weekly_limit_usd != nil {
+		fields = append(fields, subscriptionplan.FieldWeeklyLimitUsd)
+	}
+	if m.monthly_limit_usd != nil {
+		fields = append(fields, subscriptionplan.FieldMonthlyLimitUsd)
 	}
 	if m.name != nil {
 		fields = append(fields, subscriptionplan.FieldName)
@@ -41769,6 +42602,14 @@ func (m *SubscriptionPlanMutation) Field(name string) (ent.Value, bool) {
 	switch name {
 	case subscriptionplan.FieldGroupID:
 		return m.GroupID()
+	case subscriptionplan.FieldGroupIds:
+		return m.GroupIds()
+	case subscriptionplan.FieldDailyLimitUsd:
+		return m.DailyLimitUsd()
+	case subscriptionplan.FieldWeeklyLimitUsd:
+		return m.WeeklyLimitUsd()
+	case subscriptionplan.FieldMonthlyLimitUsd:
+		return m.MonthlyLimitUsd()
 	case subscriptionplan.FieldName:
 		return m.Name()
 	case subscriptionplan.FieldDescription:
@@ -41806,6 +42647,14 @@ func (m *SubscriptionPlanMutation) OldField(ctx context.Context, name string) (e
 	switch name {
 	case subscriptionplan.FieldGroupID:
 		return m.OldGroupID(ctx)
+	case subscriptionplan.FieldGroupIds:
+		return m.OldGroupIds(ctx)
+	case subscriptionplan.FieldDailyLimitUsd:
+		return m.OldDailyLimitUsd(ctx)
+	case subscriptionplan.FieldWeeklyLimitUsd:
+		return m.OldWeeklyLimitUsd(ctx)
+	case subscriptionplan.FieldMonthlyLimitUsd:
+		return m.OldMonthlyLimitUsd(ctx)
 	case subscriptionplan.FieldName:
 		return m.OldName(ctx)
 	case subscriptionplan.FieldDescription:
@@ -41847,6 +42696,34 @@ func (m *SubscriptionPlanMutation) SetField(name string, value ent.Value) error 
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetGroupID(v)
+		return nil
+	case subscriptionplan.FieldGroupIds:
+		v, ok := value.([]int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetGroupIds(v)
+		return nil
+	case subscriptionplan.FieldDailyLimitUsd:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDailyLimitUsd(v)
+		return nil
+	case subscriptionplan.FieldWeeklyLimitUsd:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetWeeklyLimitUsd(v)
+		return nil
+	case subscriptionplan.FieldMonthlyLimitUsd:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetMonthlyLimitUsd(v)
 		return nil
 	case subscriptionplan.FieldName:
 		v, ok := value.(string)
@@ -41950,6 +42827,15 @@ func (m *SubscriptionPlanMutation) AddedFields() []string {
 	if m.addgroup_id != nil {
 		fields = append(fields, subscriptionplan.FieldGroupID)
 	}
+	if m.adddaily_limit_usd != nil {
+		fields = append(fields, subscriptionplan.FieldDailyLimitUsd)
+	}
+	if m.addweekly_limit_usd != nil {
+		fields = append(fields, subscriptionplan.FieldWeeklyLimitUsd)
+	}
+	if m.addmonthly_limit_usd != nil {
+		fields = append(fields, subscriptionplan.FieldMonthlyLimitUsd)
+	}
 	if m.addprice != nil {
 		fields = append(fields, subscriptionplan.FieldPrice)
 	}
@@ -41972,6 +42858,12 @@ func (m *SubscriptionPlanMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
 	case subscriptionplan.FieldGroupID:
 		return m.AddedGroupID()
+	case subscriptionplan.FieldDailyLimitUsd:
+		return m.AddedDailyLimitUsd()
+	case subscriptionplan.FieldWeeklyLimitUsd:
+		return m.AddedWeeklyLimitUsd()
+	case subscriptionplan.FieldMonthlyLimitUsd:
+		return m.AddedMonthlyLimitUsd()
 	case subscriptionplan.FieldPrice:
 		return m.AddedPrice()
 	case subscriptionplan.FieldOriginalPrice:
@@ -41995,6 +42887,27 @@ func (m *SubscriptionPlanMutation) AddField(name string, value ent.Value) error 
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddGroupID(v)
+		return nil
+	case subscriptionplan.FieldDailyLimitUsd:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddDailyLimitUsd(v)
+		return nil
+	case subscriptionplan.FieldWeeklyLimitUsd:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddWeeklyLimitUsd(v)
+		return nil
+	case subscriptionplan.FieldMonthlyLimitUsd:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddMonthlyLimitUsd(v)
 		return nil
 	case subscriptionplan.FieldPrice:
 		v, ok := value.(float64)
@@ -42032,6 +42945,15 @@ func (m *SubscriptionPlanMutation) AddField(name string, value ent.Value) error 
 // mutation.
 func (m *SubscriptionPlanMutation) ClearedFields() []string {
 	var fields []string
+	if m.FieldCleared(subscriptionplan.FieldDailyLimitUsd) {
+		fields = append(fields, subscriptionplan.FieldDailyLimitUsd)
+	}
+	if m.FieldCleared(subscriptionplan.FieldWeeklyLimitUsd) {
+		fields = append(fields, subscriptionplan.FieldWeeklyLimitUsd)
+	}
+	if m.FieldCleared(subscriptionplan.FieldMonthlyLimitUsd) {
+		fields = append(fields, subscriptionplan.FieldMonthlyLimitUsd)
+	}
 	if m.FieldCleared(subscriptionplan.FieldOriginalPrice) {
 		fields = append(fields, subscriptionplan.FieldOriginalPrice)
 	}
@@ -42049,6 +42971,15 @@ func (m *SubscriptionPlanMutation) FieldCleared(name string) bool {
 // error if the field is not defined in the schema.
 func (m *SubscriptionPlanMutation) ClearField(name string) error {
 	switch name {
+	case subscriptionplan.FieldDailyLimitUsd:
+		m.ClearDailyLimitUsd()
+		return nil
+	case subscriptionplan.FieldWeeklyLimitUsd:
+		m.ClearWeeklyLimitUsd()
+		return nil
+	case subscriptionplan.FieldMonthlyLimitUsd:
+		m.ClearMonthlyLimitUsd()
+		return nil
 	case subscriptionplan.FieldOriginalPrice:
 		m.ClearOriginalPrice()
 		return nil
@@ -42062,6 +42993,18 @@ func (m *SubscriptionPlanMutation) ResetField(name string) error {
 	switch name {
 	case subscriptionplan.FieldGroupID:
 		m.ResetGroupID()
+		return nil
+	case subscriptionplan.FieldGroupIds:
+		m.ResetGroupIds()
+		return nil
+	case subscriptionplan.FieldDailyLimitUsd:
+		m.ResetDailyLimitUsd()
+		return nil
+	case subscriptionplan.FieldWeeklyLimitUsd:
+		m.ResetWeeklyLimitUsd()
+		return nil
+	case subscriptionplan.FieldMonthlyLimitUsd:
+		m.ResetMonthlyLimitUsd()
 		return nil
 	case subscriptionplan.FieldName:
 		m.ResetName()
@@ -55458,6 +56401,16 @@ type UserSubscriptionMutation struct {
 	created_at              *time.Time
 	updated_at              *time.Time
 	deleted_at              *time.Time
+	group_ids               *[]int64
+	appendgroup_ids         []int64
+	plan_id                 *int64
+	addplan_id              *int64
+	daily_limit_usd         *float64
+	adddaily_limit_usd      *float64
+	weekly_limit_usd        *float64
+	addweekly_limit_usd     *float64
+	monthly_limit_usd       *float64
+	addmonthly_limit_usd    *float64
 	starts_at               *time.Time
 	expires_at              *time.Time
 	status                  *string
@@ -55776,6 +56729,337 @@ func (m *UserSubscriptionMutation) OldGroupID(ctx context.Context) (v int64, err
 // ResetGroupID resets all changes to the "group_id" field.
 func (m *UserSubscriptionMutation) ResetGroupID() {
 	m.group = nil
+}
+
+// SetGroupIds sets the "group_ids" field.
+func (m *UserSubscriptionMutation) SetGroupIds(i []int64) {
+	m.group_ids = &i
+	m.appendgroup_ids = nil
+}
+
+// GroupIds returns the value of the "group_ids" field in the mutation.
+func (m *UserSubscriptionMutation) GroupIds() (r []int64, exists bool) {
+	v := m.group_ids
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldGroupIds returns the old "group_ids" field's value of the UserSubscription entity.
+// If the UserSubscription object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserSubscriptionMutation) OldGroupIds(ctx context.Context) (v []int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldGroupIds is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldGroupIds requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldGroupIds: %w", err)
+	}
+	return oldValue.GroupIds, nil
+}
+
+// AppendGroupIds adds i to the "group_ids" field.
+func (m *UserSubscriptionMutation) AppendGroupIds(i []int64) {
+	m.appendgroup_ids = append(m.appendgroup_ids, i...)
+}
+
+// AppendedGroupIds returns the list of values that were appended to the "group_ids" field in this mutation.
+func (m *UserSubscriptionMutation) AppendedGroupIds() ([]int64, bool) {
+	if len(m.appendgroup_ids) == 0 {
+		return nil, false
+	}
+	return m.appendgroup_ids, true
+}
+
+// ResetGroupIds resets all changes to the "group_ids" field.
+func (m *UserSubscriptionMutation) ResetGroupIds() {
+	m.group_ids = nil
+	m.appendgroup_ids = nil
+}
+
+// SetPlanID sets the "plan_id" field.
+func (m *UserSubscriptionMutation) SetPlanID(i int64) {
+	m.plan_id = &i
+	m.addplan_id = nil
+}
+
+// PlanID returns the value of the "plan_id" field in the mutation.
+func (m *UserSubscriptionMutation) PlanID() (r int64, exists bool) {
+	v := m.plan_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPlanID returns the old "plan_id" field's value of the UserSubscription entity.
+// If the UserSubscription object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserSubscriptionMutation) OldPlanID(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPlanID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPlanID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPlanID: %w", err)
+	}
+	return oldValue.PlanID, nil
+}
+
+// AddPlanID adds i to the "plan_id" field.
+func (m *UserSubscriptionMutation) AddPlanID(i int64) {
+	if m.addplan_id != nil {
+		*m.addplan_id += i
+	} else {
+		m.addplan_id = &i
+	}
+}
+
+// AddedPlanID returns the value that was added to the "plan_id" field in this mutation.
+func (m *UserSubscriptionMutation) AddedPlanID() (r int64, exists bool) {
+	v := m.addplan_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearPlanID clears the value of the "plan_id" field.
+func (m *UserSubscriptionMutation) ClearPlanID() {
+	m.plan_id = nil
+	m.addplan_id = nil
+	m.clearedFields[usersubscription.FieldPlanID] = struct{}{}
+}
+
+// PlanIDCleared returns if the "plan_id" field was cleared in this mutation.
+func (m *UserSubscriptionMutation) PlanIDCleared() bool {
+	_, ok := m.clearedFields[usersubscription.FieldPlanID]
+	return ok
+}
+
+// ResetPlanID resets all changes to the "plan_id" field.
+func (m *UserSubscriptionMutation) ResetPlanID() {
+	m.plan_id = nil
+	m.addplan_id = nil
+	delete(m.clearedFields, usersubscription.FieldPlanID)
+}
+
+// SetDailyLimitUsd sets the "daily_limit_usd" field.
+func (m *UserSubscriptionMutation) SetDailyLimitUsd(f float64) {
+	m.daily_limit_usd = &f
+	m.adddaily_limit_usd = nil
+}
+
+// DailyLimitUsd returns the value of the "daily_limit_usd" field in the mutation.
+func (m *UserSubscriptionMutation) DailyLimitUsd() (r float64, exists bool) {
+	v := m.daily_limit_usd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDailyLimitUsd returns the old "daily_limit_usd" field's value of the UserSubscription entity.
+// If the UserSubscription object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserSubscriptionMutation) OldDailyLimitUsd(ctx context.Context) (v *float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDailyLimitUsd is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDailyLimitUsd requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDailyLimitUsd: %w", err)
+	}
+	return oldValue.DailyLimitUsd, nil
+}
+
+// AddDailyLimitUsd adds f to the "daily_limit_usd" field.
+func (m *UserSubscriptionMutation) AddDailyLimitUsd(f float64) {
+	if m.adddaily_limit_usd != nil {
+		*m.adddaily_limit_usd += f
+	} else {
+		m.adddaily_limit_usd = &f
+	}
+}
+
+// AddedDailyLimitUsd returns the value that was added to the "daily_limit_usd" field in this mutation.
+func (m *UserSubscriptionMutation) AddedDailyLimitUsd() (r float64, exists bool) {
+	v := m.adddaily_limit_usd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearDailyLimitUsd clears the value of the "daily_limit_usd" field.
+func (m *UserSubscriptionMutation) ClearDailyLimitUsd() {
+	m.daily_limit_usd = nil
+	m.adddaily_limit_usd = nil
+	m.clearedFields[usersubscription.FieldDailyLimitUsd] = struct{}{}
+}
+
+// DailyLimitUsdCleared returns if the "daily_limit_usd" field was cleared in this mutation.
+func (m *UserSubscriptionMutation) DailyLimitUsdCleared() bool {
+	_, ok := m.clearedFields[usersubscription.FieldDailyLimitUsd]
+	return ok
+}
+
+// ResetDailyLimitUsd resets all changes to the "daily_limit_usd" field.
+func (m *UserSubscriptionMutation) ResetDailyLimitUsd() {
+	m.daily_limit_usd = nil
+	m.adddaily_limit_usd = nil
+	delete(m.clearedFields, usersubscription.FieldDailyLimitUsd)
+}
+
+// SetWeeklyLimitUsd sets the "weekly_limit_usd" field.
+func (m *UserSubscriptionMutation) SetWeeklyLimitUsd(f float64) {
+	m.weekly_limit_usd = &f
+	m.addweekly_limit_usd = nil
+}
+
+// WeeklyLimitUsd returns the value of the "weekly_limit_usd" field in the mutation.
+func (m *UserSubscriptionMutation) WeeklyLimitUsd() (r float64, exists bool) {
+	v := m.weekly_limit_usd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldWeeklyLimitUsd returns the old "weekly_limit_usd" field's value of the UserSubscription entity.
+// If the UserSubscription object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserSubscriptionMutation) OldWeeklyLimitUsd(ctx context.Context) (v *float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldWeeklyLimitUsd is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldWeeklyLimitUsd requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldWeeklyLimitUsd: %w", err)
+	}
+	return oldValue.WeeklyLimitUsd, nil
+}
+
+// AddWeeklyLimitUsd adds f to the "weekly_limit_usd" field.
+func (m *UserSubscriptionMutation) AddWeeklyLimitUsd(f float64) {
+	if m.addweekly_limit_usd != nil {
+		*m.addweekly_limit_usd += f
+	} else {
+		m.addweekly_limit_usd = &f
+	}
+}
+
+// AddedWeeklyLimitUsd returns the value that was added to the "weekly_limit_usd" field in this mutation.
+func (m *UserSubscriptionMutation) AddedWeeklyLimitUsd() (r float64, exists bool) {
+	v := m.addweekly_limit_usd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearWeeklyLimitUsd clears the value of the "weekly_limit_usd" field.
+func (m *UserSubscriptionMutation) ClearWeeklyLimitUsd() {
+	m.weekly_limit_usd = nil
+	m.addweekly_limit_usd = nil
+	m.clearedFields[usersubscription.FieldWeeklyLimitUsd] = struct{}{}
+}
+
+// WeeklyLimitUsdCleared returns if the "weekly_limit_usd" field was cleared in this mutation.
+func (m *UserSubscriptionMutation) WeeklyLimitUsdCleared() bool {
+	_, ok := m.clearedFields[usersubscription.FieldWeeklyLimitUsd]
+	return ok
+}
+
+// ResetWeeklyLimitUsd resets all changes to the "weekly_limit_usd" field.
+func (m *UserSubscriptionMutation) ResetWeeklyLimitUsd() {
+	m.weekly_limit_usd = nil
+	m.addweekly_limit_usd = nil
+	delete(m.clearedFields, usersubscription.FieldWeeklyLimitUsd)
+}
+
+// SetMonthlyLimitUsd sets the "monthly_limit_usd" field.
+func (m *UserSubscriptionMutation) SetMonthlyLimitUsd(f float64) {
+	m.monthly_limit_usd = &f
+	m.addmonthly_limit_usd = nil
+}
+
+// MonthlyLimitUsd returns the value of the "monthly_limit_usd" field in the mutation.
+func (m *UserSubscriptionMutation) MonthlyLimitUsd() (r float64, exists bool) {
+	v := m.monthly_limit_usd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldMonthlyLimitUsd returns the old "monthly_limit_usd" field's value of the UserSubscription entity.
+// If the UserSubscription object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserSubscriptionMutation) OldMonthlyLimitUsd(ctx context.Context) (v *float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldMonthlyLimitUsd is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldMonthlyLimitUsd requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldMonthlyLimitUsd: %w", err)
+	}
+	return oldValue.MonthlyLimitUsd, nil
+}
+
+// AddMonthlyLimitUsd adds f to the "monthly_limit_usd" field.
+func (m *UserSubscriptionMutation) AddMonthlyLimitUsd(f float64) {
+	if m.addmonthly_limit_usd != nil {
+		*m.addmonthly_limit_usd += f
+	} else {
+		m.addmonthly_limit_usd = &f
+	}
+}
+
+// AddedMonthlyLimitUsd returns the value that was added to the "monthly_limit_usd" field in this mutation.
+func (m *UserSubscriptionMutation) AddedMonthlyLimitUsd() (r float64, exists bool) {
+	v := m.addmonthly_limit_usd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearMonthlyLimitUsd clears the value of the "monthly_limit_usd" field.
+func (m *UserSubscriptionMutation) ClearMonthlyLimitUsd() {
+	m.monthly_limit_usd = nil
+	m.addmonthly_limit_usd = nil
+	m.clearedFields[usersubscription.FieldMonthlyLimitUsd] = struct{}{}
+}
+
+// MonthlyLimitUsdCleared returns if the "monthly_limit_usd" field was cleared in this mutation.
+func (m *UserSubscriptionMutation) MonthlyLimitUsdCleared() bool {
+	_, ok := m.clearedFields[usersubscription.FieldMonthlyLimitUsd]
+	return ok
+}
+
+// ResetMonthlyLimitUsd resets all changes to the "monthly_limit_usd" field.
+func (m *UserSubscriptionMutation) ResetMonthlyLimitUsd() {
+	m.monthly_limit_usd = nil
+	m.addmonthly_limit_usd = nil
+	delete(m.clearedFields, usersubscription.FieldMonthlyLimitUsd)
 }
 
 // SetStartsAt sets the "starts_at" field.
@@ -56517,7 +57801,7 @@ func (m *UserSubscriptionMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UserSubscriptionMutation) Fields() []string {
-	fields := make([]string, 0, 17)
+	fields := make([]string, 0, 22)
 	if m.created_at != nil {
 		fields = append(fields, usersubscription.FieldCreatedAt)
 	}
@@ -56532,6 +57816,21 @@ func (m *UserSubscriptionMutation) Fields() []string {
 	}
 	if m.group != nil {
 		fields = append(fields, usersubscription.FieldGroupID)
+	}
+	if m.group_ids != nil {
+		fields = append(fields, usersubscription.FieldGroupIds)
+	}
+	if m.plan_id != nil {
+		fields = append(fields, usersubscription.FieldPlanID)
+	}
+	if m.daily_limit_usd != nil {
+		fields = append(fields, usersubscription.FieldDailyLimitUsd)
+	}
+	if m.weekly_limit_usd != nil {
+		fields = append(fields, usersubscription.FieldWeeklyLimitUsd)
+	}
+	if m.monthly_limit_usd != nil {
+		fields = append(fields, usersubscription.FieldMonthlyLimitUsd)
 	}
 	if m.starts_at != nil {
 		fields = append(fields, usersubscription.FieldStartsAt)
@@ -56587,6 +57886,16 @@ func (m *UserSubscriptionMutation) Field(name string) (ent.Value, bool) {
 		return m.UserID()
 	case usersubscription.FieldGroupID:
 		return m.GroupID()
+	case usersubscription.FieldGroupIds:
+		return m.GroupIds()
+	case usersubscription.FieldPlanID:
+		return m.PlanID()
+	case usersubscription.FieldDailyLimitUsd:
+		return m.DailyLimitUsd()
+	case usersubscription.FieldWeeklyLimitUsd:
+		return m.WeeklyLimitUsd()
+	case usersubscription.FieldMonthlyLimitUsd:
+		return m.MonthlyLimitUsd()
 	case usersubscription.FieldStartsAt:
 		return m.StartsAt()
 	case usersubscription.FieldExpiresAt:
@@ -56630,6 +57939,16 @@ func (m *UserSubscriptionMutation) OldField(ctx context.Context, name string) (e
 		return m.OldUserID(ctx)
 	case usersubscription.FieldGroupID:
 		return m.OldGroupID(ctx)
+	case usersubscription.FieldGroupIds:
+		return m.OldGroupIds(ctx)
+	case usersubscription.FieldPlanID:
+		return m.OldPlanID(ctx)
+	case usersubscription.FieldDailyLimitUsd:
+		return m.OldDailyLimitUsd(ctx)
+	case usersubscription.FieldWeeklyLimitUsd:
+		return m.OldWeeklyLimitUsd(ctx)
+	case usersubscription.FieldMonthlyLimitUsd:
+		return m.OldMonthlyLimitUsd(ctx)
 	case usersubscription.FieldStartsAt:
 		return m.OldStartsAt(ctx)
 	case usersubscription.FieldExpiresAt:
@@ -56697,6 +58016,41 @@ func (m *UserSubscriptionMutation) SetField(name string, value ent.Value) error 
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetGroupID(v)
+		return nil
+	case usersubscription.FieldGroupIds:
+		v, ok := value.([]int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetGroupIds(v)
+		return nil
+	case usersubscription.FieldPlanID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPlanID(v)
+		return nil
+	case usersubscription.FieldDailyLimitUsd:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDailyLimitUsd(v)
+		return nil
+	case usersubscription.FieldWeeklyLimitUsd:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetWeeklyLimitUsd(v)
+		return nil
+	case usersubscription.FieldMonthlyLimitUsd:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetMonthlyLimitUsd(v)
 		return nil
 	case usersubscription.FieldStartsAt:
 		v, ok := value.(time.Time)
@@ -56790,6 +58144,18 @@ func (m *UserSubscriptionMutation) SetField(name string, value ent.Value) error 
 // this mutation.
 func (m *UserSubscriptionMutation) AddedFields() []string {
 	var fields []string
+	if m.addplan_id != nil {
+		fields = append(fields, usersubscription.FieldPlanID)
+	}
+	if m.adddaily_limit_usd != nil {
+		fields = append(fields, usersubscription.FieldDailyLimitUsd)
+	}
+	if m.addweekly_limit_usd != nil {
+		fields = append(fields, usersubscription.FieldWeeklyLimitUsd)
+	}
+	if m.addmonthly_limit_usd != nil {
+		fields = append(fields, usersubscription.FieldMonthlyLimitUsd)
+	}
 	if m.adddaily_usage_usd != nil {
 		fields = append(fields, usersubscription.FieldDailyUsageUsd)
 	}
@@ -56807,6 +58173,14 @@ func (m *UserSubscriptionMutation) AddedFields() []string {
 // was not set, or was not defined in the schema.
 func (m *UserSubscriptionMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
+	case usersubscription.FieldPlanID:
+		return m.AddedPlanID()
+	case usersubscription.FieldDailyLimitUsd:
+		return m.AddedDailyLimitUsd()
+	case usersubscription.FieldWeeklyLimitUsd:
+		return m.AddedWeeklyLimitUsd()
+	case usersubscription.FieldMonthlyLimitUsd:
+		return m.AddedMonthlyLimitUsd()
 	case usersubscription.FieldDailyUsageUsd:
 		return m.AddedDailyUsageUsd()
 	case usersubscription.FieldWeeklyUsageUsd:
@@ -56822,6 +58196,34 @@ func (m *UserSubscriptionMutation) AddedField(name string) (ent.Value, bool) {
 // type.
 func (m *UserSubscriptionMutation) AddField(name string, value ent.Value) error {
 	switch name {
+	case usersubscription.FieldPlanID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddPlanID(v)
+		return nil
+	case usersubscription.FieldDailyLimitUsd:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddDailyLimitUsd(v)
+		return nil
+	case usersubscription.FieldWeeklyLimitUsd:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddWeeklyLimitUsd(v)
+		return nil
+	case usersubscription.FieldMonthlyLimitUsd:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddMonthlyLimitUsd(v)
+		return nil
 	case usersubscription.FieldDailyUsageUsd:
 		v, ok := value.(float64)
 		if !ok {
@@ -56854,6 +58256,18 @@ func (m *UserSubscriptionMutation) ClearedFields() []string {
 	if m.FieldCleared(usersubscription.FieldDeletedAt) {
 		fields = append(fields, usersubscription.FieldDeletedAt)
 	}
+	if m.FieldCleared(usersubscription.FieldPlanID) {
+		fields = append(fields, usersubscription.FieldPlanID)
+	}
+	if m.FieldCleared(usersubscription.FieldDailyLimitUsd) {
+		fields = append(fields, usersubscription.FieldDailyLimitUsd)
+	}
+	if m.FieldCleared(usersubscription.FieldWeeklyLimitUsd) {
+		fields = append(fields, usersubscription.FieldWeeklyLimitUsd)
+	}
+	if m.FieldCleared(usersubscription.FieldMonthlyLimitUsd) {
+		fields = append(fields, usersubscription.FieldMonthlyLimitUsd)
+	}
 	if m.FieldCleared(usersubscription.FieldDailyWindowStart) {
 		fields = append(fields, usersubscription.FieldDailyWindowStart)
 	}
@@ -56885,6 +58299,18 @@ func (m *UserSubscriptionMutation) ClearField(name string) error {
 	switch name {
 	case usersubscription.FieldDeletedAt:
 		m.ClearDeletedAt()
+		return nil
+	case usersubscription.FieldPlanID:
+		m.ClearPlanID()
+		return nil
+	case usersubscription.FieldDailyLimitUsd:
+		m.ClearDailyLimitUsd()
+		return nil
+	case usersubscription.FieldWeeklyLimitUsd:
+		m.ClearWeeklyLimitUsd()
+		return nil
+	case usersubscription.FieldMonthlyLimitUsd:
+		m.ClearMonthlyLimitUsd()
 		return nil
 	case usersubscription.FieldDailyWindowStart:
 		m.ClearDailyWindowStart()
@@ -56923,6 +58349,21 @@ func (m *UserSubscriptionMutation) ResetField(name string) error {
 		return nil
 	case usersubscription.FieldGroupID:
 		m.ResetGroupID()
+		return nil
+	case usersubscription.FieldGroupIds:
+		m.ResetGroupIds()
+		return nil
+	case usersubscription.FieldPlanID:
+		m.ResetPlanID()
+		return nil
+	case usersubscription.FieldDailyLimitUsd:
+		m.ResetDailyLimitUsd()
+		return nil
+	case usersubscription.FieldWeeklyLimitUsd:
+		m.ResetWeeklyLimitUsd()
+		return nil
+	case usersubscription.FieldMonthlyLimitUsd:
+		m.ResetMonthlyLimitUsd()
 		return nil
 	case usersubscription.FieldStartsAt:
 		m.ResetStartsAt()

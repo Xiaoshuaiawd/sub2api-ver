@@ -88,6 +88,12 @@ func (PaymentOrder) Fields() []ent.Field {
 		field.Int64("subscription_group_id").
 			Optional().
 			Nillable(),
+		field.Int64("subscription_id").Optional().Nillable(),
+		field.JSON("subscription_group_ids", []int64{}).Default([]int64{}),
+		field.Bool("subscription_limits_snapshot").Default(false),
+		field.Float("subscription_daily_limit_usd").SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}).Optional().Nillable(),
+		field.Float("subscription_weekly_limit_usd").SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}).Optional().Nillable(),
+		field.Float("subscription_monthly_limit_usd").SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}).Optional().Nillable(),
 		field.Int("subscription_days").
 			Optional().
 			Nillable(),

@@ -400,6 +400,11 @@ func mustCreateSubscription(t *testing.T, client *dbent.Client, s *service.UserS
 	create := client.UserSubscription.Create().
 		SetUserID(s.UserID).
 		SetGroupID(s.GroupID).
+		SetGroupIds(s.AccessibleGroupIDs()).
+		SetNillablePlanID(s.PlanID).
+		SetNillableDailyLimitUsd(s.DailyLimitUSD).
+		SetNillableWeeklyLimitUsd(s.WeeklyLimitUSD).
+		SetNillableMonthlyLimitUsd(s.MonthlyLimitUSD).
 		SetStartsAt(s.StartsAt).
 		SetExpiresAt(s.ExpiresAt).
 		SetStatus(s.Status).

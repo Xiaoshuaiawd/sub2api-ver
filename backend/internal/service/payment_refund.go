@@ -16,6 +16,8 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/paymentauditlog"
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/ent/paymentproviderinstance"
+	"github.com/Wei-Shaw/sub2api/ent/schema/mixins"
+	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/Wei-Shaw/sub2api/internal/payment/provider"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -259,8 +261,8 @@ func (s *PaymentService) prepDeduct(ctx context.Context, o *dbent.PaymentOrder, 
 		p.DeductionType = payment.DeductionTypeSubscription
 		if o.SubscriptionGroupID != nil && o.SubscriptionDays != nil {
 			p.SubDaysToDeduct = *o.SubscriptionDays
-			sub, err := s.subscriptionSvc.GetActiveSubscription(ctx, o.UserID, *o.SubscriptionGroupID)
-			if err == nil && sub != nil {
+			sub, err := s.subscriptionForRefund(ctx, o)
+			if err == nil && sub != nil && sub.UserID == o.UserID && sub.IsActive() && sub.DeletedAt == nil {
 				p.SubscriptionID = sub.ID
 			} else if !force {
 				return &RefundResult{Success: false, Warning: "cannot find active subscription for deduction, use force", RequireForce: true}
@@ -281,6 +283,30 @@ func (s *PaymentService) prepDeduct(ctx context.Context, o *dbent.PaymentOrder, 
 	}
 	p.BalanceToDeduct = math.Max(0, math.Min(p.RefundAmount, u.Balance))
 	return nil
+}
+
+func (s *PaymentService) subscriptionForRefund(ctx context.Context, o *dbent.PaymentOrder) (*UserSubscription, error) {
+	if o.SubscriptionID != nil {
+		return s.subscriptionSvc.GetByID(ctx, *o.SubscriptionID)
+	}
+	// Historical orders have no stored subscription ID. Their assignment note
+	// identifies the original ledger even after another bundle overlaps the
+	// same group. Include revoked rows so we never debit a newer subscription.
+	if s.entClient != nil {
+		note := paymentSubscriptionOrderNote(o.ID)
+		rows, err := s.entClient.UserSubscription.Query().Where(
+			usersubscription.UserIDEQ(o.UserID), usersubscription.NotesContains(note),
+		).All(mixins.SkipSoftDelete(ctx))
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			if row.Notes != nil && hasPaymentSubscriptionOrderNote(*row.Notes, note) {
+				return s.subscriptionSvc.userSubRepo.GetByIDIncludeDeleted(ctx, row.ID)
+			}
+		}
+	}
+	return s.subscriptionSvc.GetActiveSubscription(ctx, o.UserID, *o.SubscriptionGroupID)
 }
 
 type availableBalanceDeductor interface {

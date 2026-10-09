@@ -196,7 +196,7 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 			return err
 		}
 	} else if cmd.SubscriptionCost > 0 && cmd.SubscriptionID != nil {
-		if err := incrementUsageBillingSubscription(ctx, tx, *cmd.SubscriptionID, cmd.SubscriptionCost); err != nil {
+		if err := incrementUsageBillingSubscription(ctx, tx, *cmd.SubscriptionID, cmd.SubscriptionCost, cmd.SubscriptionGroupID); err != nil {
 			return err
 		}
 	}
@@ -293,7 +293,8 @@ func settleHybridFunding(ctx context.Context, tx *sql.Tx, cmd *service.UsageBill
 				SELECT status, starts_at, expires_at,
 				       daily_window_start, weekly_window_start, monthly_window_start
 				FROM user_subscriptions
-				WHERE id = $1 AND user_id = $2 AND group_id = $3 AND deleted_at IS NULL
+				WHERE id = $1 AND user_id = $2
+				  AND (group_id = $3 OR group_ids @> jsonb_build_array($3)) AND deleted_at IS NULL
 				FOR UPDATE
 			`, *cmd.SubscriptionID, cmd.UserID, cmd.HybridGroupID).Scan(
 				&status, &startsAt, &expiresAt, &dailyWindow, &weeklyWindow, &monthlyWindow,
@@ -351,14 +352,15 @@ func settleHybridFunding(ctx context.Context, tx *sql.Tx, cmd *service.UsageBill
 				    monthly_usage_usd = us.monthly_usage_usd + $1,
 				    updated_at = NOW()
 				FROM groups AS g
-				WHERE us.id = $2 AND us.user_id = $3 AND us.group_id = $4
+				WHERE us.id = $2 AND us.user_id = $3
 				  AND g.id = $4 AND g.deleted_at IS NULL
 				  AND g.subscription_type = 'subscription_balance'
+				  AND (us.group_id = $4 OR us.group_ids @> jsonb_build_array($4))
 				  AND us.deleted_at IS NULL AND us.status = 'active'
 				  AND us.starts_at <= NOW() AND us.expires_at > NOW()
-				  AND (g.daily_limit_usd IS NULL OR us.daily_usage_usd + $1 <= g.daily_limit_usd)
-				  AND (g.weekly_limit_usd IS NULL OR us.weekly_usage_usd + $1 <= g.weekly_limit_usd)
-				  AND (g.monthly_limit_usd IS NULL OR us.monthly_usage_usd + $1 <= g.monthly_limit_usd)
+				  AND (COALESCE(CASE WHEN us.plan_id IS NULL THEN g.daily_limit_usd ELSE us.daily_limit_usd END, 1e30) >= us.daily_usage_usd + $1)
+				  AND (COALESCE(CASE WHEN us.plan_id IS NULL THEN g.weekly_limit_usd ELSE us.weekly_limit_usd END, 1e30) >= us.weekly_usage_usd + $1)
+				  AND (COALESCE(CASE WHEN us.plan_id IS NULL THEN g.monthly_limit_usd ELSE us.monthly_limit_usd END, 1e30) >= us.monthly_usage_usd + $1)
 			`, cmd.HybridCostUSD, *cmd.SubscriptionID, cmd.UserID, cmd.HybridGroupID)
 				if updateErr != nil {
 					return updateErr
@@ -384,7 +386,7 @@ func settleHybridFunding(ctx context.Context, tx *sql.Tx, cmd *service.UsageBill
 	return nil
 }
 
-func incrementUsageBillingSubscription(ctx context.Context, tx *sql.Tx, subscriptionID int64, costUSD float64) error {
+func incrementUsageBillingSubscription(ctx context.Context, tx *sql.Tx, subscriptionID int64, costUSD float64, groupID int64) error {
 	const updateSQL = `
 		UPDATE user_subscriptions us
 		SET
@@ -395,10 +397,14 @@ func incrementUsageBillingSubscription(ctx context.Context, tx *sql.Tx, subscrip
 		FROM groups g
 		WHERE us.id = $2
 			AND us.deleted_at IS NULL
-			AND us.group_id = g.id
+			AND g.id = CASE WHEN $3 = 0 THEN us.group_id ELSE $3 END
+			AND ($3 = 0 OR us.group_id = $3 OR us.group_ids @> jsonb_build_array($3))
 			AND g.deleted_at IS NULL
+			AND (us.plan_id IS NULL OR us.daily_limit_usd IS NULL OR us.daily_usage_usd + $1 <= us.daily_limit_usd)
+			AND (us.plan_id IS NULL OR us.weekly_limit_usd IS NULL OR us.weekly_usage_usd + $1 <= us.weekly_limit_usd)
+			AND (us.plan_id IS NULL OR us.monthly_limit_usd IS NULL OR us.monthly_usage_usd + $1 <= us.monthly_limit_usd)
 	`
-	res, err := tx.ExecContext(ctx, updateSQL, costUSD, subscriptionID)
+	res, err := tx.ExecContext(ctx, updateSQL, costUSD, subscriptionID, groupID)
 	if err != nil {
 		return err
 	}
@@ -408,6 +414,25 @@ func incrementUsageBillingSubscription(ctx context.Context, tx *sql.Tx, subscrip
 	}
 	if affected > 0 {
 		return nil
+	}
+	var planID sql.NullInt64
+	var exhaustedWindow int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT plan_id, CASE
+		  WHEN daily_limit_usd IS NOT NULL AND daily_usage_usd + $2 > daily_limit_usd THEN 1
+		  WHEN weekly_limit_usd IS NOT NULL AND weekly_usage_usd + $2 > weekly_limit_usd THEN 2
+		  WHEN monthly_limit_usd IS NOT NULL AND monthly_usage_usd + $2 > monthly_limit_usd THEN 3
+		  ELSE 0 END
+		FROM user_subscriptions WHERE id = $1 AND deleted_at IS NULL
+	`, subscriptionID, costUSD).Scan(&planID, &exhaustedWindow); err == nil && planID.Valid {
+		switch exhaustedWindow {
+		case 1:
+			return service.ErrDailyLimitExceeded
+		case 2:
+			return service.ErrWeeklyLimitExceeded
+		case 3:
+			return service.ErrMonthlyLimitExceeded
+		}
 	}
 	return service.ErrSubscriptionNotFound
 }

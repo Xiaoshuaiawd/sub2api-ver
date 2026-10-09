@@ -124,7 +124,7 @@
                 <!-- Header: platform badge + plan name -->
                 <div class="mb-3 flex flex-wrap items-center gap-2">
                   <span :class="['rounded-md border px-2 py-0.5 text-xs font-medium', planBadgeClass]">
-                    {{ platformLabel(selectedPlan.group_platform || '') }}
+                    {{ selectedPlanPlatformLabel }}
                   </span>
                   <h3 class="text-lg font-bold text-gray-900 dark:text-white">{{ selectedPlan.name }}</h3>
                 </div>
@@ -140,15 +140,20 @@
                 <p v-if="selectedPlan.description" class="mt-2 text-sm leading-relaxed text-gray-500 dark:text-gray-400">
                   {{ selectedPlan.description }}
                 </p>
+                <div v-if="selectedPlan.groups && selectedPlan.groups.length > 1" class="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
+                  <span class="text-gray-500 dark:text-gray-400">{{ t('payment.planCard.availableGroups') }}:</span>
+                  <span v-for="group in selectedPlan.groups" :key="group.id" class="rounded bg-gray-100 px-2 py-1 text-gray-700 dark:bg-dark-700 dark:text-dark-200">{{ group.name }} (×{{ group.rate_multiplier }})</span>
+                </div>
+                <p v-if="selectedPlan.groups && selectedPlan.groups.length > 1" class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('payment.planCard.sharedQuotaHint') }}</p>
                 <!-- Rate + Limits grid -->
                 <div class="mt-3 grid grid-cols-2 gap-3">
                   <div>
                     <span class="text-xs text-gray-400 dark:text-gray-500">{{ t('payment.planCard.rate') }}</span>
                     <div class="flex items-baseline">
-                      <span :class="['text-lg font-bold', planTextClass]">×{{ selectedPlan.rate_multiplier ?? 1 }}</span>
+                      <span :class="['text-lg font-bold', planTextClass]">{{ (selectedPlan.groups?.length || 0) > 1 ? t('payment.planCard.variesByGroup') : `×${selectedPlan.rate_multiplier ?? 1}` }}</span>
                     </div>
                   </div>
-                  <div v-if="planHasPeakRate(selectedPlan)">
+                  <div v-if="(selectedPlan.groups?.length || 0) <= 1 && planHasPeakRate(selectedPlan)">
                     <span class="text-xs text-gray-400 dark:text-gray-500">{{ t('payment.planCard.peakRate') }}</span>
                     <div class="text-sm font-semibold text-amber-700 dark:text-amber-300">
                       {{ planPeakRateLabel(selectedPlan) }}
@@ -782,14 +787,19 @@ const paymentButtonClass = computed(() => {
 
 // Subscription confirm: platform accent colors (clean card, no gradient)
 const planBadgeClass = computed(() => platformBadgeClass(selectedPlan.value?.group_platform || ''))
+const selectedPlanPlatformLabel = computed(() => new Set(selectedPlan.value?.groups?.map(group => group.platform) || []).size > 1
+  ? t('payment.planCard.multiplePlatforms')
+  : platformLabel(selectedPlan.value?.group_platform || ''))
 const planTextClass = computed(() => platformTextClass(selectedPlan.value?.group_platform || ''))
 
 // Renewal modal state
 const showRenewalModal = ref(false)
 const renewGroupId = ref<number | null>(null)
+const planCoversGroup = (plan: SubscriptionPlan, groupId: number) =>
+  plan.group_id === groupId || Boolean(plan.group_ids?.includes(groupId))
 const renewalPlans = computed(() => {
   if (renewGroupId.value == null) return []
-  return checkout.value.plans.filter(p => p.group_id === renewGroupId.value)
+  return checkout.value.plans.filter(p => planCoversGroup(p, renewGroupId.value!))
 })
 
 const planValiditySuffix = computed(() => {
@@ -1209,7 +1219,7 @@ onMounted(async () => {
       activeTab.value = 'subscription'
       if (route.query.group) {
         const groupId = Number(route.query.group)
-        const groupPlans = checkout.value.plans.filter(p => p.group_id === groupId)
+        const groupPlans = checkout.value.plans.filter(p => planCoversGroup(p, groupId))
         if (groupPlans.length === 1) {
           selectedPlan.value = groupPlans[0]
         } else if (groupPlans.length > 1) {

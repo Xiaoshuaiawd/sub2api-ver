@@ -55,6 +55,18 @@ type PaymentOrder struct {
 	PlanID *int64 `json:"plan_id,omitempty"`
 	// SubscriptionGroupID holds the value of the "subscription_group_id" field.
 	SubscriptionGroupID *int64 `json:"subscription_group_id,omitempty"`
+	// SubscriptionID holds the value of the "subscription_id" field.
+	SubscriptionID *int64 `json:"subscription_id,omitempty"`
+	// SubscriptionGroupIds holds the value of the "subscription_group_ids" field.
+	SubscriptionGroupIds []int64 `json:"subscription_group_ids,omitempty"`
+	// SubscriptionLimitsSnapshot holds the value of the "subscription_limits_snapshot" field.
+	SubscriptionLimitsSnapshot bool `json:"subscription_limits_snapshot,omitempty"`
+	// SubscriptionDailyLimitUsd holds the value of the "subscription_daily_limit_usd" field.
+	SubscriptionDailyLimitUsd *float64 `json:"subscription_daily_limit_usd,omitempty"`
+	// SubscriptionWeeklyLimitUsd holds the value of the "subscription_weekly_limit_usd" field.
+	SubscriptionWeeklyLimitUsd *float64 `json:"subscription_weekly_limit_usd,omitempty"`
+	// SubscriptionMonthlyLimitUsd holds the value of the "subscription_monthly_limit_usd" field.
+	SubscriptionMonthlyLimitUsd *float64 `json:"subscription_monthly_limit_usd,omitempty"`
 	// SubscriptionDays holds the value of the "subscription_days" field.
 	SubscriptionDays *int `json:"subscription_days,omitempty"`
 	// ProviderInstanceID holds the value of the "provider_instance_id" field.
@@ -130,13 +142,13 @@ func (*PaymentOrder) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case paymentorder.FieldProviderSnapshot:
+		case paymentorder.FieldSubscriptionGroupIds, paymentorder.FieldProviderSnapshot:
 			values[i] = new([]byte)
-		case paymentorder.FieldForceRefund:
+		case paymentorder.FieldSubscriptionLimitsSnapshot, paymentorder.FieldForceRefund:
 			values[i] = new(sql.NullBool)
-		case paymentorder.FieldAmount, paymentorder.FieldPayAmount, paymentorder.FieldFeeRate, paymentorder.FieldBonusAmount, paymentorder.FieldRefundAmount:
+		case paymentorder.FieldAmount, paymentorder.FieldPayAmount, paymentorder.FieldFeeRate, paymentorder.FieldBonusAmount, paymentorder.FieldSubscriptionDailyLimitUsd, paymentorder.FieldSubscriptionWeeklyLimitUsd, paymentorder.FieldSubscriptionMonthlyLimitUsd, paymentorder.FieldRefundAmount:
 			values[i] = new(sql.NullFloat64)
-		case paymentorder.FieldID, paymentorder.FieldUserID, paymentorder.FieldPlanID, paymentorder.FieldSubscriptionGroupID, paymentorder.FieldSubscriptionDays:
+		case paymentorder.FieldID, paymentorder.FieldUserID, paymentorder.FieldPlanID, paymentorder.FieldSubscriptionGroupID, paymentorder.FieldSubscriptionID, paymentorder.FieldSubscriptionDays:
 			values[i] = new(sql.NullInt64)
 		case paymentorder.FieldUserEmail, paymentorder.FieldUserName, paymentorder.FieldUserNotes, paymentorder.FieldRechargeCode, paymentorder.FieldOutTradeNo, paymentorder.FieldPaymentType, paymentorder.FieldPaymentTradeNo, paymentorder.FieldPayURL, paymentorder.FieldQrCode, paymentorder.FieldQrCodeImg, paymentorder.FieldOrderType, paymentorder.FieldProviderInstanceID, paymentorder.FieldProviderKey, paymentorder.FieldStatus, paymentorder.FieldRefundReason, paymentorder.FieldRefundRequestReason, paymentorder.FieldRefundRequestedBy, paymentorder.FieldFailedReason, paymentorder.FieldClientIP, paymentorder.FieldSrcHost, paymentorder.FieldSrcURL:
 			values[i] = new(sql.NullString)
@@ -276,6 +288,48 @@ func (_m *PaymentOrder) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.SubscriptionGroupID = new(int64)
 				*_m.SubscriptionGroupID = value.Int64
+			}
+		case paymentorder.FieldSubscriptionID:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field subscription_id", values[i])
+			} else if value.Valid {
+				_m.SubscriptionID = new(int64)
+				*_m.SubscriptionID = value.Int64
+			}
+		case paymentorder.FieldSubscriptionGroupIds:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field subscription_group_ids", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.SubscriptionGroupIds); err != nil {
+					return fmt.Errorf("unmarshal field subscription_group_ids: %w", err)
+				}
+			}
+		case paymentorder.FieldSubscriptionLimitsSnapshot:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field subscription_limits_snapshot", values[i])
+			} else if value.Valid {
+				_m.SubscriptionLimitsSnapshot = value.Bool
+			}
+		case paymentorder.FieldSubscriptionDailyLimitUsd:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field subscription_daily_limit_usd", values[i])
+			} else if value.Valid {
+				_m.SubscriptionDailyLimitUsd = new(float64)
+				*_m.SubscriptionDailyLimitUsd = value.Float64
+			}
+		case paymentorder.FieldSubscriptionWeeklyLimitUsd:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field subscription_weekly_limit_usd", values[i])
+			} else if value.Valid {
+				_m.SubscriptionWeeklyLimitUsd = new(float64)
+				*_m.SubscriptionWeeklyLimitUsd = value.Float64
+			}
+		case paymentorder.FieldSubscriptionMonthlyLimitUsd:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field subscription_monthly_limit_usd", values[i])
+			} else if value.Valid {
+				_m.SubscriptionMonthlyLimitUsd = new(float64)
+				*_m.SubscriptionMonthlyLimitUsd = value.Float64
 			}
 		case paymentorder.FieldSubscriptionDays:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -528,6 +582,32 @@ func (_m *PaymentOrder) String() string {
 	builder.WriteString(", ")
 	if v := _m.SubscriptionGroupID; v != nil {
 		builder.WriteString("subscription_group_id=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.SubscriptionID; v != nil {
+		builder.WriteString("subscription_id=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	builder.WriteString("subscription_group_ids=")
+	builder.WriteString(fmt.Sprintf("%v", _m.SubscriptionGroupIds))
+	builder.WriteString(", ")
+	builder.WriteString("subscription_limits_snapshot=")
+	builder.WriteString(fmt.Sprintf("%v", _m.SubscriptionLimitsSnapshot))
+	builder.WriteString(", ")
+	if v := _m.SubscriptionDailyLimitUsd; v != nil {
+		builder.WriteString("subscription_daily_limit_usd=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.SubscriptionWeeklyLimitUsd; v != nil {
+		builder.WriteString("subscription_weekly_limit_usd=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.SubscriptionMonthlyLimitUsd; v != nil {
+		builder.WriteString("subscription_monthly_limit_usd=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
 	builder.WriteString(", ")
