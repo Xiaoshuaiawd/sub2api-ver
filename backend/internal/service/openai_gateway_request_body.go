@@ -980,14 +980,17 @@ func (s *OpenAIGatewayService) replaceModelInResponseBody(body []byte, fromModel
 	if fromModel == "" || toModel == "" || fromModel == toModel || !gjson.ValidBytes(body) {
 		return body
 	}
-	if m := gjson.GetBytes(body, "model"); m.Type == gjson.String {
-		newBody, err := sjson.SetBytes(body, "model", toModel)
-		if err != nil {
-			return body
+	updated := body
+	for _, path := range []string{"model", "response.model"} {
+		if m := gjson.GetBytes(updated, path); m.Type == gjson.String {
+			var err error
+			updated, err = sjson.SetBytes(updated, path, toModel)
+			if err != nil {
+				return body
+			}
 		}
-		return newBody
 	}
-	return body
+	return updated
 }
 
 func getOpenAIReasoningEffortFromReqBody(reqBody map[string]any, requestedModel string) (value string, present bool) {

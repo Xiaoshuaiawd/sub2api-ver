@@ -124,14 +124,18 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	// 上游协议统一由 resolveUpstreamProtocol 判定（按模型分流时带上游模型目录）。Anthropic 分流必须先于
 	// ShouldUseResponsesAPI：Anthropic 协议账号经 probe 落标
 	// openai_responses_supported=false，否则会命中 CC 直转。
-	routingModel := upstreamRoutingModel(account, body, defaultMappedModel)
+	routingModel := ""
+	if account.routesByModel() {
+		requestedModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+		routingModel = normalizeOpenAIModelForUpstream(account, resolveOpenAIChannelForwardModel(account, requestedModel, defaultMappedModel))
+	}
 	if account.IsOpenCodeGo() && IsOpenCodeUnsupportedModel(routingModel) {
 		return nil, writeOpenCodeUnsupportedModelError(c, false, routingModel)
 	}
 	switch s.resolveUpstreamProtocolFor(ctx, account, inbound, routingModel) {
 	case APIProtocolAnthropic:
 		if convertResponsesShape {
-			return s.forwardResponsesViaNativeAnthropic(ctx, c, account, body, "")
+			return s.forwardResponsesViaNativeAnthropic(ctx, c, account, body, defaultMappedModel, "")
 		}
 		// CC 入站经 CC→Responses→Anthropic 转换链直通供应商原生 Anthropic 端点。
 		return s.forwardChatCompletionsViaNativeAnthropic(ctx, c, account, body, defaultMappedModel)
@@ -161,7 +165,7 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 
 	// 2. Resolve model mapping early so compat prompt_cache_key injection can
 	// derive a stable seed from the final upstream model family.
-	billingModel := resolveOpenAIForwardModel(account, originalModel, defaultMappedModel)
+	billingModel := resolveOpenAIChannelForwardModel(account, originalModel, defaultMappedModel)
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
 	if err := validateGPT61SolCompatRequest(body, upstreamModel); err != nil {
 		writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", err.Error())

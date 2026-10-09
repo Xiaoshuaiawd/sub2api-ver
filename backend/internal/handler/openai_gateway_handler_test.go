@@ -1931,6 +1931,7 @@ func newOpenAIWSHandlerTestServer(t *testing.T, h *OpenAIGatewayHandler, subject
 }
 
 type openAIResponsesWSUsageLogCase struct {
+	upstreamResponseModel  string
 	simpleModeRejectAtRead int64
 	compositeResolver      *service.CompositeRouteResolver
 	accountPlatform        string
@@ -2930,10 +2931,14 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 				}
 			}
 
+			responseModel := tc.upstreamResponseModel
+			if responseModel == "" {
+				responseModel = gjson.GetBytes(payload, "model").String()
+			}
 			response := fmt.Sprintf(
 				`{"type":"response.completed","response":{"id":"resp_usage_e2e_%d","model":%q,"usage":{"input_tokens":2,"output_tokens":1}}}`,
 				turn,
-				gjson.GetBytes(payload, "model").String(),
+				responseModel,
 			)
 			writeCtx, cancelWrite := context.WithTimeout(r.Context(), 3*time.Second)
 			writeErr := conn.Write(writeCtx, coderws.MessageText, []byte(response))

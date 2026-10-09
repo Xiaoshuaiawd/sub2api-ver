@@ -92,3 +92,11 @@ func TestMappedResponseModelForwarding(t *testing.T) {
 		}
 	}
 }
+
+func TestMappedResponseModelRewritesNestedProtocolModel(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	body := []byte(`{"model":"upstream-alias","response":{"model":"other-alias"},"tool":{"model":"keep"}}`)
+	require.JSONEq(t, `{"model":"public","response":{"model":"public"},"tool":{"model":"keep"}}`, string(svc.replaceModelInResponseBody(body, "mapped", "public")))
+	nestedOnly := []byte(`{"response":{"model":"upstream-alias"}}`)
+	require.JSONEq(t, `{"response":{"model":"public"}}`, string(svc.replaceModelInResponseBody(nestedOnly, "mapped", "public")))
+}

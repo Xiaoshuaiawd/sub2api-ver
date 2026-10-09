@@ -154,6 +154,26 @@ func TestResolveOpenAIForwardModel(t *testing.T) {
 	}
 }
 
+func TestResolveOpenAIChannelForwardModel(t *testing.T) {
+	t.Run("channel mapping wins over account mapping for requested model", func(t *testing.T) {
+		account := &Account{Credentials: map[string]any{
+			"model_mapping": map[string]any{"client-model-a": "client-model-a"},
+		}}
+		if got := resolveOpenAIChannelForwardModel(account, "client-model-a", "upstream-model-b"); got != "upstream-model-b" {
+			t.Fatalf("resolveOpenAIChannelForwardModel(...) = %q, want %q", got, "upstream-model-b")
+		}
+	})
+
+	t.Run("account mapping can translate channel mapped model", func(t *testing.T) {
+		account := &Account{Credentials: map[string]any{
+			"model_mapping": map[string]any{"upstream-model-b": "provider-model-c"},
+		}}
+		if got := resolveOpenAIChannelForwardModel(account, "client-model-a", "upstream-model-b"); got != "provider-model-c" {
+			t.Fatalf("resolveOpenAIChannelForwardModel(...) = %q, want %q", got, "provider-model-c")
+		}
+	})
+}
+
 func TestResolveOpenAICompactForwardModel(t *testing.T) {
 	tests := []struct {
 		name          string

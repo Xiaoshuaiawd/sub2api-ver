@@ -163,3 +163,31 @@ func TestResponsesToNativeAnthropicTrimsBillingModel(t *testing.T) {
 		})
 	}
 }
+
+func TestChatChannelMappingSelectsMappedProtocol(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, body := range []string{
+		`{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"stream":false}`,
+		`{"model":"gpt-5.6-sol","input":"hello","stream":false}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			account := routingTestAccount(PlatformOpenCodeGo, AccountTypeAPIKey, map[string]any{
+				"account_mode":  AccountModeGo,
+				"model_mapping": map[string]any{"gpt-5.6-sol": "gpt-5.6-sol", "channel-model": "minimax-m3"},
+				"api_base_urls": map[string]any{APIProtocolAnthropic: "http://anthropic.example", APIProtocolResponses: "http://responses.example"},
+			}, nil)
+			account.ID = 703
+			upstream := &httpUpstreamRecorder{resp: nativeAnthropicStreamResponse()}
+			svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+			c := adaptiveProtocolTestContext("/v1/chat/completions", []byte(body))
+			result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, []byte(body), "", "channel-model")
+			require.NotNil(t, upstream.lastReq)
+			require.Equal(t, "/v1/messages", upstream.lastReq.URL.Path)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Equal(t, "minimax-m3", gjson.GetBytes(upstream.lastBody, "model").String())
+			require.Equal(t, "gpt-5.6-sol", result.Model)
+			require.Equal(t, "minimax-m3", result.BillingModel)
+		})
+	}
+}
