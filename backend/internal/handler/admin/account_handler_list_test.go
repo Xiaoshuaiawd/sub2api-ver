@@ -79,6 +79,26 @@ func TestAccountHandlerListLiteUsesCompactDTOAndETag(t *testing.T) {
 	require.Contains(t, fullPayload.Data.Items[0], "account_groups")
 }
 
+func TestAccountHandlerListNeverReturnsAPIKeyBaseURLs(t *testing.T) {
+	router, adminSvc := setupAccountListRouter()
+	adminSvc.accounts = []service.Account{{
+		ID: 502, Name: "private-endpoint", Platform: service.PlatformKimi, Type: service.AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key": "sk-secret", "base_url": "https://private-relay.example/v1",
+			"api_base_urls": map[string]any{"chat_completions": "https://private-chat.example/v1"},
+		},
+	}}
+	for _, suffix := range []string{"&lite=1", ""} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts?page=1&page_size=20"+suffix, nil)
+		router.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.NotContains(t, rec.Body.String(), "private-relay.example")
+		require.NotContains(t, rec.Body.String(), "private-chat.example")
+		require.Contains(t, rec.Body.String(), "has_base_url")
+	}
+}
+
 func TestAccountHandlerListLiteStaysBelowResponseBudget(t *testing.T) {
 	router, adminSvc := setupAccountListRouter()
 	now := time.Now().UTC()

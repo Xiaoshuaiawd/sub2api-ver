@@ -251,6 +251,37 @@ func TestUpdateAccountPreservesProbeSnapshotWhenIdentityValuesAreUnchanged(t *te
 	require.Contains(t, updated.Extra, UpstreamBillingProbeExtraKey)
 }
 
+func TestUpdateAccountPreservesRedactedAPIKeyBaseURLsOnUnrelatedEdit(t *testing.T) {
+	accountID := int64(120)
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
+		accountID: {
+			ID: accountID, Platform: PlatformKimi, Type: AccountTypeAPIKey, Status: StatusActive,
+			Credentials: map[string]any{
+				"api_key": "sk-existing", "account_mode": AccountModePayG,
+				"api_protocol": APIProtocolAdaptive,
+				"base_url":     "https://hidden-chat.example/v1",
+				"api_base_urls": map[string]any{
+					APIProtocolChatCompletions: "https://hidden-chat.example/v1",
+					APIProtocolAnthropic:       "https://hidden-messages.example",
+				},
+			},
+		},
+	}}
+	updated, err := (&adminServiceImpl{accountRepo: repo}).UpdateAccount(context.Background(), accountID, &UpdateAccountInput{
+		Name: "renamed",
+		Credentials: map[string]any{
+			"account_mode":  AccountModePayG,
+			"api_protocol":  APIProtocolAdaptive,
+			"model_mapping": map[string]any{"model": "upstream"},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "renamed", updated.Name)
+	require.Equal(t, "sk-existing", updated.Credentials["api_key"])
+	require.Equal(t, "https://hidden-chat.example/v1", updated.Credentials["base_url"])
+	require.Equal(t, "https://hidden-messages.example", updated.Credentials["api_base_urls"].(map[string]any)[APIProtocolAnthropic])
+}
+
 func TestUpdateAccountInvalidatesProbeSnapshotWhenUpstreamIdentityChanges(t *testing.T) {
 	tests := []struct {
 		name        string

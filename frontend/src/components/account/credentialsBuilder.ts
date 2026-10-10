@@ -541,6 +541,7 @@ export interface CNUsageCellAccount {
   platform: string
   type: string
   credentials?: Record<string, unknown>
+  credentials_status?: Record<string, boolean>
 }
 
 // Command Code、Cline 的积分与用量接口只查官方主机上的 API Key 账号（与后端
@@ -580,6 +581,8 @@ function accountChatBaseUrl(account: CNUsageCellAccount, mode: string): string {
 /** 官方主机即平台清单默认端点的主机，且必须是 https。 */
 function officialAccountAPISupported(account: CNUsageCellAccount, mode: string): boolean {
   if (account.type !== 'apikey') return false
+  const serverEligibility = account.credentials_status?.official_chat_base_url
+  if (typeof serverEligibility === 'boolean') return serverEligibility
   try {
     const target = new URL(accountChatBaseUrl(account, mode))
     const official = new URL(defaultCNBaseUrl(account.platform, mode))

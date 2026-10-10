@@ -1229,6 +1229,7 @@ export default {
       bedrockApiKeyLeaveEmpty: '留空以保持当前密钥',
       apiKeyIsRequired: 'API Key 是必需的',
       leaveEmptyToKeep: '留空以保持当前密钥',
+      leaveBaseUrlEmptyToKeep: '留空保留现有地址；未配置时使用平台默认地址。填写新地址后才会替换。',
       // Upstream type
       upstream: {
         baseUrl: '上游 Base URL',

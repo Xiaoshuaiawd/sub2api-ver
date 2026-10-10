@@ -237,6 +237,30 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 		return nil
 	}
 	redactedCreds, credsStatus := RedactCredentials(a.Credentials)
+	if a.Type == service.AccountTypeAPIKey && redactedCreds != nil {
+		for _, key := range []string{"base_url", "api_base_urls"} {
+			value, present := a.Credentials[key]
+			configured := present && isCredentialValuePresent(value)
+			if key == "api_base_urls" {
+				if urls, ok := value.(map[string]any); ok {
+					configured = len(urls) > 0
+				}
+			}
+			if configured {
+				if credsStatus == nil {
+					credsStatus = make(map[string]bool, 3)
+				}
+				credsStatus["has_"+key] = true
+			}
+			delete(redactedCreds, key)
+		}
+		if a.IsMultiProtocolAPIKey() {
+			if credsStatus == nil {
+				credsStatus = make(map[string]bool, 1)
+			}
+			credsStatus["official_chat_base_url"] = a.IsOfficialCNChatBaseURL()
+		}
+	}
 	extra := redactAccountManagedExtra(a.Extra)
 	var ollamaCloudUsage *service.OllamaCloudUsageState
 	if state := service.OllamaCloudUsageStateFromAccount(a); state.Eligible {

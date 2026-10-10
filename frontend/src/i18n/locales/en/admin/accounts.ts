@@ -1127,6 +1127,7 @@ export default {
       bedrockApiKeyLeaveEmpty: 'Leave empty to keep current key',
       apiKeyIsRequired: 'API Key is required',
       leaveEmptyToKeep: 'Leave empty to keep current key',
+      leaveBaseUrlEmptyToKeep: 'Leave blank to keep the current URL, or use the platform default if none is set. Enter a new URL to replace it.',
       // Upstream type
       upstream: {
         baseUrl: 'Upstream Base URL',

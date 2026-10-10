@@ -32,21 +32,16 @@
           <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
           <input
             v-model="editBaseUrl"
-            type="text"
+            type="password"
             class="input"
-            :placeholder="
-              account.platform === 'openai'
-                ? 'https://api.openai.com'
-                : account.platform === 'gemini'
-                  ? 'https://generativelanguage.googleapis.com'
-                  : account.platform === 'antigravity'
-                    ? 'https://cloudcode-pa.googleapis.com'
-                    : account.platform === 'grok'
-                      ? 'https://api.x.ai/v1'
-                      : 'https://api.anthropic.com'
-            "
+            autocomplete="new-password"
+            data-1p-ignore
+            data-lpignore="true"
+            data-bwignore="true"
+            data-testid="edit-base-url"
+            :placeholder="t('admin.accounts.leaveBaseUrlEmptyToKeep')"
           />
-          <p v-if="baseUrlHint" class="input-hint">{{ baseUrlHint }}</p>
+          <p class="input-hint">{{ t('admin.accounts.leaveBaseUrlEmptyToKeep') }}</p>
           <GrokBaseUrlPresets
             v-if="account.platform === 'grok'"
             class="mt-2"
@@ -69,9 +64,10 @@
               <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
                 {{ t(`admin.accounts.cnProviders.apiProtocol.${item.labelKey}`) }}
               </label>
-              <input v-model="editAdaptiveBaseUrls[item.value]" type="text" class="input" />
+              <input v-model="editAdaptiveBaseUrls[item.value]" type="password" class="input" autocomplete="new-password" data-1p-ignore data-lpignore="true" data-bwignore="true" :data-testid="`edit-adaptive-base-url-${item.value}`" :placeholder="t('admin.accounts.leaveBaseUrlEmptyToKeep')" />
             </div>
           </div>
+          <p class="input-hint">{{ t('admin.accounts.leaveBaseUrlEmptyToKeep') }}</p>
           <p v-if="!cnSupportsNativeResponses(account.platform, currentOpenCodeOrCNMode())" class="input-hint">
             {{ t('admin.accounts.cnProviders.apiProtocol.responsesFallbackDesc') }}
           </p>
@@ -3351,15 +3347,6 @@ onMounted(() => {
   if (opencodeGoState.value && !opencodeGoState.value.snapshot) void loadOpenCodeGoUsage()
 })
 
-// Platform-specific hint for Base URL
-const baseUrlHint = computed(() => {
-  if (!props.account) return t('admin.accounts.baseUrlHint')
-  if (props.account.platform === 'openai') return t('admin.accounts.openai.baseUrlHint')
-  if (props.account.platform === 'gemini') return t('admin.accounts.gemini.baseUrlHint')
-  if (props.account.platform === 'grok') return ''
-  return t('admin.accounts.baseUrlHint')
-})
-
 const antigravityPresetMappings = computed(() => getPresetMappingsByPlatform('antigravity'))
 const bedrockPresets = computed(() => getPresetMappingsByPlatform('bedrock'))
 
@@ -3378,7 +3365,7 @@ interface TempUnschedRuleForm {
 
 // State
 const submitting = ref(false)
-const editBaseUrl = ref('https://api.anthropic.com')
+const editBaseUrl = ref('')
 const editApiKey = ref('')
 
 // ── 国产供应商（Kimi / Zhipu / DeepSeek）account_mode / api_protocol 编辑 ──
@@ -3427,10 +3414,14 @@ const editAdaptiveBaseUrls = ref<Record<CnNativeApiProtocol, string>>({
   anthropic: '',
   responses: ''
 })
-// 回填窗口标志：syncFormFromAccount 会同步改写 editAccountMode / editApiProtocol，
-// 而 watcher（pre-flush）在同步代码执行完之后才触发——若不抑制，会把刚恢复的
-// 存储版 base_url（可能是用户自定义/中转地址）覆盖为官方预设并在下次保存时持久化。
-// nextTick 后解除，此后用户主动切换模式/协议仍正常联动重置。
+const hasStoredBaseUrl = computed(() =>
+  props.account?.credentials_status?.has_base_url ?? Boolean(props.account?.credentials?.base_url)
+)
+const hasStoredAdaptiveBaseUrls = computed(() =>
+  props.account?.credentials_status?.has_api_base_urls ?? Boolean(props.account?.credentials?.api_base_urls)
+)
+// 回填窗口标志：加载账号时不让模式/协议 watcher 把已脱敏的空输入框
+// 自动填入官方端点；主动切换后才展示可写入的预设。
 const syncingForm = ref(false)
 const cnAccountModeOptions = computed<Array<{ value: CnAccountMode; labelKey: 'payg' | 'coding' }>>(
   () => {
@@ -3465,6 +3456,7 @@ watch(editApiProtocol, (protocol, previousProtocol) => {
   if (protocol === 'adaptive') {
     const defaults = defaultCNAdaptiveBaseUrls(adaptivePresetPlatform.value, currentOpenCodeOrCNMode())
     for (const item of editAdaptiveProtocolOptions.value) {
+      if (previousProtocol !== 'adaptive' && item.value === previousProtocol && hasStoredBaseUrl.value && !editBaseUrl.value.trim()) continue
       if (!editAdaptiveBaseUrls.value[item.value]) editAdaptiveBaseUrls.value[item.value] = defaults[item.value]
     }
     if (previousProtocol !== 'adaptive' && editBaseUrl.value.trim()) {
@@ -3475,7 +3467,7 @@ watch(editApiProtocol, (protocol, previousProtocol) => {
   }
   if (previousProtocol === 'adaptive') {
     editBaseUrl.value = editAdaptiveBaseUrls.value[protocol] ||
-      defaultCNBaseUrl(props.account!.platform, currentOpenCodeOrCNMode(), protocol)
+      (hasStoredAdaptiveBaseUrls.value ? '' : defaultCNBaseUrl(props.account!.platform, currentOpenCodeOrCNMode(), protocol))
     return
   }
   editBaseUrl.value = defaultCNBaseUrl(props.account!.platform, currentOpenCodeOrCNMode(), protocol)
@@ -3501,14 +3493,16 @@ watch(editAccountMode, (mode, previousMode) => {
     const previousDefaults = defaultCNAdaptiveBaseUrls(adaptivePresetPlatform.value, previousMode)
     const nextDefaults = defaultCNAdaptiveBaseUrls(adaptivePresetPlatform.value, mode)
     for (const item of editAdaptiveProtocolOptions.value) {
-      if (!editAdaptiveBaseUrls.value[item.value] || editAdaptiveBaseUrls.value[item.value] === previousDefaults[item.value]) {
+      if (editAdaptiveBaseUrls.value[item.value] === previousDefaults[item.value]) {
         editAdaptiveBaseUrls.value[item.value] = nextDefaults[item.value]
       }
     }
     editBaseUrl.value = editAdaptiveBaseUrls.value.chat_completions
     return
   }
-  editBaseUrl.value = defaultCNBaseUrl(props.account!.platform, mode, editApiProtocol.value)
+  if (editBaseUrl.value === defaultCNBaseUrl(props.account!.platform, previousMode, editApiProtocol.value)) {
+    editBaseUrl.value = defaultCNBaseUrl(props.account!.platform, mode, editApiProtocol.value)
+  }
 })
 watch(editOpenCodeAccountMode, (mode, previousMode) => {
   if (!isCNApiKeyAccount.value || props.account?.platform !== 'opencode_go' || syncingForm.value) return
@@ -3516,13 +3510,15 @@ watch(editOpenCodeAccountMode, (mode, previousMode) => {
     const previousDefaults = defaultCNAdaptiveBaseUrls('opencode_go', previousMode)
     const nextDefaults = defaultCNAdaptiveBaseUrls('opencode_go', mode)
     for (const item of editAdaptiveProtocolOptions.value) {
-      if (!editAdaptiveBaseUrls.value[item.value] || editAdaptiveBaseUrls.value[item.value] === previousDefaults[item.value]) {
+      if (editAdaptiveBaseUrls.value[item.value] === previousDefaults[item.value]) {
         editAdaptiveBaseUrls.value[item.value] = nextDefaults[item.value]
       }
     }
     editBaseUrl.value = editAdaptiveBaseUrls.value.chat_completions
   } else {
-    editBaseUrl.value = defaultCNBaseUrl('opencode_go', mode, editApiProtocol.value)
+    if (editBaseUrl.value === defaultCNBaseUrl('opencode_go', previousMode, editApiProtocol.value)) {
+      editBaseUrl.value = defaultCNBaseUrl('opencode_go', mode, editApiProtocol.value)
+    }
   }
   const previousRules = JSON.stringify(defaultOpenCodeProtocolRules(previousMode))
   if (JSON.stringify(editOpenCodeGoProtocolRules.value) === previousRules) {
@@ -4029,20 +4025,6 @@ const tempUnschedPresets = computed(() => [
   }
 ])
 
-// Computed: default base URL based on platform
-const defaultBaseUrl = computed(() => {
-  if (props.account?.platform === 'openai') return 'https://api.openai.com'
-  if (props.account?.platform === 'gemini') return 'https://generativelanguage.googleapis.com'
-  if (props.account?.platform === 'grok') return 'https://api.x.ai/v1'
-  if (props.account?.platform === 'typesafe') return 'https://api.typesafe.ai'
-  // CN 供应商：按当前模式/协议回落到官方预设（清空输入框提交时使用），
-  // 不能落到 anthropic 默认值（会被当 CC base 拼出错误端点）。
-  if (props.account && isMultiProtocolApiKeyPlatform(props.account.platform)) {
-    return defaultCNBaseUrl(props.account.platform, currentOpenCodeOrCNMode(), editApiProtocol.value)
-  }
-  return 'https://api.anthropic.com'
-})
-
 const mixedChannelWarningMessageText = computed(() => {
   if (mixedChannelWarningDetails.value) {
     return t('admin.accounts.mixedChannelWarning', mixedChannelWarningDetails.value)
@@ -4432,37 +4414,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
       if (!cnSupportsNativeResponses(newAccount.platform, currentOpenCodeOrCNMode()) && editApiProtocol.value === 'responses') {
         editApiProtocol.value = 'chat_completions'
       }
-      const adaptiveDefaults = defaultCNAdaptiveBaseUrls(newAccount.platform, currentOpenCodeOrCNMode())
-      const storedBaseUrls = (credentials.api_base_urls as Record<string, unknown> | undefined) || {}
-      const legacyBaseUrl = typeof credentials.base_url === 'string' ? credentials.base_url.trim() : ''
-      const storedChatBaseUrl = typeof storedBaseUrls.chat_completions === 'string'
-        ? storedBaseUrls.chat_completions.trim()
-        : ''
-      const storedAnthropicBaseUrl = typeof storedBaseUrls.anthropic === 'string'
-        ? storedBaseUrls.anthropic.trim()
-        : ''
-      const storedResponsesBaseUrl = typeof storedBaseUrls.responses === 'string'
-        ? storedBaseUrls.responses.trim()
-        : ''
-      const nextAdaptiveBaseUrls: Record<CnNativeApiProtocol, string> = {
-        chat_completions: storedChatBaseUrl || adaptiveDefaults.chat_completions,
-        anthropic: storedAnthropicBaseUrl || adaptiveDefaults.anthropic,
-        responses: storedResponsesBaseUrl || adaptiveDefaults.responses
-      }
-      const legacyProtocol: CnNativeApiProtocol = editApiProtocol.value === 'anthropic'
-        ? 'anthropic'
-        : editApiProtocol.value === 'responses'
-          ? 'responses'
-          : 'chat_completions'
-      const storedLegacyBaseUrl = legacyProtocol === 'anthropic'
-        ? storedAnthropicBaseUrl
-        : legacyProtocol === 'responses'
-          ? storedResponsesBaseUrl
-          : storedChatBaseUrl
-      if (legacyBaseUrl && !storedLegacyBaseUrl) {
-        nextAdaptiveBaseUrls[legacyProtocol] = legacyBaseUrl
-      }
-      editAdaptiveBaseUrls.value = nextAdaptiveBaseUrls
+      editAdaptiveBaseUrls.value = { chat_completions: '', anthropic: '', responses: '' }
       // 智谱团队版 Coding Plan：回填组织/项目 ID
       if (newAccount.platform === 'zhipu') {
         editZhipuOrganization.value = typeof credentials.zhipu_organization === 'string' ? credentials.zhipu_organization : ''
@@ -4474,21 +4426,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
           cloneOpenCodeGoProtocolRules(defaultProviderProtocolRules(newAccount.platform, currentOpenCodeOrCNMode()))
       }
     }
-    const platformDefaultUrl =
-      newAccount.platform === 'openai'
-        ? 'https://api.openai.com'
-        : newAccount.platform === 'gemini'
-          ? 'https://generativelanguage.googleapis.com'
-          : newAccount.platform === 'grok'
-            ? 'https://api.x.ai/v1'
-            : newAccount.platform === 'typesafe'
-              ? 'https://api.typesafe.ai'
-            : isMultiProtocolApiKeyPlatform(newAccount.platform)
-              ? defaultCNBaseUrl(newAccount.platform, currentOpenCodeOrCNMode(), editApiProtocol.value)
-              : 'https://api.anthropic.com'
-    editBaseUrl.value = isCNApiKeyAccount.value && editApiProtocol.value === 'adaptive'
-      ? editAdaptiveBaseUrls.value.chat_completions
-      : (credentials.base_url as string) || platformDefaultUrl
+    editBaseUrl.value = ''
 
     // Load model mappings and detect mode
     loadModelRestrictionFromMapping(credentials.model_mapping as Record<string, unknown> | undefined)
@@ -5206,29 +5144,29 @@ const handleSubmit = async () => {
     // For apikey type, handle credentials update
     if (props.account.type === 'apikey') {
       const currentCredentials = (props.account.credentials as Record<string, unknown>) || {}
-      const newBaseUrl = editBaseUrl.value.trim() || defaultBaseUrl.value
       const shouldApplyModelMapping = !(props.account.platform === 'openai' && openaiPassthroughEnabled.value)
 
-      // Always update credentials for apikey type to handle model mapping changes
-      const newCredentials: Record<string, unknown> = {
-        ...currentCredentials,
-        base_url: newBaseUrl
-      }
+      // API-key endpoints are redacted in responses. Send only replacements;
+      // omitted base_url / api_base_urls keep the stored values on the server.
+      const newCredentials: Record<string, unknown> = { ...currentCredentials }
+      delete newCredentials.base_url
+      delete newCredentials.api_base_urls
+      if (editBaseUrl.value.trim()) newCredentials.base_url = editBaseUrl.value.trim()
 
       // 国产供应商：模式与协议写入凭据（决定额度/余额探测与转发端点/格式）。
       if (isCNApiKeyAccount.value) {
         newCredentials.account_mode = currentOpenCodeOrCNMode()
         newCredentials.api_protocol = editApiProtocol.value
         if (editApiProtocol.value === 'adaptive') {
-          const defaults = defaultCNAdaptiveBaseUrls(adaptivePresetPlatform.value, currentOpenCodeOrCNMode())
           const protocolBaseUrls: Record<string, string> = {}
           for (const item of editAdaptiveProtocolOptions.value) {
-            protocolBaseUrls[item.value] = (editAdaptiveBaseUrls.value[item.value] || defaults[item.value]).trim()
+            const replacement = editAdaptiveBaseUrls.value[item.value].trim()
+            if (replacement) protocolBaseUrls[item.value] = replacement
           }
-          newCredentials.api_base_urls = protocolBaseUrls
-          newCredentials.base_url = protocolBaseUrls.chat_completions
-        } else {
-          delete newCredentials.api_base_urls
+          if (Object.keys(protocolBaseUrls).length > 0) newCredentials.api_base_urls = protocolBaseUrls
+          if (protocolBaseUrls.chat_completions) newCredentials.base_url = protocolBaseUrls.chat_completions
+        } else if (currentCredentials.api_protocol === 'adaptive') {
+          newCredentials.api_base_urls = {} // Explicitly leave Adaptive mode.
         }
         if (providerRoutesByModel(props.account.platform)) {
           applyOpenCodeGoProtocolRules(newCredentials, editOpenCodeGoProtocolRules.value, 'edit')

@@ -1,6 +1,9 @@
 package service
 
-import "strings"
+import (
+	"net/url"
+	"strings"
+)
 
 // ProviderEndpoints 是多协议 API Key 供应商在某个接入模式下的官方默认端点与
 // 内置分流规则。账号凭证里的 base_url / api_base_urls / protocol_rules 仍优先于这里。
@@ -76,6 +79,22 @@ func (p *ProviderProfile) Endpoints(mode string) ProviderEndpoints {
 // DefaultBaseURL 返回指定接入模式与上游协议的官方默认基址；该模式不提供此协议时为空串。
 func (p *ProviderProfile) DefaultBaseURL(mode, protocol string) string {
 	return p.Endpoints(mode).BaseURLs[protocol]
+}
+
+// IsOfficialCNChatBaseURL reports only whether an API-key account uses the
+// official Chat Completions host. The admin UI needs this eligibility bit, but
+// must not receive the configured Base URL itself.
+func (a *Account) IsOfficialCNChatBaseURL() bool {
+	if a == nil || !a.IsMultiProtocolAPIKey() {
+		return false
+	}
+	profile := LookupProviderProfile(a.Platform)
+	if profile == nil {
+		return false
+	}
+	target, targetErr := url.Parse(a.GetOpenAIBaseURL())
+	official, officialErr := url.Parse(profile.DefaultBaseURL(a.GetCredential("account_mode"), APIProtocolChatCompletions))
+	return targetErr == nil && officialErr == nil && target.Scheme == "https" && target.Hostname() != "" && strings.EqualFold(target.Hostname(), official.Hostname())
 }
 
 // SupportsProtocol 报告指定接入模式是否提供该协议的原生端点。

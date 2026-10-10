@@ -211,8 +211,9 @@ type Account struct {
 	Notes    *string `json:"notes"`
 	Platform string  `json:"platform"`
 	Type     string  `json:"type"`
-	// Credentials 经 RedactCredentials 处理后只含非敏感子键；敏感 token / api_key / 私钥
-	// 的存在性通过 CredentialsStatus（has_<key>）暴露，原始值不返回前端。
+	// Credentials 经 RedactCredentials 处理后只含非敏感子键；APIKEY 账号的
+	// base_url / api_base_urls 也会脱敏。存在性通过 CredentialsStatus（has_<key>）
+	// 暴露，official_chat_base_url 仅表示官方端点资格，不返回原始地址。
 	Credentials             map[string]any                 `json:"credentials"`
 	CredentialsStatus       map[string]bool                `json:"credentials_status,omitempty"`
 	Extra                   map[string]any                 `json:"extra"`

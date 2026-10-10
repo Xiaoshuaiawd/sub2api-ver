@@ -221,6 +221,11 @@ describe('credentialsBuilder built-in Command Code provider', () => {
     // 按模型分流的账号默认 adaptive，看 Chat Completions 分协议端点。
     const adaptiveRelay = account({ api_base_urls: { chat_completions: 'https://relay.example.com/v1' } })
     expect(cnQuotaCellVisible(adaptiveRelay)).toBe(false)
+    const redactedRelay = { ...account({ account_mode: 'payg' }), credentials_status: { official_chat_base_url: false } }
+    expect(cnQuotaCellVisible(redactedRelay)).toBe(false)
+    expect(cnBalanceCellVisible(redactedRelay)).toBe(false)
+    const redactedOfficial = { ...account({ account_mode: 'payg' }), credentials_status: { official_chat_base_url: true } }
+    expect(cnQuotaCellVisible(redactedOfficial)).toBe(true)
     expect(cnBalanceCellVisible(account({ account_mode: 'payg' }, 'oauth'))).toBe(false)
     expect(cnQuotaCellVisible({ platform: 'deepseek', type: 'apikey', credentials: { account_mode: 'payg' } })).toBe(false)
     expect(cnBalanceCellVisible({ platform: 'zhipu', type: 'apikey', credentials: { account_mode: 'payg' } })).toBe(false)

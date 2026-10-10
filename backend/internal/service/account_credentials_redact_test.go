@@ -88,3 +88,69 @@ func TestIsSensitiveCredentialKey(t *testing.T) {
 	require.False(t, IsSensitiveCredentialKey(""))
 	require.False(t, IsSensitiveCredentialKey("model_mapping"))
 }
+
+func TestMergePreservingAPIKeyBaseURLs_OmittedAndPartialUpdates(t *testing.T) {
+	existing := map[string]any{
+		"api_key": "sk-old", "base_url": "https://private-relay.example/v1",
+		"api_base_urls": map[string]any{
+			"chat_completions": "https://chat-relay.example/v1",
+			"anthropic":        "https://messages-relay.example",
+		},
+	}
+	kept := MergePreservingAPIKeyBaseURLs(PlatformZhipu, existing, map[string]any{"model_mapping": map[string]any{"gpt": "upstream"}})
+	require.Equal(t, existing["base_url"], kept["base_url"])
+	require.Equal(t, existing["api_base_urls"], kept["api_base_urls"])
+	require.Equal(t, "sk-old", kept["api_key"])
+
+	changed := MergePreservingAPIKeyBaseURLs(PlatformZhipu, existing, map[string]any{
+		"api_base_urls": map[string]any{"anthropic": "https://new-messages.example"},
+	})
+	require.Equal(t, "https://chat-relay.example/v1", changed["api_base_urls"].(map[string]any)["chat_completions"])
+	require.Equal(t, "https://new-messages.example", changed["api_base_urls"].(map[string]any)["anthropic"])
+	require.Equal(t, "https://messages-relay.example", existing["api_base_urls"].(map[string]any)["anthropic"])
+
+	cleared := MergePreservingAPIKeyBaseURLs(PlatformZhipu, existing, map[string]any{"api_base_urls": map[string]any{}})
+	require.Equal(t, map[string]any{}, cleared["api_base_urls"])
+
+	fixed := map[string]any{"api_protocol": APIProtocolAnthropic, "base_url": "https://hidden-relay.example/messages"}
+	adaptive := MergePreservingAPIKeyBaseURLs(PlatformZhipu, fixed, map[string]any{
+		"api_protocol":  APIProtocolAdaptive,
+		"api_base_urls": map[string]any{"chat_completions": "https://official.example/v1"},
+	})
+	require.Equal(t, "https://hidden-relay.example/messages", adaptive["api_base_urls"].(map[string]any)[APIProtocolAnthropic])
+}
+
+func TestMergePreservingAPIKeyBaseURLs_ModeAndProtocolChanges(t *testing.T) {
+	modeSwitch := MergePreservingAPIKeyBaseURLs(PlatformKimi, map[string]any{
+		"account_mode": AccountModePayG,
+		"api_protocol": APIProtocolAdaptive,
+		"base_url":     DefaultKimiPayGBaseURL,
+		"api_base_urls": map[string]any{
+			APIProtocolChatCompletions: DefaultKimiPayGBaseURL,
+			APIProtocolAnthropic:       "https://private-relay.example/anthropic",
+		},
+	}, map[string]any{"account_mode": AccountModeCoding, "api_protocol": APIProtocolAdaptive})
+	require.Equal(t, DefaultKimiCodingBaseURL, modeSwitch["base_url"])
+	require.Equal(t, DefaultKimiCodingBaseURL, modeSwitch["api_base_urls"].(map[string]any)[APIProtocolChatCompletions])
+	require.Equal(t, "https://private-relay.example/anthropic", modeSwitch["api_base_urls"].(map[string]any)[APIProtocolAnthropic])
+
+	protocolSwitch := MergePreservingAPIKeyBaseURLs(PlatformZhipu, map[string]any{
+		"api_protocol": APIProtocolAdaptive,
+		"base_url":     "https://chat-relay.example/v1",
+		"api_base_urls": map[string]any{
+			APIProtocolChatCompletions: "https://chat-relay.example/v1",
+			APIProtocolAnthropic:       "https://messages-relay.example",
+		},
+	}, map[string]any{"api_protocol": APIProtocolAnthropic, "api_base_urls": map[string]any{}})
+	require.Equal(t, "https://messages-relay.example", protocolSwitch["base_url"])
+	require.Equal(t, map[string]any{}, protocolSwitch["api_base_urls"])
+
+	legacyChat := MergePreservingAPIKeyBaseURLs(PlatformZhipu, map[string]any{
+		"api_protocol": APIProtocolAdaptive,
+		"base_url":     "https://legacy-chat-relay.example/v1",
+		"api_base_urls": map[string]any{
+			APIProtocolChatCompletions: "   ",
+		},
+	}, map[string]any{"api_protocol": APIProtocolChatCompletions, "api_base_urls": map[string]any{}})
+	require.Equal(t, "https://legacy-chat-relay.example/v1", legacyChat["base_url"])
+}

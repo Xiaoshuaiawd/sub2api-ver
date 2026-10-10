@@ -172,6 +172,57 @@ function buildAccount() {
   } as any
 }
 
+it('keeps redacted API-key endpoints blank and omits them when unchanged', async () => {
+  const account = buildAccount()
+  account.credentials = { api_protocol: 'adaptive', account_mode: 'payg' }
+  account.credentials_status = { has_api_key: true, has_base_url: true, has_api_base_urls: true }
+  updateAccountMock.mockReset().mockResolvedValue(account)
+  checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+  const wrapper = mountModal(account)
+  const input = wrapper.get<HTMLInputElement>('[data-testid="edit-base-url"]')
+  expect(input.attributes('type')).toBe('password')
+  expect(input.element.value).toBe('')
+  await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+  expect(updateAccountMock).toHaveBeenCalledTimes(1)
+  expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty('base_url')
+  expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty('api_base_urls')
+  wrapper.unmount()
+})
+
+it('submits only the replacement Base URL for a redacted API-key account', async () => {
+  const account = buildAccount()
+  account.credentials = {}
+  account.credentials_status = { has_api_key: true, has_base_url: true }
+  updateAccountMock.mockReset().mockResolvedValue(account)
+  checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+  const wrapper = mountModal(account)
+  await wrapper.get('[data-testid="edit-base-url"]').setValue('https://new-relay.example/v1')
+  await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+  expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.base_url).toBe('https://new-relay.example/v1')
+  wrapper.unmount()
+})
+
+it('submits only the changed adaptive endpoint when existing URLs are redacted', async () => {
+  const account = buildAccount()
+  account.platform = 'zhipu'
+  account.credentials = { account_mode: 'payg', api_protocol: 'adaptive' }
+  account.credentials_status = { has_api_key: true, has_base_url: true, has_api_base_urls: true }
+  updateAccountMock.mockReset().mockResolvedValue(account)
+  checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+  const wrapper = mountModal(account)
+  const anthropicInput = wrapper.get<HTMLInputElement>('[data-testid="edit-adaptive-base-url-anthropic"]')
+  expect(anthropicInput.attributes('type')).toBe('password')
+  expect(anthropicInput.element.value).toBe('')
+  await anthropicInput.setValue('https://new-messages.example')
+  await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+  expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.api_base_urls).toEqual({ anthropic: 'https://new-messages.example' })
+  expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty('base_url')
+  wrapper.unmount()
+})
+
 function buildOpenAISparkShadowAccount() {
   const account = buildAccount()
   return {
@@ -469,7 +520,7 @@ describe('EditAccountModal', () => {
     })
   })
 
-  it('preserves OpenCode Zen account type and endpoints on submit', async () => {
+  it('keeps OpenCode Zen mode and rules without echoing hidden endpoints', async () => {
     const account = buildAccount()
     account.platform = 'opencode_go'
     account.credentials = {
@@ -500,12 +551,6 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).toMatchObject({
       account_mode: 'zen',
       api_protocol: 'adaptive',
-      base_url: 'https://opencode.ai/zen/v1',
-      api_base_urls: {
-        chat_completions: 'https://opencode.ai/zen/v1',
-        anthropic: 'https://opencode.ai/zen',
-        responses: 'https://opencode.ai/zen/v1'
-      },
       protocol_rules: [
         { pattern: 'grok-*', protocol: 'responses' },
         { pattern: 'gpt-*', protocol: 'responses' },
@@ -514,6 +559,8 @@ describe('EditAccountModal', () => {
         { pattern: 'qwen*', protocol: 'anthropic' }
       ]
     })
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty('base_url')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty('api_base_urls')
   })
 
   it('treats a legacy OpenCode account without account_mode as GO', async () => {
@@ -538,9 +585,9 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock).toHaveBeenCalledTimes(1)
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).toMatchObject({
       account_mode: 'go',
-      api_protocol: 'adaptive',
-      base_url: 'https://opencode.ai/zen/go/v1'
+      api_protocol: 'adaptive'
     })
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty('base_url')
   })
 
   describe('providers using the generic form', () => {
@@ -604,7 +651,7 @@ describe('EditAccountModal', () => {
       return account
     }
 
-    it('preserves stored endpoints and rules on submit', async () => {
+    it('keeps rules and omits stored endpoints on submit', async () => {
       const wrapper = mountModal(commandCodeAccount())
       await wrapper.get('form#edit-account-form').trigger('submit.prevent')
 
@@ -612,17 +659,13 @@ describe('EditAccountModal', () => {
       expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).toMatchObject({
         account_mode: 'standard',
         api_protocol: 'adaptive',
-        base_url: 'https://relay.example.com/v1',
-        api_base_urls: {
-          chat_completions: 'https://relay.example.com/v1',
-          anthropic: 'https://relay.example.com'
-        },
         protocol_rules: [{ pattern: 'custom-*', protocol: 'anthropic' }]
       })
-      expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.api_base_urls).not.toHaveProperty('responses')
+      expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty('base_url')
+      expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty('api_base_urls')
     })
 
-    it('offers the provider modes and keeps customised endpoints when switching mode', async () => {
+    it('offers provider modes and leaves hidden custom endpoints for the server to preserve', async () => {
       const wrapper = mountModal(commandCodeAccount())
       const modeButtons = wrapper.get('[data-testid="edit-generic-account-mode"]').findAll('button')
       expect(modeButtons.map(button => button.text())).toEqual(['standard', 'team'])
@@ -631,17 +674,13 @@ describe('EditAccountModal', () => {
 
       expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).toMatchObject({
         account_mode: 'team',
-        // 自定义端点与规则不是上一模式的默认值，切换模式时保留。
-        api_base_urls: {
-          chat_completions: 'https://relay.example.com/v1',
-          anthropic: 'https://relay.example.com'
-        },
         protocol_rules: [{ pattern: 'custom-*', protocol: 'anthropic' }]
       })
+      expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty('api_base_urls')
     })
   })
 
-  it('preserves adaptive Kimi Responses endpoint on submit', async () => {
+  it('omits hidden adaptive Kimi endpoints on submit', async () => {
     const account = buildAccount()
     account.platform = 'kimi'
     account.credentials = {
@@ -664,17 +703,13 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock).toHaveBeenCalledTimes(1)
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).toMatchObject({
       account_mode: 'payg',
-      api_protocol: 'adaptive',
-      base_url: 'https://api.moonshot.cn/v1',
-      api_base_urls: {
-        chat_completions: 'https://api.moonshot.cn/v1',
-        anthropic: 'https://api.moonshot.cn/anthropic',
-        responses: 'https://api.moonshot.cn/v1'
-      }
+      api_protocol: 'adaptive'
     })
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty('base_url')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty('api_base_urls')
   })
 
-  it('preserves adaptive GLM endpoints on submit', async () => {
+  it('omits hidden adaptive GLM endpoints on submit', async () => {
     const account = buildAccount()
     account.platform = 'zhipu'
     account.credentials = {
@@ -696,13 +731,10 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock).toHaveBeenCalledTimes(1)
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).toMatchObject({
       account_mode: 'coding',
-      api_protocol: 'adaptive',
-      base_url: 'https://open.bigmodel.cn/api/coding/paas/v4',
-      api_base_urls: {
-        chat_completions: 'https://open.bigmodel.cn/api/coding/paas/v4',
-        anthropic: 'https://open.bigmodel.cn/api/anthropic'
-      }
+      api_protocol: 'adaptive'
     })
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty('base_url')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty('api_base_urls')
   })
 
   it.each([
@@ -729,13 +761,13 @@ describe('EditAccountModal', () => {
     const submittedCredentials = updateAccountMock.mock.calls[0]?.[1]?.credentials
     expect(submittedCredentials).toMatchObject({
       account_mode: 'payg',
-      api_protocol: 'chat_completions',
-      base_url: 'https://relay.example.com/v1'
+      api_protocol: 'chat_completions'
     })
+    expect(submittedCredentials).not.toHaveProperty('base_url')
     expect(submittedCredentials).not.toHaveProperty('api_base_urls')
   })
 
-  it('uses the legacy base_url when adaptive endpoints are missing', async () => {
+  it('leaves a legacy hidden Base URL for the server when adaptive endpoints are missing', async () => {
     const account = buildAccount()
     account.platform = 'zhipu'
     account.credentials = {
@@ -755,16 +787,13 @@ describe('EditAccountModal', () => {
 
     expect(updateAccountMock).toHaveBeenCalledTimes(1)
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).toMatchObject({
-      api_protocol: 'adaptive',
-      base_url: 'https://relay.example.com/v1',
-      api_base_urls: {
-        chat_completions: 'https://relay.example.com/v1',
-        anthropic: 'https://open.bigmodel.cn/api/anthropic'
-      }
+      api_protocol: 'adaptive'
     })
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty('base_url')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty('api_base_urls')
   })
 
-  it('carries a fixed Chat relay into Adaptive when the user switches protocols', async () => {
+  it('lets the server carry a hidden fixed Chat relay into Adaptive', async () => {
     const account = buildAccount()
     account.platform = 'zhipu'
     account.credentials = {
@@ -787,11 +816,12 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock).toHaveBeenCalledTimes(1)
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).toMatchObject({
       api_protocol: 'adaptive',
-      base_url: 'https://relay.example.com/v1',
       api_base_urls: {
-        chat_completions: 'https://relay.example.com/v1'
+        anthropic: 'https://open.bigmodel.cn/api/anthropic'
       }
     })
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty('base_url')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.api_base_urls).not.toHaveProperty('chat_completions')
   })
 
   it.each([
@@ -802,8 +832,7 @@ describe('EditAccountModal', () => {
       baseUrl: 'https://relay.example.com/anthropic',
       expectedBaseUrl: 'https://open.bigmodel.cn/api/paas/v4',
       expectedProtocolUrls: {
-        chat_completions: 'https://open.bigmodel.cn/api/paas/v4',
-        anthropic: 'https://relay.example.com/anthropic'
+        chat_completions: 'https://open.bigmodel.cn/api/paas/v4'
       }
     },
     {
@@ -814,8 +843,7 @@ describe('EditAccountModal', () => {
       expectedBaseUrl: 'https://api.deepseek.com',
       expectedProtocolUrls: {
         chat_completions: 'https://api.deepseek.com',
-        anthropic: 'https://api.deepseek.com/anthropic',
-        responses: 'https://relay.example.com/responses'
+        anthropic: 'https://api.deepseek.com/anthropic'
       }
     }
   ])('keeps a fixed $name relay in its protocol slot when switching to Adaptive', async (testCase) => {
@@ -844,6 +872,7 @@ describe('EditAccountModal', () => {
       base_url: testCase.expectedBaseUrl,
       api_base_urls: testCase.expectedProtocolUrls
     })
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.api_base_urls).not.toHaveProperty(testCase.protocol)
   })
 
   it('preserves model mappings when editing the whitelist', async () => {
@@ -1156,7 +1185,7 @@ describe('EditAccountModal', () => {
     })
   })
 
-  it('uses the official xAI base URL when a Grok API-key account omits base_url', async () => {
+  it('leaves a Grok API-key Base URL blank so the server retains its default', async () => {
     const account = buildGrokAPIKeyAccount()
     updateAccountMock.mockReset()
     checkMixedChannelRiskMock.mockReset()
@@ -1165,13 +1194,12 @@ describe('EditAccountModal', () => {
 
     const wrapper = mountModal(account)
 
-    expect((wrapper.get('input[placeholder="https://api.x.ai/v1"]').element as HTMLInputElement).value)
-      .toBe('https://api.x.ai/v1')
+    expect(wrapper.get<HTMLInputElement>('[data-testid="edit-base-url"]').element.value).toBe('')
 
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
 
     expect(updateAccountMock).toHaveBeenCalledTimes(1)
-    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.base_url).toBe('https://api.x.ai/v1')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty('base_url')
   })
 
   it('only submits model mapping credentials when saving an OpenAI spark shadow account', async () => {

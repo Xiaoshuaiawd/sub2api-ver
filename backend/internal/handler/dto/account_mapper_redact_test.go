@@ -58,6 +58,47 @@ func TestAccountFromServiceShallow_RedactsSensitiveCredentials(t *testing.T) {
 	require.Equal(t, "rt-secret", src.Credentials["refresh_token"])
 }
 
+func TestAccountFromServiceShallow_RedactsAPIKeyBaseURLs(t *testing.T) {
+	src := &service.Account{
+		ID: 43, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":       "sk-secret",
+			"base_url":      "https://private-relay.example/v1",
+			"api_base_urls": map[string]any{"chat_completions": "https://chat-relay.example/v1", "anthropic": "https://messages-relay.example"},
+		},
+	}
+	got := AccountFromServiceShallow(src)
+	require.NotContains(t, got.Credentials, "base_url")
+	require.NotContains(t, got.Credentials, "api_base_urls")
+	require.True(t, got.CredentialsStatus["has_base_url"])
+	require.True(t, got.CredentialsStatus["has_api_base_urls"])
+	raw, err := json.Marshal(got)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "private-relay.example")
+	require.NotContains(t, string(raw), "chat-relay.example")
+	require.NotContains(t, string(raw), "messages-relay.example")
+}
+
+func TestAccountFromServiceShallow_KeepsOfficialEndpointEligibilityWithoutURL(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		url  string
+		want bool
+	}{
+		{name: "official", url: service.DefaultCommandCodeBaseURL, want: true},
+		{name: "relay", url: "https://relay.example/v1", want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := AccountFromServiceShallow(&service.Account{
+				Platform: service.PlatformCommandCode, Type: service.AccountTypeAPIKey,
+				Credentials: map[string]any{"api_key": "sk-secret", "base_url": tc.url},
+			})
+			require.NotContains(t, got.Credentials, "base_url")
+			require.Equal(t, tc.want, got.CredentialsStatus["official_chat_base_url"])
+		})
+	}
+}
+
 func TestAccountFromServiceShallow_RedactsOllamaCloudManagedExtra(t *testing.T) {
 	snapshot := map[string]any{
 		"status":          service.OllamaCloudUsageStatusOK,
