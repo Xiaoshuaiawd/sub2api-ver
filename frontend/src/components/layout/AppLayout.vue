@@ -21,6 +21,7 @@
 
 <script setup lang="ts">
 import '@/styles/onboarding.css'
+import '@/styles/workspace-motion.css'
 import { computed, onMounted, ref } from 'vue'
 import { useAppStore } from '@/stores'
 import { useAuthStore } from '@/stores/auth'
@@ -64,10 +65,10 @@ defineExpose({ replayTour })
 .app-shell :deep(header.glass) { background: rgba(255, 255, 255, .96); border-bottom-color: #ececf2; }
 .app-shell :deep(.header-balance) { background: #f2f1ff; }
 .app-shell :deep(.header-balance svg), .app-shell :deep(.header-balance > span.font-semibold) { color: #595bd6; }
-.page-content > * { animation: page-enter .32s ease-out both; }
+.page-content > * { animation: page-enter .38s cubic-bezier(.16, 1, .3, 1) both; }
 .dashboard-layout { background: #fff; }
 .layout-wide :deep(.dashboard-page > div) { max-width: none; }
-@keyframes page-enter { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes page-enter { from { opacity: 0; transform: translateY(10px) scale(.994); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @media (prefers-reduced-motion: reduce) { .page-content > * { animation: none; } }
 </style>
 

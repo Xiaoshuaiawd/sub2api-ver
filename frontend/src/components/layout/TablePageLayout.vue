@@ -49,6 +49,12 @@ onUnmounted(() => {
   @apply flex flex-col gap-6;
   height: calc(100vh - 64px - 4rem); /* 减去 header + lg:p-8 的上下padding */
 }
+.table-page-layout > * { animation: table-section-enter .28s cubic-bezier(.16, 1, .3, 1) both; }
+.table-page-layout > :nth-child(2) { animation-delay: .05s; }
+.table-page-layout > :nth-child(3) { animation-delay: .1s; }
+.table-page-layout > :nth-child(4) { animation-delay: .15s; }
+@keyframes table-section-enter { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .table-page-layout > * { animation: none; } }
 
 .layout-section-fixed {
   @apply flex-shrink-0;

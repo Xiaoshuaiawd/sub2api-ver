@@ -12,6 +12,10 @@
     color-scheme: light;
   }
 
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+  }
+
   .dark {
     color-scheme: dark;
   }
@@ -373,7 +377,13 @@
     @apply border border-gray-200 dark:border-dark-700;
     @apply shadow-lg;
     @apply py-1;
-    @apply origin-top-right animate-scale-in;
+    @apply origin-top-right;
+    animation: workspace-menu-pop .3s cubic-bezier(.2, 1.28, .36, 1) both;
+  }
+
+  @keyframes workspace-menu-pop {
+    from { opacity: 0; transform: translateY(-6px) scale(.96); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
   }
 
   .dropdown-item {
@@ -444,16 +454,20 @@
   }
 
   .modal-enter-active .modal-content {
-    transition: transform 250ms ease-out, opacity 250ms ease-out;
+    transition: transform 360ms cubic-bezier(.2, 1.28, .36, 1), opacity 220ms ease-out;
   }
 
   .modal-leave-active .modal-content {
-    transition: transform 200ms ease-in, opacity 200ms ease-in;
+    transition: transform 180ms ease-in, opacity 180ms ease-in;
   }
 
-  .modal-enter-from .modal-content,
+  .modal-enter-from .modal-content {
+    transform: translateY(14px) scale(.96);
+    opacity: 0;
+  }
+
   .modal-leave-to .modal-content {
-    transform: scale(0.95);
+    transform: translateY(6px) scale(.985);
     opacity: 0;
   }
 
@@ -464,6 +478,7 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
+    .dropdown { animation: none; }
     .modal-enter-active,
     .modal-leave-active,
     .modal-enter-active .modal-content,

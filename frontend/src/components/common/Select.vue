@@ -523,11 +523,15 @@ onUnmounted(() => {
   @apply bg-white dark:bg-dark-800;
   @apply border border-gray-200 dark:border-dark-600;
   @apply text-gray-900 dark:text-gray-100;
-  @apply transition-all duration-200;
+  transition: transform .3s cubic-bezier(.2, 1.28, .36, 1), border-color .2s ease, box-shadow .2s ease, background-color .2s ease;
   @apply focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30;
   @apply hover:border-gray-300 dark:hover:border-dark-500;
   @apply cursor-pointer;
 }
+@media (hover: hover) and (pointer: fine) {
+  .select-trigger:not(:disabled):hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(30, 41, 59, .07); }
+}
+.select-trigger:not(:disabled):active { transform: scale(.985); transition-duration: .12s; }
 
 .select-trigger-open {
   @apply border-primary-500 ring-2 ring-primary-500/30;
@@ -587,9 +591,13 @@ onUnmounted(() => {
   @apply flex items-center justify-between gap-2;
   @apply px-4 py-2.5 text-sm;
   @apply text-gray-700 dark:text-gray-300;
-  @apply cursor-pointer transition-colors duration-150;
+  @apply cursor-pointer;
+  transition: background-color .16s ease, transform .28s cubic-bezier(.2, 1.28, .36, 1);
   @apply hover:bg-gray-50 dark:hover:bg-dark-700;
   pointer-events: auto !important;
+}
+@media (hover: hover) and (pointer: fine) {
+  .select-dropdown-portal .select-option:not(.select-option-disabled):not(.select-option-group):hover { transform: translateX(2px); }
 }
 
 .select-dropdown-portal .select-option-selected {
@@ -627,12 +635,20 @@ onUnmounted(() => {
 
 .select-dropdown-enter-active,
 .select-dropdown-leave-active {
-  transition: all 0.2s ease;
+  transition: opacity .2s ease, transform .28s cubic-bezier(.2, 1.28, .36, 1);
 }
 
 .select-dropdown-enter-from,
 .select-dropdown-leave-to {
   opacity: 0;
-  transform: translateY(-8px);
+  transform: translateY(-6px) scale(.975);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .select-dropdown-enter-active, .select-dropdown-leave-active,
+  .select-trigger, .select-dropdown-portal .select-option { transition-duration: .01ms !important; }
+  .select-dropdown-enter-from, .select-dropdown-leave-to,
+  .select-trigger:not(:disabled):hover, .select-trigger:not(:disabled):active,
+  .select-dropdown-portal .select-option:hover { transform: none !important; }
 }
 </style>

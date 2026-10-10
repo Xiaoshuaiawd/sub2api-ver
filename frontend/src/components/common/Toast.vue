@@ -5,14 +5,7 @@
       aria-live="polite"
       aria-atomic="true"
     >
-      <TransitionGroup
-        enter-active-class="transition ease-out duration-300"
-        enter-from-class="opacity-0 translate-x-full"
-        enter-to-class="opacity-100 translate-x-0"
-        leave-active-class="transition ease-in duration-200"
-        leave-from-class="opacity-100 translate-x-0"
-        leave-to-class="opacity-0 translate-x-full"
-      >
+      <TransitionGroup name="toast-motion">
         <div
           v-for="toast in toasts"
           :key="toast.id"
@@ -135,6 +128,16 @@ const removeToast = (id: string) => {
 </script>
 
 <style scoped>
+.toast-motion-enter-active { transition: opacity .22s ease, transform .36s cubic-bezier(.2, 1.28, .36, 1); }
+.toast-motion-leave-active { transition: opacity .16s ease, transform .16s ease; }
+.toast-motion-move { transition: transform .3s cubic-bezier(.16, 1, .3, 1); }
+.toast-motion-enter-from { opacity: 0; transform: translate(10px, -8px) scale(.96); }
+.toast-motion-leave-to { opacity: 0; transform: translate(12px, -4px) scale(.98); }
+@media (prefers-reduced-motion: reduce) {
+  .toast-motion-enter-active, .toast-motion-leave-active, .toast-motion-move { transition-duration: .01ms; }
+  .toast-motion-enter-from, .toast-motion-leave-to { transform: none; }
+  .toast-progress { animation: none; }
+}
 .toast-progress {
   width: 100%;
   animation-name: toast-progress-shrink;

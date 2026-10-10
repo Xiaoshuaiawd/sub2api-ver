@@ -1,0 +1,90 @@
+/* Interaction feedback shared by authenticated user and admin pages. */
+.app-shell {
+  --workspace-spring: cubic-bezier(.2, 1.28, .36, 1);
+  --workspace-settle: cubic-bezier(.16, 1, .3, 1);
+}
+
+.app-shell .btn {
+  transition: transform .32s var(--workspace-spring), box-shadow .28s var(--workspace-settle), background-color .2s ease, border-color .2s ease, color .2s ease;
+  transform: translateZ(0);
+}
+
+.app-shell .btn:not(:disabled):active { transform: translateY(0) scale(.96); transition-duration: .12s; }
+
+.app-shell header.glass button:not(.btn):not(:disabled) {
+  transition: transform .3s var(--workspace-spring), background-color .2s ease, box-shadow .2s ease, color .2s ease;
+}
+@media (hover: hover) and (pointer: fine) {
+  .app-shell .btn:not(:disabled):hover { transform: translateY(-2px); }
+  .app-shell .btn-primary:not(:disabled):hover { box-shadow: 0 9px 22px rgba(100, 102, 233, .24); }
+  .app-shell .btn-secondary:not(:disabled):hover { box-shadow: 0 6px 16px rgba(30, 41, 59, .09); }
+  .app-shell header.glass button:not(.btn):not(:disabled):hover { transform: translateY(-1px) scale(1.04); }
+  .dark .app-shell .btn-primary:not(:disabled):hover { box-shadow: 0 9px 22px rgba(100, 102, 233, .18); }
+}
+.app-shell header.glass button:not(.btn):not(:disabled):active { transform: scale(.94); transition-duration: .12s; }
+
+.app-shell .sidebar-link {
+  position: relative;
+  transition: transform .35s var(--workspace-spring), background-color .2s ease, color .2s ease, box-shadow .25s ease;
+}
+.app-shell .sidebar-link > svg,
+.app-shell .sidebar-link > .sidebar-svg-icon {
+  transition: transform .35s var(--workspace-spring);
+  transform-origin: center;
+}
+.app-shell .sidebar-link-active::before {
+  position: absolute;
+  left: 3px;
+  top: 50%;
+  width: 3px;
+  height: 16px;
+  border-radius: 999px;
+  background: currentColor;
+  content: '';
+  transform: translateY(-50%);
+}
+.app-shell .sidebar-link-active > svg,
+.app-shell .sidebar-link-active > .sidebar-svg-icon { animation: workspace-icon-settle .42s var(--workspace-spring) both; }
+@keyframes workspace-icon-settle {
+  0% { transform: scale(.78) translateY(2px); }
+  65% { transform: scale(1.12) translateY(-1px); }
+  100% { transform: scale(1) translateY(0); }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .app-shell .sidebar-link:not(:disabled):hover { transform: translateX(3px); box-shadow: 0 3px 12px rgba(30, 41, 59, .045); }
+  .app-shell .sidebar-link:not(:disabled):hover > svg,
+  .app-shell .sidebar-link:not(:disabled):hover > .sidebar-svg-icon { transform: scale(1.18) translateY(-1px); }
+  .app-shell .sidebar-link-collapsed:not(:disabled):hover > svg,
+  .app-shell .sidebar-link-collapsed:not(:disabled):hover > .sidebar-svg-icon { transform: scale(1.3) translateY(-2px); }
+}
+.app-shell .sidebar-link:not(:disabled):active { transform: translateX(1px) scale(.97); transition-duration: .12s; }
+.app-shell .sidebar-link:focus-visible { outline: 2px solid #7774ed; outline-offset: 2px; }
+
+.app-shell .dropdown-item { transition: background-color .18s ease, padding-left .28s var(--workspace-spring); }
+.app-shell .dropdown-item:hover { padding-left: 1.15rem; }
+.app-shell .input:focus { box-shadow: 0 0 0 4px rgba(100, 102, 233, .09); }
+
+.dark .app-shell .sidebar-link:not(:disabled):hover { box-shadow: 0 3px 12px rgba(0, 0, 0, .12); }
+
+@media (prefers-reduced-motion: reduce) {
+  .app-shell .sidebar,
+  .app-shell .page-content,
+  .app-shell > div { transition-duration: .01ms !important; }
+  .app-shell .btn,
+  .app-shell header.glass button:not(.btn),
+  .app-shell .sidebar-link,
+  .app-shell .sidebar-link > svg,
+  .app-shell .sidebar-link > .sidebar-svg-icon,
+  .app-shell .dropdown-item { transition-duration: .01ms !important; }
+  .app-shell .btn:not(:disabled):hover,
+  .app-shell .btn:not(:disabled):active,
+  .app-shell header.glass button:not(.btn):not(:disabled):hover,
+  .app-shell header.glass button:not(.btn):not(:disabled):active,
+  .app-shell .sidebar-link:not(:disabled):hover,
+  .app-shell .sidebar-link:not(:disabled):active,
+  .app-shell .sidebar-link:not(:disabled):hover > svg,
+  .app-shell .sidebar-link:not(:disabled):hover > .sidebar-svg-icon { transform: none !important; }
+  .app-shell .sidebar-link-active > svg,
+  .app-shell .sidebar-link-active > .sidebar-svg-icon { animation: none; }
+}

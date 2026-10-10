@@ -116,9 +116,11 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
 </script>
 
 <style scoped>
-.quick-navigation-enter-active, .quick-navigation-leave-active { transition: opacity .2s ease; }
-.quick-navigation-enter-active section, .quick-navigation-leave-active section { transition: transform .2s ease, opacity .2s ease; }
+.quick-navigation-enter-active, .quick-navigation-leave-active { transition: opacity .22s ease; }
+.quick-navigation-enter-active section { transition: transform .34s cubic-bezier(.2, 1.28, .36, 1), opacity .22s ease; }
+.quick-navigation-leave-active section { transition: transform .16s ease, opacity .16s ease; }
 .quick-navigation-enter-from, .quick-navigation-leave-to { opacity: 0; }
-.quick-navigation-enter-from section, .quick-navigation-leave-to section { transform: translateY(-8px) scale(.985); opacity: 0; }
+.quick-navigation-enter-from section { transform: translateY(-12px) scale(.965); opacity: 0; }
+.quick-navigation-leave-to section { transform: translateY(-5px) scale(.985); opacity: 0; }
 @media (prefers-reduced-motion: reduce) { .quick-navigation-enter-active, .quick-navigation-leave-active, .quick-navigation-enter-active section, .quick-navigation-leave-active section { transition: none; } }
 </style>
