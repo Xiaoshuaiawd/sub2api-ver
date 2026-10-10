@@ -1,5 +1,10 @@
 export default {
   dashboard: {
+    accountOverview: '账户概况',
+    todayTitle: '今天',
+    trendsTitle: '使用趋势',
+    recentOverview: '近期概览',
+    loadFailed: '概况暂时无法加载，请重试。',
     title: '仪表盘',
     welcomeMessage: '欢迎回来！这是您账户的概览。',
     balance: '余额',

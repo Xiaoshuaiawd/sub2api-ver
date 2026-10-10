@@ -4,7 +4,7 @@ export default {
     eyebrow: '开发者 AI API 平台', heroLead: '一个 API，', heroAccent: '接入更多 AI 模型',
     defaultSubtitle: '为开发者准备的统一 AI API 服务',
     heroDescription: '面向 Codex、Claude Code、OpenCode 与自定义 IDE 的统一编程 API。分组与模型随配置同步，让每次构建都有更多选择。',
-    start: '开始使用', exploreGroups: '查看分组', liveCatalog: '分组与模型实时更新', permissionAware: '按访问权限展示', clientFriendly: '面向开发工具',
+    start: '开始使用', exploreGroups: '查看分组', scrollToExplore: '向下探索', liveCatalog: '分组与模型实时更新', permissionAware: '按访问权限展示', clientFriendly: '面向开发工具',
     catalogTitle: '实时服务目录', groupsCount: '可见分组', modelsCount: '可用模型', activePlatforms: '覆盖平台', noPlatforms: '暂无平台', catalogFootnote: '数据来自当前启用的渠道与分组', featuredModel: '当前展示模型', copyCode: '复制示例', copied: '已复制', copyFailed: '复制失败',
     clientsTitle: '你的开发工具，你的模型栈', clientsDescription: '通过可配置的 API 地址和密钥，把站点模型接入你常用的开发工具。', customApi: 'CUSTOM API READY',
     clientNote: '客户端能否调用某个模型，取决于其支持的协议、客户端设置以及你可访问的分组。',

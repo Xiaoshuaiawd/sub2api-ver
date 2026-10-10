@@ -1,5 +1,10 @@
 export default {
   dashboard: {
+    accountOverview: 'Account overview',
+    todayTitle: 'Today',
+    trendsTitle: 'Usage trends',
+    recentOverview: 'Recent overview',
+    loadFailed: 'The overview is temporarily unavailable. Please try again.',
     title: 'Dashboard',
     welcomeMessage: "Welcome back! Here's an overview of your account.",
     balance: 'Balance',

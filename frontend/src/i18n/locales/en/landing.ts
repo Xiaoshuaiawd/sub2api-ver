@@ -4,7 +4,7 @@ export default {
     eyebrow: 'AI API FOR DEVELOPERS', heroLead: 'One API.', heroAccent: 'More models to build with.',
     defaultSubtitle: 'A unified AI API service for developers',
     heroDescription: 'One programmable API for Codex, Claude Code, OpenCode, and custom IDEs. Groups and models stay in sync with your configuration.',
-    start: 'Get started', exploreGroups: 'Explore groups', liveCatalog: 'Live group and model catalog', permissionAware: 'Access-aware visibility', clientFriendly: 'Built for developer tools',
+    start: 'Get started', exploreGroups: 'Explore groups', scrollToExplore: 'Scroll to explore', liveCatalog: 'Live group and model catalog', permissionAware: 'Access-aware visibility', clientFriendly: 'Built for developer tools',
     catalogTitle: 'Live catalog', groupsCount: 'Visible groups', modelsCount: 'Available models', activePlatforms: 'Platforms', noPlatforms: 'No platforms yet', catalogFootnote: 'Based on active channels and groups', featuredModel: 'Featured model', copyCode: 'Copy example', copied: 'Copied', copyFailed: 'Copy failed',
     clientsTitle: 'Your tools. Your model stack.', clientsDescription: 'Use a configurable API URL and key to connect site models to your development tools.', customApi: 'CUSTOM API READY',
     clientNote: 'Model availability in each client depends on its supported protocol, client settings, and the groups you can access.',

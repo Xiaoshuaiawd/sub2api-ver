@@ -1,5 +1,6 @@
 <template>
   <div ref="rootEl" data-testid="showcase-home" class="credit-home min-h-screen overflow-x-hidden">
+    <div ref="scrollProgressEl" class="scroll-progress fixed inset-x-0 top-0 z-50 h-0.5 origin-left" aria-hidden="true"></div>
     <header class="site-header sticky top-0 z-30 border-b border-slate-100/80 bg-white/80 backdrop-blur-xl">
       <nav class="mx-auto flex max-w-7xl items-center justify-between gap-3 px-5 py-3.5 sm:px-8">
         <router-link to="/home" class="flex min-w-0 flex-1 items-center gap-2.5" :aria-label="siteName">
@@ -60,6 +61,7 @@
             <div class="floating-count absolute -right-2 -top-5 z-10 rounded-2xl border border-white bg-white/95 px-4 py-3 shadow-[0_14px_35px_rgba(74,72,149,0.13)] sm:-right-5"><span class="text-xs text-slate-500">{{ t('showcase.activePlatforms') }}</span><strong class="mt-0.5 block text-base text-indigo-600 tabular-nums">{{ activePlatforms.length }}</strong></div>
           </div>
         </div>
+        <a href="#clients" class="scroll-cue absolute bottom-6 left-1/2 hidden -translate-x-1/2 items-center gap-2 text-xs font-medium text-slate-500 transition-colors hover:text-indigo-600 lg:inline-flex">{{ t('showcase.scrollToExplore') }} <span aria-hidden="true">↓</span></a>
       </section>
 
       <section id="clients" class="developer-section relative scroll-mt-20 overflow-hidden px-5 py-20 sm:px-8 lg:py-28">
@@ -77,7 +79,7 @@
             <h2 class="mt-3 text-3xl font-bold tracking-tight text-slate-950 sm:text-4xl">{{ t('showcase.clientsTitle') }}</h2>
             <p class="mt-5 max-w-xl text-base leading-8 text-slate-600">{{ t('showcase.clientsDescription') }}</p>
             <div class="mt-8 grid gap-3 sm:grid-cols-2">
-              <div v-for="client in clients" :key="client.name" class="client-item rounded-2xl border border-slate-200/80 bg-white/75 p-4 transition"><div class="flex items-center gap-3"><span class="client-symbol flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50"><img :src="client.icon" alt="" aria-hidden="true" :class="client.iconClass" class="object-contain" width="28" height="28" loading="lazy" /></span><div class="min-w-0"><h3 class="text-sm font-semibold text-slate-900">{{ client.name }}</h3><p class="mt-0.5 text-xs leading-5 text-slate-500">{{ t(client.descriptionKey) }}</p></div></div></div>
+              <div v-for="(client, index) in clients" :key="client.name" data-reveal class="client-item rounded-2xl border border-slate-200/80 bg-white/75 p-4 transition" :style="{ transitionDelay: `${index * 65}ms` }"><div class="flex items-center gap-3"><span class="client-symbol flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50"><img :src="client.icon" alt="" aria-hidden="true" :class="client.iconClass" class="object-contain" width="28" height="28" loading="lazy" /></span><div class="min-w-0"><h3 class="text-sm font-semibold text-slate-900">{{ client.name }}</h3><p class="mt-0.5 text-xs leading-5 text-slate-500">{{ t(client.descriptionKey) }}</p></div></div></div>
             </div>
             <p class="mt-5 text-xs leading-6 text-slate-500">{{ t('showcase.clientNote') }}</p>
           </div>
@@ -91,7 +93,7 @@
           <div v-else-if="error" class="mt-9 rounded-2xl border border-rose-200 bg-rose-50 p-8 text-center" role="alert"><p class="text-sm text-rose-700">{{ t('showcase.loadError') }}</p><button type="button" class="pressable primary-button mt-4 min-h-11 rounded-full px-5 py-2 text-sm font-semibold text-white" @click="loadCatalog">{{ t('showcase.retry') }}</button></div>
           <div v-else-if="filteredGroups.length === 0" class="mt-9 rounded-2xl border border-dashed border-slate-300 p-10 text-center text-sm text-slate-500">{{ search ? t('showcase.noSearchResults') : t('showcase.noGroups') }}</div>
           <div v-else class="mt-9 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            <article v-for="(group, index) in filteredGroups" :key="group.id" class="catalog-card flex min-w-0 flex-col rounded-2xl border border-slate-200/80 bg-white p-6" :style="{ animationDelay: `${Math.min(index, 6) * 55}ms` }"><div class="flex items-start justify-between gap-3"><span class="rounded-full bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700">{{ platformLabel(group.platform) }}</span><span class="rounded-full bg-slate-100 px-2.5 py-1.5 text-xs text-slate-600">{{ billingLabel(group.subscription_type) }}</span></div><h3 class="mt-6 break-words text-lg font-bold text-slate-950">{{ group.name }}</h3><p class="mt-2 min-h-12 text-sm leading-6 text-slate-600">{{ group.description || t('showcase.groupFallback') }}</p><div class="mt-6 flex flex-wrap gap-2"><span v-for="model in group.models.slice(0, 4)" :key="`${model.platform}:${model.name}`" class="max-w-full truncate rounded-md bg-slate-50 px-2.5 py-1 text-xs text-slate-600" :title="model.name">{{ model.name }}</span><span v-if="group.models.length > 4" class="px-1 py-1 text-xs text-indigo-600">+{{ group.models.length - 4 }}</span><span v-if="group.models.length === 0" class="text-xs text-slate-400">{{ t('showcase.modelsPending') }}</span></div><div class="mt-auto flex items-center justify-between border-t border-slate-100 pt-5 text-xs text-slate-500"><span>{{ t('showcase.groupModelCount', { count: group.models.length }) }}</span><span v-if="group.is_exclusive" class="text-amber-700">{{ t('showcase.exclusive') }}</span></div></article>
+            <article v-for="(group, index) in filteredGroups" :key="group.id" data-reveal class="catalog-card flex min-w-0 flex-col rounded-2xl border border-slate-200/80 bg-white p-6" :style="{ transitionDelay: `${Math.min(index, 6) * 65}ms` }"><div class="flex items-start justify-between gap-3"><span class="rounded-full bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700">{{ platformLabel(group.platform) }}</span><span class="rounded-full bg-slate-100 px-2.5 py-1.5 text-xs text-slate-600">{{ billingLabel(group.subscription_type) }}</span></div><h3 class="mt-6 break-words text-lg font-bold text-slate-950">{{ group.name }}</h3><p class="mt-2 min-h-12 text-sm leading-6 text-slate-600">{{ group.description || t('showcase.groupFallback') }}</p><div class="mt-6 flex flex-wrap gap-2"><span v-for="model in group.models.slice(0, 4)" :key="`${model.platform}:${model.name}`" class="max-w-full truncate rounded-md bg-slate-50 px-2.5 py-1 text-xs text-slate-600" :title="model.name">{{ model.name }}</span><span v-if="group.models.length > 4" class="px-1 py-1 text-xs text-indigo-600">+{{ group.models.length - 4 }}</span><span v-if="group.models.length === 0" class="text-xs text-slate-400">{{ t('showcase.modelsPending') }}</span></div><div class="mt-auto flex items-center justify-between border-t border-slate-100 pt-5 text-xs text-slate-500"><span>{{ t('showcase.groupModelCount', { count: group.models.length }) }}</span><span v-if="group.is_exclusive" class="text-amber-700">{{ t('showcase.exclusive') }}</span></div></article>
           </div>
         </div>
       </section>
@@ -100,7 +102,7 @@
         <div class="mx-auto max-w-7xl">
           <div class="flex flex-wrap items-end justify-between gap-4" data-reveal><div><p class="section-eyebrow">03 / {{ t('showcase.navModels') }}</p><h2 class="mt-3 text-3xl font-bold tracking-tight text-slate-950 sm:text-4xl">{{ t('showcase.modelsTitle') }}</h2><p class="mt-4 text-sm leading-7 text-slate-600">{{ t('showcase.modelsDescription') }}</p></div><span class="rounded-full border border-indigo-100 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-700">{{ uniqueModels.length }} {{ t('showcase.modelsCount') }}</span></div>
           <div v-if="!loading && !error && uniqueModels.length" class="mt-8 flex flex-wrap gap-2"><button type="button" class="pressable min-h-11 rounded-full px-4 py-2.5 text-xs font-medium transition" :class="selectedPlatform === 'all' ? activeFilterClass : inactiveFilterClass" :aria-pressed="selectedPlatform === 'all'" @click="selectedPlatform = 'all'; showAllModels = false">{{ t('showcase.allPlatforms') }}</button><button v-for="platform in modelPlatforms" :key="platform" type="button" class="pressable min-h-11 rounded-full px-4 py-2.5 text-xs font-medium transition" :class="selectedPlatform === platform ? activeFilterClass : inactiveFilterClass" :aria-pressed="selectedPlatform === platform" @click="selectedPlatform = platform; showAllModels = false">{{ platformLabel(platform) }}</button></div>
-          <div v-if="!loading && !error && filteredModels.length" class="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><div v-for="model in visibleModels" :key="`${model.platform}:${model.name}`" class="model-card min-w-0 rounded-xl border border-white bg-white p-4"><div class="truncate text-sm font-semibold text-slate-900" :title="model.name">{{ model.name }}</div><div class="mt-1 text-xs text-slate-500">{{ platformLabel(model.platform) }}</div></div></div>
+          <div v-if="!loading && !error && filteredModels.length" class="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><div v-for="(model, index) in visibleModels" :key="`${model.platform}:${model.name}`" data-reveal class="model-card min-w-0 rounded-xl border border-white bg-white p-4" :style="{ transitionDelay: `${Math.min(index, 7) * 45}ms` }"><div class="truncate text-sm font-semibold text-slate-900" :title="model.name">{{ model.name }}</div><div class="mt-1 text-xs text-slate-500">{{ platformLabel(model.platform) }}</div></div></div>
           <p v-if="!loading && !error && !filteredModels.length" class="mt-8 text-sm text-slate-500">{{ t('showcase.noModels') }}</p>
           <button v-if="!showAllModels && filteredModels.length > 12" type="button" class="pressable secondary-button mt-6 min-h-11 rounded-full px-5 py-2.5 text-sm font-semibold text-indigo-700" @click="showAllModels = true">{{ t('showcase.showAllModels', { count: filteredModels.length }) }}</button>
         </div>
@@ -113,7 +115,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore, useAuthStore } from '@/stores'
 import { getHomeCatalog, type HomeCatalogGroup, type HomeCatalogModel } from '@/api/homeCatalog'
@@ -129,6 +131,7 @@ const { t } = useI18n()
 const appStore = useAppStore()
 const authStore = useAuthStore()
 const rootEl = ref<HTMLElement | null>(null)
+const scrollProgressEl = ref<HTMLElement | null>(null)
 const groups = ref<HomeCatalogGroup[]>([])
 const loading = ref(true)
 const error = ref(false)
@@ -139,6 +142,7 @@ const copyState = ref<'idle' | 'copied' | 'error'>('idle')
 let requestController: AbortController | undefined
 let revealObserver: IntersectionObserver | undefined
 let copyTimer: number | undefined
+let scrollFrame = 0
 
 const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appStore.siteName || 'Sub2API')
 const siteLogo = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.site_logo || appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
@@ -211,9 +215,15 @@ async function loadCatalog() {
     if (!controller.signal.aborted) loading.value = false
   }
 }
+function observeRevealTargets() {
+  if (!rootEl.value || !revealObserver) return
+  rootEl.value.querySelectorAll<HTMLElement>('[data-reveal]:not(.reveal-observed)').forEach(target => {
+    target.classList.add('reveal-observed')
+    revealObserver?.observe(target)
+  })
+}
 function initReveal() {
   if (!rootEl.value || typeof IntersectionObserver === 'undefined' || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
-  const targets = rootEl.value.querySelectorAll<HTMLElement>('[data-reveal]')
   rootEl.value.classList.add('reveal-enabled')
   revealObserver = new IntersectionObserver(entries => {
     for (const entry of entries) {
@@ -222,15 +232,49 @@ function initReveal() {
         revealObserver?.unobserve(entry.target)
       }
     }
-  }, { threshold: 0.12 })
-  targets.forEach(target => revealObserver?.observe(target))
+  }, { threshold: 0.08, rootMargin: '0px 0px -40px 0px' })
+  observeRevealTargets()
 }
-onMounted(() => { loadCatalog(); initReveal() })
-onUnmounted(() => { requestController?.abort(); revealObserver?.disconnect(); if (copyTimer) window.clearTimeout(copyTimer) })
+function updateScrollProgress() {
+  if (!rootEl.value || !scrollProgressEl.value) return
+  const scrolled = Math.max(0, window.scrollY - rootEl.value.offsetTop)
+  const maxScroll = Math.max(1, rootEl.value.scrollHeight - window.innerHeight)
+  scrollProgressEl.value.style.transform = `scaleX(${Math.min(1, scrolled / maxScroll)})`
+  rootEl.value.style.setProperty('--hero-parallax', `${-Math.min(scrolled * 0.08, 64)}px`)
+}
+function queueScrollProgress() {
+  if (scrollFrame) return
+  scrollFrame = window.requestAnimationFrame(() => {
+    scrollFrame = 0
+    updateScrollProgress()
+  })
+}
+watch([filteredGroups, visibleModels], async () => {
+  await nextTick()
+  observeRevealTargets()
+  queueScrollProgress()
+})
+onMounted(() => {
+  loadCatalog()
+  initReveal()
+  updateScrollProgress()
+  window.addEventListener('scroll', queueScrollProgress, { passive: true })
+  window.addEventListener('resize', queueScrollProgress)
+})
+onUnmounted(() => {
+  requestController?.abort()
+  revealObserver?.disconnect()
+  window.removeEventListener('scroll', queueScrollProgress)
+  window.removeEventListener('resize', queueScrollProgress)
+  if (scrollFrame) window.cancelAnimationFrame(scrollFrame)
+  if (copyTimer) window.clearTimeout(copyTimer)
+})
 </script>
 
 <style scoped>
 .credit-home { --primary: #6466e9; --muted: #667085; --line: #e9eaf2; background: #fff; color: #14151d; }
+.scroll-progress { background: linear-gradient(90deg, #6466e9, #a49bff); transform: scaleX(0); box-shadow: 0 0 10px rgba(100, 102, 233, .22); }
+.scroll-cue span { display: inline-block; animation: cue-float 2.8s ease-in-out infinite; }
 .nav-link:hover { color: var(--primary); }
 .primary-button { background: var(--primary); box-shadow: 0 8px 20px rgba(100, 102, 233, .18); transition: transform .2s ease, background .2s ease, box-shadow .2s ease; }
 .primary-button:hover { background: #5658dc; box-shadow: 0 12px 28px rgba(100, 102, 233, .24); transform: translateY(-2px); }
@@ -241,7 +285,7 @@ onUnmounted(() => { requestController?.abort(); revealObserver?.disconnect(); if
 .ambient { position: absolute; z-index: -1; width: 28rem; height: 28rem; border-radius: 50%; filter: blur(85px); opacity: .32; animation: ambient-drift 12s ease-in-out infinite alternate; pointer-events: none; }
 .ambient-blue { right: 13%; bottom: 1%; background: #a6c9ff; }
 .ambient-violet { right: -8%; top: 0; background: #d6b8ff; animation-delay: -5s; }
-.preview-halo { position: absolute; inset: -2rem; z-index: -1; border-radius: 50%; background: radial-gradient(ellipse, rgba(119, 130, 245, .22), transparent 66%); filter: blur(18px); }
+.preview-halo { position: absolute; inset: -2rem; z-index: -1; border-radius: 50%; background: radial-gradient(ellipse, rgba(119, 130, 245, .22), transparent 66%); filter: blur(18px); transform: translateY(var(--hero-parallax, 0px)); }
 .preview-card { min-height: 18rem; transition: transform .5s ease, box-shadow .5s ease; }
 .preview-card:hover { transform: scale(1.02); box-shadow: 0 36px 75px rgba(83, 81, 174, .18); }
 .floating-count { animation: float-slow 4.5s ease-in-out infinite; }
@@ -255,17 +299,18 @@ onUnmounted(() => { requestController?.abort(); revealObserver?.disconnect(); if
 .client-item { transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease; }
 .client-item:hover { transform: translateY(-3px); border-color: #c9c9fb; box-shadow: 0 10px 22px rgba(100, 102, 233, .08); }
 .client-item:hover .client-symbol { background: #e7e8ff; }
-.catalog-card { box-shadow: 0 4px 20px rgba(31, 36, 76, .04); animation: card-in .55s ease both; transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease; }
+.catalog-card { box-shadow: 0 4px 20px rgba(31, 36, 76, .04); transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease; }
 .catalog-card:hover { transform: translateY(-4px); border-color: #cccdf9; box-shadow: 0 16px 35px rgba(54, 55, 117, .1); }
 .models-section { background: #f8f8fc; }
-.model-card { box-shadow: 0 4px 18px rgba(31, 36, 76, .035); animation: card-in .5s ease both; transition: transform .25s ease, box-shadow .25s ease; }
+.model-card { box-shadow: 0 4px 18px rgba(31, 36, 76, .035); transition: transform .25s ease, box-shadow .25s ease; }
 .model-card:hover { transform: translateY(-3px); box-shadow: 0 12px 26px rgba(54, 55, 117, .1); }
 .cta-section { background: linear-gradient(110deg, #f7f5ff, #eef2ff); }
 .reveal-enabled [data-reveal] { opacity: 0; transform: translateY(28px); transition: opacity .75s ease, transform .75s cubic-bezier(.16,1,.3,1); }
 .reveal-enabled [data-reveal].is-revealed { opacity: 1; transform: translateY(0); }
+.reveal-enabled .catalog-card.is-revealed:hover, .reveal-enabled .client-item.is-revealed:hover, .reveal-enabled .model-card.is-revealed:hover { transform: translateY(-4px); }
 @keyframes float-slow { 50% { transform: translateY(-12px); } }
 @keyframes ambient-drift { to { transform: translate(30px, 20px) scale(1.1); } }
-@keyframes card-in { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes cue-float { 50% { transform: translateY(5px); } }
 @media (max-width: 640px) { .ambient { width: 18rem; height: 18rem; opacity: .22; } .hero-section { min-height: auto; } }
 @media (prefers-reduced-motion: reduce) { .credit-home *, .credit-home *::before, .credit-home *::after { animation: none !important; transition-duration: .01ms !important; scroll-behavior: auto !important; } .reveal-enabled [data-reveal] { opacity: 1; transform: none; } }
 </style>
