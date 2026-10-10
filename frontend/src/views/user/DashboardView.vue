@@ -4,9 +4,7 @@
       <div class="mx-auto max-w-[1320px] space-y-12">
         <header class="dashboard-heading flex flex-wrap items-end justify-between gap-5">
           <div>
-            <p class="dashboard-eyebrow">{{ t('dashboard.accountOverview') }}</p>
-            <h1 class="mt-2 text-3xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-4xl">{{ t('dashboard.todayTitle') }}</h1>
-            <p class="mt-2 text-sm text-slate-500 dark:text-slate-400">{{ t('dashboard.welcomeMessage') }}</p>
+            <h1 class="text-3xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-4xl">{{ t('dashboard.todayTitle') }}</h1>
           </div>
           <div class="flex items-center gap-3">
             <span class="hidden text-sm text-slate-500 dark:text-slate-400 sm:inline">{{ dateLabel }}</span>
@@ -138,8 +136,7 @@ onMounted(refreshAll)
 </script>
 
 <style scoped>
-.dashboard-page { background: radial-gradient(ellipse at 85% 0%, rgba(236, 233, 255, .72), transparent 32%), #fff; }
-.dashboard-eyebrow { color: #6466e9; font-size: .72rem; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; }
+.dashboard-page { background: #fff; }
 .dashboard-heading { animation: dashboard-rise .55s ease-out both; }
 .dashboard-refresh:hover:not(:disabled) { border-color: #b9baf5; color: #5658d7; box-shadow: 0 8px 18px rgba(100, 102, 233, .08); transform: translateY(-1px); }
 .dashboard-refresh:active:not(:disabled) { transform: scale(.97); }
@@ -148,22 +145,34 @@ onMounted(refreshAll)
 .dashboard-section-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.25rem; }
 .dashboard-section-heading h2 { color: #171825; font-size: 1.3rem; font-weight: 700; letter-spacing: -.02em; }
 .dashboard-appear { animation: dashboard-rise .6s ease-out both; }
-.dashboard-page :deep(.card) { border: 1px solid #e8e9f0; border-radius: 1.25rem; background: #fff; box-shadow: 0 5px 24px rgba(46, 48, 94, .045); }
+.dashboard-page :deep(.card) { border: 1px solid #e8e9f0; border-radius: .875rem; background: #fff; box-shadow: none; }
+.dashboard-page :deep(.dashboard-metric-panel) { overflow: hidden; border: 1px solid #e8e9f0; border-radius: .875rem; }
+.dashboard-page :deep(.dashboard-metric-panel .card) { border: 0; border-radius: 0; box-shadow: none; }
+.dashboard-page :deep(.dashboard-metric-panel .card:hover) { background: #fafaff; }
+.dashboard-page :deep(.dashboard-core-stats), .dashboard-page :deep(.dashboard-token-stats) { gap: 0; }
+.dashboard-page :deep(.dashboard-token-stats) { border-top: 1px solid #e8e9f0; }
 .dashboard-page :deep(.dashboard-core-stats > .card) { min-height: 8.6rem; padding: 1.25rem; }
 .dashboard-page :deep(.dashboard-token-stats > .card) { min-height: 7.5rem; padding: 1.2rem; }
-.dashboard-page :deep(.dashboard-balance-card) { border-color: #dddafb; background: linear-gradient(130deg, #f6f4ff, #fff 72%); }
+.dashboard-page :deep(.dashboard-balance-card) { background: #fafaff; }
 .dashboard-page :deep(.dashboard-core-stats .text-xl) { font-size: 1.55rem; line-height: 1.3; }
 .dashboard-page :deep(.dashboard-chart-grid > .card), .dashboard-page :deep(.dashboard-chart-grid > *) { min-height: 18rem; }
 .dashboard-page :deep(.dashboard-chart-filters) { box-shadow: none; background: #fafaff; }
 .dashboard-page :deep(.dashboard-platform-section) { padding: 1.4rem; }
 .dashboard-page :deep(.card button:focus-visible) { outline: 2px solid #6466e9; outline-offset: 2px; }
-:global(.dark) .dashboard-page { background: radial-gradient(ellipse at 85% 0%, rgba(67, 55, 129, .22), transparent 34%), #0b1120; }
-:global(.dark) .dashboard-section { border-color: #25314b; }
-:global(.dark) .dashboard-section-heading h2 { color: #f8fafc; }
-:global(.dark) .dashboard-page :deep(.card) { border-color: #2b344b; background: #151f33; box-shadow: none; }
-:global(.dark) .dashboard-page :deep(.dashboard-balance-card) { background: linear-gradient(130deg, #282548, #151f33 72%); }
-:global(.dark) .dashboard-page :deep(.dashboard-chart-filters) { background: #151f33; }
 @keyframes dashboard-rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 640px) { .dashboard-page :deep(.dashboard-core-stats > .card) { min-height: 6.8rem; } .dashboard-page :deep(.dashboard-token-stats > .card) { min-height: 6.5rem; } }
 @media (prefers-reduced-motion: reduce) { .dashboard-page *, .dashboard-page *::before, .dashboard-page *::after { animation: none !important; transition-duration: .01ms !important; } }
+</style>
+
+<style>
+.dark .dashboard-page { background: #0b1120; }
+.dark .dashboard-page .dashboard-section { border-color: #25314b; }
+.dark .dashboard-page .dashboard-section-heading h2 { color: #f8fafc; }
+.dark .dashboard-page .card { border-color: #2b344b; background: #151f33; box-shadow: none; }
+.dark .dashboard-page .dashboard-metric-panel { border-color: #2b344b; }
+.dark .dashboard-page .dashboard-metric-panel .card { border: 0; background: #151f33; }
+.dark .dashboard-page .dashboard-metric-panel .card:hover { background: #1c2740; }
+.dark .dashboard-page .dashboard-token-stats { border-color: #2b344b; }
+.dark .dashboard-page .dashboard-balance-card { background: #1c2740 !important; }
+.dark .dashboard-page .dashboard-chart-filters { background: #151f33; }
 </style>

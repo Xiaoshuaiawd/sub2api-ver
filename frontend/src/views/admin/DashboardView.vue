@@ -1,17 +1,9 @@
 <template>
   <AppLayout>
     <div class="space-y-6">
-      <section class="relative isolate overflow-hidden rounded-[28px] border border-primary-100 bg-gradient-to-br from-white via-white to-primary-50 px-6 py-7 shadow-sm dark:border-primary-500/20 dark:from-dark-800 dark:via-dark-800 dark:to-primary-950/30 sm:px-8">
-        <div class="pointer-events-none absolute -right-12 -top-24 h-64 w-64 rounded-full bg-primary-200/45 blur-3xl dark:bg-primary-500/10"></div>
-        <div class="relative flex items-center justify-between gap-6">
-          <div>
-            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-primary-600 dark:text-primary-300">{{ t('admin.dashboard.description') }}</p>
-            <h2 class="mt-2 text-2xl font-bold tracking-tight text-gray-950 dark:text-white sm:text-3xl">{{ t('admin.dashboard.title') }}</h2>
-          </div>
-          <div class="hidden h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-primary-200 bg-white/80 text-primary-600 shadow-sm dark:border-primary-500/20 dark:bg-primary-900/20 dark:text-primary-300 sm:flex">
-            <Icon name="chart" size="lg" />
-          </div>
-        </div>
+      <section class="border-b border-gray-200 pb-5 dark:border-dark-700">
+        <h2 class="text-2xl font-semibold tracking-tight text-gray-950 dark:text-white">{{ t('admin.dashboard.title') }}</h2>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ t('admin.dashboard.description') }}</p>
       </section>
 
       <!-- Loading State -->

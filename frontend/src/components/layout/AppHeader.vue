@@ -1,6 +1,6 @@
 <template>
   <header class="glass sticky top-0 z-30 border-b border-gray-200/50 dark:border-dark-700/50">
-    <div class="flex h-16 items-center justify-between gap-2 px-2 sm:px-4 md:px-6">
+    <div class="mx-auto flex h-16 items-center justify-between gap-2 px-2 transition-[max-width] duration-300 sm:px-4 md:px-6" :class="fullWidth ? 'max-w-none' : 'max-w-[1320px]'">
       <!-- Left: Mobile Menu Toggle + Page Title -->
       <div class="flex min-w-0 flex-1 items-center gap-2 sm:gap-4">
         <button
@@ -11,7 +11,7 @@
           <Icon name="menu" size="md" />
         </button>
 
-        <div class="min-w-0">
+        <div class="min-w-0" :class="{ 'xl:hidden': isOverviewRoute }">
           <h1 class="truncate text-sm font-semibold text-gray-900 dark:text-white sm:text-base lg:text-lg">
             {{ pageTitle }}
           </h1>
@@ -19,10 +19,18 @@
             {{ pageDescription }}
           </p>
         </div>
+        <button type="button" class="hidden h-9 w-48 items-center gap-2 rounded-lg border border-gray-200 bg-gray-50/80 px-3 text-left text-sm text-gray-500 transition-colors hover:border-gray-300 hover:bg-gray-100 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 xl:flex 2xl:w-56" :class="{ 'ml-auto': !isOverviewRoute }" :aria-label="t('nav.quickNavigation')" @click="searchOpen = true">
+          <Icon name="search" size="sm" />
+          <span class="flex-1">{{ t('common.search') }}</span>
+          <kbd class="rounded border border-gray-200 px-1.5 py-0.5 text-[10px] dark:border-dark-600">{{ shortcutLabel }}</kbd>
+        </button>
       </div>
 
       <!-- Right: Announcements + Docs + Language + Subscriptions + Balance + User Dropdown -->
       <div class="flex shrink-0 items-center gap-1 sm:gap-3">
+        <button type="button" class="btn-ghost btn-icon xl:hidden" :aria-label="t('nav.quickNavigation')" @click="searchOpen = true">
+          <Icon name="search" size="sm" />
+        </button>
         <!-- Announcement Bell -->
         <AnnouncementBell v-if="user" />
 
@@ -55,6 +63,10 @@
 
         <!-- Subscription Progress (for users with active subscriptions; not mounted at all when the feature is off) -->
         <SubscriptionProgressMini v-if="user && subscriptionFeatureEnabled" />
+
+        <button type="button" class="hidden h-9 w-9 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white xl:flex" :title="t(fullWidth ? 'nav.standardWidth' : 'nav.fullWidth')" :aria-label="t(fullWidth ? 'nav.standardWidth' : 'nav.fullWidth')" @click="emit('toggle-full-width')">
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path v-if="fullWidth" d="M8 3v5H3m13-5v5h5M8 21v-5H3m13 5v-5h5M3 8l5-5m13 5-5-5M3 16l5 5m13-5-5 5" /><path v-else d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M3 3l6 6m12-6-6 6M3 21l6-6m12 6-6-6" /></svg>
+        </button>
 
         <!-- Balance Display -->
         <div
@@ -249,6 +261,7 @@
       </div>
     </div>
   </header>
+  <QuickNavigationDialog v-model:open="searchOpen" />
 </template>
 
 <script setup lang="ts">
@@ -261,6 +274,7 @@ import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import SubscriptionProgressMini from '@/components/common/SubscriptionProgressMini.vue'
 import AnnouncementBell from '@/components/common/AnnouncementBell.vue'
 import Icon from '@/components/icons/Icon.vue'
+import QuickNavigationDialog from './QuickNavigationDialog.vue'
 import { sanitizeUrl } from '@/utils/url'
 import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
 import { resolveRouteMetaKeys } from '@/router/title'
@@ -268,13 +282,18 @@ import { resolveSiteBillingMode } from '@/utils/siteBillingMode'
 
 const router = useRouter()
 const route = useRoute()
+const isOverviewRoute = computed(() => route.path === '/dashboard' || route.path === '/admin/dashboard')
+const shortcutLabel = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘ K' : 'Ctrl K'
 const { t } = useI18n()
 const appStore = useAppStore()
 const authStore = useAuthStore()
 const adminSettingsStore = useAdminSettingsStore()
 const onboardingStore = useOnboardingStore()
+withDefaults(defineProps<{ fullWidth?: boolean }>(), { fullWidth: false })
+const emit = defineEmits<{ 'toggle-full-width': [] }>()
 
 const user = computed(() => authStore.user)
+const searchOpen = ref(false)
 const dropdownOpen = ref(false)
 const dropdownRef = ref<HTMLElement | null>(null)
 const contactInfo = computed(() => appStore.contactInfo)

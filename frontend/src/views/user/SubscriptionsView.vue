@@ -407,7 +407,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.subscription-panel { box-shadow: 0 7px 28px rgba(46, 48, 94, .055); transition: transform .25s ease, box-shadow .25s ease; }
-.subscription-panel:hover { transform: translateY(-3px); box-shadow: 0 16px 36px rgba(46, 48, 94, .1); }
-@media (prefers-reduced-motion: reduce) { .subscription-panel { transition: none; } .subscription-panel:hover { transform: none; } }
+.subscription-panel { transition: border-color .2s ease, background-color .2s ease; }
+.subscription-panel:hover { border-color: #c7c5fa; background-color: #fcfcff; }
+@media (prefers-reduced-motion: reduce) { .subscription-panel { transition: none; } }
 </style>

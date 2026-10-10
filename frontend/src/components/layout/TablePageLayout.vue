@@ -56,10 +56,9 @@ onUnmounted(() => {
 
 .table-filter-panel {
   border: 1px solid #e8e9f2;
-  border-radius: 1.25rem;
+  border-radius: .875rem;
   background: #fff;
   padding: 1rem;
-  box-shadow: 0 5px 24px rgba(46, 48, 94, .04);
 }
 
 .layout-section-scrollable {
@@ -70,8 +69,8 @@ onUnmounted(() => {
 .table-scroll-container {
   @apply flex flex-col overflow-hidden h-full bg-white dark:bg-dark-800 rounded-2xl border border-gray-200 dark:border-dark-700 shadow-sm;
   border-color: #e8e9f2;
-  border-radius: 1.25rem;
-  box-shadow: 0 6px 28px rgba(46, 48, 94, .05);
+  border-radius: .875rem;
+  box-shadow: none;
 }
 
 .table-scroll-container :deep(.table-wrapper) {

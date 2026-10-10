@@ -29,6 +29,11 @@
       </div>
     </div>
 
+    <button type="button" class="sidebar-rail hidden dark:border-dark-600 dark:bg-dark-800 dark:text-primary-300 lg:flex" :aria-label="t(sidebarCollapsed ? 'nav.expand' : 'nav.collapse')" :title="t(sidebarCollapsed ? 'nav.expand' : 'nav.collapse')" @click="toggleSidebar">
+      <ChevronDoubleRightIcon v-if="sidebarCollapsed" class="h-3.5 w-3.5" />
+      <ChevronDoubleLeftIcon v-else class="h-3.5 w-3.5" />
+    </button>
+
     <!-- Navigation -->
     <nav ref="sidebarNavRef" class="sidebar-nav scrollbar-hide">
       <!-- Admin View: Admin menu first, then personal menu -->
@@ -62,7 +67,8 @@
                 </span>
               </button>
               <!-- Children -->
-              <div v-if="!sidebarCollapsed && isGroupExpanded(item)" class="mb-1 ml-4 border-l border-gray-200 pl-2 dark:border-dark-600">
+              <transition name="sidebar-submenu">
+              <div v-show="!sidebarCollapsed && isGroupExpanded(item)" class="mb-1 ml-4 border-l border-gray-200 pl-2 dark:border-dark-600">
                 <router-link
                   v-for="child in item.children"
                   :key="child.path"
@@ -75,6 +81,7 @@
                   <span>{{ child.label }}</span>
                 </router-link>
               </div>
+              </transition>
             </template>
             <!-- Normal item (no children) -->
             <router-link
@@ -976,6 +983,27 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.sidebar-rail {
+  position: absolute;
+  top: 50%;
+  right: -12px;
+  z-index: 2;
+  width: 24px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  background: #fff;
+  color: #6b7280;
+  box-shadow: 0 3px 10px rgba(15, 23, 42, .08);
+  transform: translateY(-50%);
+  transition: color .18s ease, border-color .18s ease, transform .18s ease;
+}
+.sidebar-rail:hover { color: #6466e9; border-color: #c7c5fa; transform: translateY(-50%) scale(1.08); }
+.sidebar-submenu-enter-active, .sidebar-submenu-leave-active { transition: opacity .18s ease, transform .18s ease; }
+.sidebar-submenu-enter-from, .sidebar-submenu-leave-to { opacity: 0; transform: translateY(-5px); }
+@media (prefers-reduced-motion: reduce) { .sidebar-rail, .sidebar-submenu-enter-active, .sidebar-submenu-leave-active { transition: none; } }
 .sidebar-logo {
   flex: 0 0 2.25rem;
   min-width: 2.25rem;
@@ -1102,4 +1130,8 @@ onBeforeUnmount(() => {
   width: 1.25rem;
   height: 1.25rem;
 }
+</style>
+
+<style>
+.dark .sidebar .sidebar-rail { border-color: #334155; background: #151f33; color: #a5b4fc; }
 </style>
