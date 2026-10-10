@@ -1,9 +1,10 @@
 <template>
   <!-- Custom Home Content: Full Page Mode -->
   <div v-if="hasHomeContent" class="min-h-screen">
+    <DynamicShowcaseHome v-if="isDynamicShowcaseHome" />
     <!-- iframe mode -->
     <iframe
-      v-if="isHomeContentUrl"
+      v-else-if="isHomeContentUrl"
       :src="homeContent.trim()"
       class="h-screen w-full border-0"
       allowfullscreen
@@ -501,6 +502,8 @@ import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { sanitizeUrl } from '@/utils/url'
 import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
+import DynamicShowcaseHome from '@/views/DynamicShowcaseHome.vue'
+import { DYNAMIC_SHOWCASE_HOME } from '@/constants/homeContent'
 
 const { t } = useI18n()
 
@@ -514,6 +517,7 @@ const siteSubtitle = computed(() => appStore.cachedPublicSettings?.site_subtitle
 const docUrl = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.doc_url || appStore.docUrl || ''))
 const homeContent = computed(() => appStore.cachedPublicSettings?.home_content || '')
 const hasHomeContent = computed(() => homeContent.value.trim().length > 0)
+const isDynamicShowcaseHome = computed(() => homeContent.value.trim() === DYNAMIC_SHOWCASE_HOME)
 const compactHomeEnabled = computed(() => appStore.cachedPublicSettings?.compact_home_enabled === true)
 const modelPlazaEnabled = computed(() => isFeatureFlagEnabled(FeatureFlags.modelPlaza))
 

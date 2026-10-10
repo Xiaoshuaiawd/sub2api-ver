@@ -27,4 +27,10 @@ func RegisterModelPlazaRoutes(
 	{
 		plaza.GET("", h.ModelPlaza.Get)
 	}
+
+	homeCatalog := v1.Group("/home/catalog")
+	homeCatalog.Use(panelRateLimiter.PublicIP())
+	homeCatalog.Use(gin.HandlerFunc(optionalJWT))
+	homeCatalog.Use(middleware.BackendModeUserGuard(settingService))
+	homeCatalog.GET("", h.ModelPlaza.GetHomeCatalog)
 }

@@ -1,4 +1,21 @@
 export default {
+  showcase: {
+    navClients: '客户端', navGroups: '分组', navModels: '模型',
+    eyebrow: '为创作和开发而连接', heroLead: '一个入口，连接你的', heroAccent: ' AI 工作流',
+    defaultSubtitle: '为开发者准备的统一 AI API 服务',
+    heroDescription: '从熟悉的编程客户端出发，浏览当前开放的分组与模型，用同一个平台找到适合你的接入方式。',
+    start: '开始使用', exploreGroups: '查看分组', liveCatalog: '分组与模型实时更新', permissionAware: '按访问权限展示', clientFriendly: '面向开发工具',
+    catalogTitle: '实时服务目录', groupsCount: '可见分组', modelsCount: '可用模型', activePlatforms: '覆盖平台', noPlatforms: '暂无平台', catalogFootnote: '数据来自当前启用的渠道与分组',
+    clientsTitle: '在熟悉的工具里，接入更多可能', clientsDescription: '通过可配置的 API 地址和密钥，将站点模型接入你常用的开发工具。', customApi: '自定义 API 接入',
+    clientNote: '客户端能否调用某个模型，取决于其支持的协议、客户端设置以及你可访问的分组。',
+    clients: { codex: '面向 OpenAI 协议的编码工作流。', claude: '面向 Anthropic 协议的终端编码体验。', opencode: '可配置多种模型提供方的开源编码工具。', workbuddy: '支持自定义模型服务的 AI 工作台。', codebuddy: '支持自定义 OpenAI 接口模型的开发环境。' },
+    groupsTitle: '找到适合你的分组', groupsDescription: '分组直接读取当前配置；新增、停用或调整渠道后，无需手工更新首页。', searchPlaceholder: '搜索分组或模型…',
+    loadError: '分组目录暂时无法加载，请稍后重试。', retry: '重新加载', noSearchResults: '没有找到匹配的分组。', noGroups: '当前没有可展示的分组。', groupFallback: '探索此分组中可使用的模型。', modelsPending: '模型即将上架', groupModelCount: '{count} 个模型', exclusive: '专属分组',
+    billingBalance: '余额', billingSubscription: '订阅', billingHybrid: '订阅 + 余额',
+    modelsTitle: '模型目录，随配置同步', modelsDescription: '展示当前可见分组中已启用渠道提供的模型。', allPlatforms: '全部平台', noModels: '当前平台暂无模型。', showAllModels: '查看全部 {count} 个模型',
+    ctaTitle: '准备好开始了吗？', ctaDescription: '登录后创建密钥，选择可用分组，将模型接入你的工作流。', footer: '为你的下一次构建提供动力',
+    platforms: { anthropic: 'Anthropic', openai: 'OpenAI', gemini: 'Gemini', antigravity: 'Antigravity', grok: 'Grok', kimi: 'Kimi', zhipu: '智谱', deepseek: 'DeepSeek', minimax: 'MiniMax', composite: '多平台', opencode_go: 'OpenCode Go' },
+  },
   batchImageGuide: {
     title: '图片批量生成',
     description: '一次提交多条提示词，任务完成后可统一下载图片结果'

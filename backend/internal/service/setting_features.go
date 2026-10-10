@@ -14,6 +14,14 @@ import (
 	"time"
 )
 
+const HomeShowcaseContentMarker = "builtin:showcase"
+
+// IsHomeShowcaseEnabled 只在管理员选择动态首页模板后开放目录接口。
+func (s *SettingService) IsHomeShowcaseEnabled(ctx context.Context) bool {
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyHomeContent)
+	return err == nil && strings.TrimSpace(value) == HomeShowcaseContentMarker
+}
+
 // IsRegistrationEnabled 检查是否开放注册
 func (s *SettingService) IsRegistrationEnabled(ctx context.Context) bool {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyRegistrationEnabled)

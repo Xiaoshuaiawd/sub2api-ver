@@ -50,6 +50,7 @@ function mountHome(settings: Record<string, unknown> = {}) {
         RouterLink: RouterLinkStub,
         LocaleSwitcher: { template: '<div data-testid="locale-switcher" />' },
         Icon: { template: '<span data-testid="icon" />' },
+        DynamicShowcaseHome: { template: '<div data-testid="showcase-home" />' },
       },
     },
   })
@@ -95,6 +96,17 @@ describe('HomeView compact mode', () => {
 
     expect(wrapper.get('iframe').attributes('src')).toBe('https://example.com/home')
     expect(wrapper.find('[data-testid="compact-home"]').exists()).toBe(false)
+  })
+
+  it('renders the dynamic showcase preset ahead of compact mode', () => {
+    const wrapper = mountHome({
+      compact_home_enabled: true,
+      home_content: 'builtin:showcase',
+    })
+
+    expect(wrapper.find('[data-testid="showcase-home"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="compact-home"]').exists()).toBe(false)
+    expect(wrapper.find('iframe').exists()).toBe(false)
   })
 
   it('treats whitespace-only custom content as empty and selects compact mode', () => {

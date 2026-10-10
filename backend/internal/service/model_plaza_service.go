@@ -227,6 +227,118 @@ func (s *ModelPlazaService) ListGroups(ctx context.Context) ([]PlazaGroup, error
 	return out, nil
 }
 
+// ListHomeGroups 为公开首页返回轻量目录。它保留没有模型的活跃分组，
+// 并且只枚举活跃渠道声明的模型，不执行价格和计费解析。
+// 专属分组的可见性由调用方按登录态裁剪。
+func (s *ModelPlazaService) ListHomeGroups(ctx context.Context) ([]PlazaGroup, error) {
+	groups, err := s.groupRepo.ListActive(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list active groups: %w", err)
+	}
+	channels, err := s.channelRepo.ListAll(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list channels: %w", err)
+	}
+
+	out := make([]PlazaGroup, len(groups))
+	index := make(map[int64]int, len(groups))
+	seen := make(map[int64]map[string]struct{}, len(groups))
+	for i := range groups {
+		g := &groups[i]
+		out[i] = PlazaGroup{
+			ID:               g.ID,
+			Name:             g.Name,
+			Description:      g.Description,
+			Platform:         g.Platform,
+			SubscriptionType: g.SubscriptionType,
+			IsExclusive:      g.IsExclusive,
+			Models:           []PlazaModel{},
+		}
+		index[g.ID] = i
+	}
+	for i := range channels {
+		ch := &channels[i]
+		if ch.Status != StatusActive {
+			continue
+		}
+		ch.normalizeBillingModelSource()
+		models := ch.SupportedModels()
+		hiddenTargets := homeHiddenMappedTargets(ch.ModelMapping)
+		for _, gid := range ch.GroupIDs {
+			at, ok := index[gid]
+			if !ok {
+				continue
+			}
+			group := &out[at]
+			if seen[gid] == nil {
+				seen[gid] = make(map[string]struct{}, len(models))
+			}
+			for _, model := range models {
+				if _, hidden := hiddenTargets[model.Platform][strings.ToLower(model.Name)]; hidden {
+					continue
+				}
+				if group.Platform == PlatformComposite {
+					if !isConcreteRequestPlatform(model.Platform) {
+						continue
+					}
+				} else if model.Platform != group.Platform {
+					continue
+				}
+				key := model.Platform + "\x00" + strings.ToLower(model.Name)
+				if _, ok := seen[gid][key]; ok {
+					continue
+				}
+				seen[gid][key] = struct{}{}
+				group.Models = append(group.Models, PlazaModel{Name: model.Name, Platform: model.Platform})
+			}
+		}
+	}
+	for i := range out {
+		sort.Slice(out[i].Models, func(a, b int) bool {
+			if out[i].Models[a].Name != out[i].Models[b].Name {
+				return out[i].Models[a].Name < out[i].Models[b].Name
+			}
+			return out[i].Models[a].Platform < out[i].Models[b].Platform
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+// homeHiddenMappedTargets 避免渠道价格表中的真实上游模型名与公开别名一起出现在首页。
+// 若目标名也被明确配置为映射源，则管理员有意公开该名称，仍然展示。
+func homeHiddenMappedTargets(mapping map[string]map[string]string) map[string]map[string]struct{} {
+	hidden := make(map[string]map[string]struct{}, len(mapping))
+	for platform, entries := range mapping {
+		sources := make(map[string]struct{}, len(entries))
+		for source := range entries {
+			if _, wildcard := splitWildcardSuffix(source); !wildcard {
+				sources[strings.ToLower(source)] = struct{}{}
+			}
+		}
+		for source, target := range entries {
+			if target == "" || strings.EqualFold(source, target) {
+				continue
+			}
+			if _, wildcard := splitWildcardSuffix(source); wildcard {
+				continue
+			}
+			if _, wildcard := splitWildcardSuffix(target); wildcard {
+				continue
+			}
+			name := strings.ToLower(target)
+			if _, public := sources[name]; public {
+				continue
+			}
+			if hidden[platform] == nil {
+				hidden[platform] = make(map[string]struct{})
+			}
+			hidden[platform][name] = struct{}{}
+		}
+	}
+	return hidden
+}
+
 // fillDisplayPricing 把模型的展示定价换成实收口径：
 // token 模型取计费阶梯表（单价与档位均由真实计费函数得出），
 // 图片/按次模型（或阶梯表不可用时）沿用渠道定价与分组图片档位价。

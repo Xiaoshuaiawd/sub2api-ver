@@ -85,6 +85,33 @@ func TestModelPlazaHandler_NilSettingServiceFailsClosed404(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, w.Code)
 }
 
+func TestToHomeGroupDTO_OnlyPublicCatalogFields(t *testing.T) {
+	g := service.PlazaGroup{
+		ID: 7, Name: "Claude", Description: "group", Platform: "anthropic",
+		SubscriptionType: "subscription_balance", IsExclusive: true, RateMultiplier: 0.25,
+		Models: []service.PlazaModel{{Name: "claude-sonnet", Platform: "anthropic"}},
+	}
+	raw, err := json.Marshal(toHomeGroupDTO(&g))
+	require.NoError(t, err)
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	require.Equal(t, "Claude", decoded["name"])
+	require.Equal(t, "subscription_balance", decoded["subscription_type"])
+	require.NotContains(t, decoded, "rate_multiplier")
+	models := decoded["models"].([]any)
+	require.Equal(t, map[string]any{"name": "claude-sonnet", "platform": "anthropic"}, models[0])
+}
+
+func TestHomeCatalogHandler_NilSettingServiceFailsClosed404(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &ModelPlazaHandler{}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/home/catalog", nil)
+	h.GetHomeCatalog(c)
+	require.Equal(t, http.StatusNotFound, w.Code)
+}
+
 func TestToModelPlazaGroupDTO_UserRateAndFieldWhitelist(t *testing.T) {
 	g := service.PlazaGroup{
 		ID: 2, Name: "vip", Description: "d", Platform: "anthropic",

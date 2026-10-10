@@ -682,6 +682,8 @@ export default {
         logoTypeError: 'Please select an image file',
         logoReadError: 'Failed to read the image file',
         homeContent: 'Home Page Content',
+        useDynamicHome: 'Use dynamic showcase',
+        dynamicHomeSelected: 'Dynamic template selected. Save settings to show visible groups and models on the home page.',
         homeContentPlaceholder: 'Enter custom content for the home page. Supports Markdown & HTML. If a URL is entered, it will be displayed as an iframe.',
         homeContentHint: 'Customize the home page content. Supports Markdown/HTML. If you enter a URL (starting with http:// or https://), it will be used as an iframe src to embed an external page. When set, the default status information will no longer be displayed.',
         homeContentIframeWarning: '⚠️ iframe mode note: Some websites have X-Frame-Options or CSP security policies that prevent embedding in iframes. If the page appears blank or shows an error, please verify the target website allows embedding, or consider using HTML mode to build your own content.',

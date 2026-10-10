@@ -674,6 +674,8 @@ export default {
         logoTypeError: '请选择图片文件',
         logoReadError: '读取图片文件失败',
         homeContent: '首页内容',
+        useDynamicHome: '使用动态展示首页',
+        dynamicHomeSelected: '已选中动态模板。保存设置后，首页会自动展示可见分组和模型。',
         homeContentPlaceholder:
           '在此输入首页内容，支持 Markdown & HTML 代码。如果输入的是一个链接，则会使用该链接作为 iframe 的 src 属性。',
         homeContentHint:

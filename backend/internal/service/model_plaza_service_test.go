@@ -35,6 +35,43 @@ func plazaPricedChannel(id int64, name string, groupIDs []int64, platform string
 	}
 }
 
+func TestListHomeGroups_IncludesEmptyGroupsAndOnlyActiveChannelModels(t *testing.T) {
+	channels := []Channel{
+		plazaPricedChannel(1, "active", []int64{10}, "anthropic", "claude-sonnet", "claude-opus"),
+		plazaPricedChannel(2, "duplicate", []int64{10}, "anthropic", "claude-sonnet"),
+		plazaPricedChannel(3, "other-platform", []int64{10}, "openai", "gpt-5"),
+		plazaPricedChannel(4, "inactive", []int64{20}, "anthropic", "claude-haiku"),
+	}
+	channels[3].Status = StatusDisabled
+	groups := []Group{
+		{ID: 10, Name: "Claude", Platform: "anthropic", SubscriptionType: "subscription_balance"},
+		{ID: 20, Name: "Empty", Platform: "anthropic", IsExclusive: true},
+	}
+
+	out, err := newPlazaService(channels, groups, nil).ListHomeGroups(context.Background())
+	require.NoError(t, err)
+	require.Len(t, out, 2)
+	require.Equal(t, "Claude", out[0].Name)
+	require.Equal(t, "subscription_balance", out[0].SubscriptionType)
+	require.Equal(t, []PlazaModel{
+		{Name: "claude-opus", Platform: "anthropic"},
+		{Name: "claude-sonnet", Platform: "anthropic"},
+	}, out[0].Models)
+	require.Equal(t, "Empty", out[1].Name)
+	require.Empty(t, out[1].Models)
+}
+
+func TestListHomeGroups_HidesMappedUpstreamModelName(t *testing.T) {
+	ch := plazaPricedChannel(1, "mapped", []int64{10}, "anthropic", "claude-upstream-real")
+	ch.ModelMapping = map[string]map[string]string{
+		"anthropic": {"claude-public": "claude-upstream-real"},
+	}
+	out, err := newPlazaService([]Channel{ch}, []Group{{ID: 10, Name: "Public", Platform: "anthropic"}}, nil).ListHomeGroups(context.Background())
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Equal(t, []PlazaModel{{Name: "claude-public", Platform: "anthropic"}}, out[0].Models)
+}
+
 func TestListPlazaGroups_GroupCentricAggregation(t *testing.T) {
 	// 两个渠道挂同一分组:模型并入同一 PlazaGroup;无模型的分组不返回。
 	channels := []Channel{

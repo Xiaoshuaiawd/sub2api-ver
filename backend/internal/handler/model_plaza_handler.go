@@ -106,6 +106,63 @@ type modelPlazaResponse struct {
 	Groups      []modelPlazaGroup `json:"groups"`
 }
 
+type homeCatalogModel struct {
+	Name     string `json:"name"`
+	Platform string `json:"platform"`
+}
+
+type homeCatalogGroup struct {
+	ID               int64              `json:"id"`
+	Name             string             `json:"name"`
+	Description      string             `json:"description"`
+	Platform         string             `json:"platform"`
+	SubscriptionType string             `json:"subscription_type"`
+	IsExclusive      bool               `json:"is_exclusive"`
+	Models           []homeCatalogModel `json:"models"`
+}
+
+func toHomeGroupDTO(g *service.PlazaGroup) homeCatalogGroup {
+	models := make([]homeCatalogModel, 0, len(g.Models))
+	for _, model := range g.Models {
+		models = append(models, homeCatalogModel{Name: model.Name, Platform: model.Platform})
+	}
+	return homeCatalogGroup{
+		ID: g.ID, Name: g.Name, Description: g.Description,
+		Platform: g.Platform, SubscriptionType: g.SubscriptionType,
+		IsExclusive: g.IsExclusive, Models: models,
+	}
+}
+
+// GetHomeCatalog 返回首页所需的轻量分组和模型目录。
+// 此端点独立于模型广场开关；匿名只看到公开分组，登录用户遵循现有授权规则。
+func (h *ModelPlazaHandler) GetHomeCatalog(c *gin.Context) {
+	if h.settingService == nil || !h.settingService.IsHomeShowcaseEnabled(c.Request.Context()) {
+		response.NotFound(c, "Home catalog is not enabled")
+		return
+	}
+	groups, err := h.plazaService.ListHomeGroups(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	subject, authed := middleware.GetAuthSubjectFromContext(c)
+	var allowedGroups map[int64]struct{}
+	var restrictPublicGroups bool
+	if authed {
+		allowedGroups, restrictPublicGroups, err = h.apiKeyService.GetUserGroupVisibility(c.Request.Context(), subject.UserID)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+	}
+	visible := filterPlazaVisibleGroups(groups, allowedGroups, restrictPublicGroups)
+	out := make([]homeCatalogGroup, 0, len(visible))
+	for i := range visible {
+		out = append(out, toHomeGroupDTO(&visible[i]))
+	}
+	response.Success(c, gin.H{"groups": out})
+}
+
 // Get 返回模型广场数据。
 // GET /api/v1/model-plaza
 func (h *ModelPlazaHandler) Get(c *gin.Context) {

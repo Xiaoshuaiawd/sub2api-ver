@@ -1,4 +1,21 @@
 export default {
+  showcase: {
+    navClients: 'Clients', navGroups: 'Groups', navModels: 'Models',
+    eyebrow: 'Connected for builders', heroLead: 'One gateway for your', heroAccent: ' AI workflow',
+    defaultSubtitle: 'A unified AI API service for developers',
+    heroDescription: 'Start in the tools you already use. Explore available groups and models, then choose the connection that fits your workflow.',
+    start: 'Get started', exploreGroups: 'Explore groups', liveCatalog: 'Live group and model catalog', permissionAware: 'Access-aware visibility', clientFriendly: 'Built for developer tools',
+    catalogTitle: 'Live catalog', groupsCount: 'Visible groups', modelsCount: 'Available models', activePlatforms: 'Platforms', noPlatforms: 'No platforms yet', catalogFootnote: 'Based on active channels and groups',
+    clientsTitle: 'Bring more models to familiar tools', clientsDescription: 'Use a configurable API URL and key to connect site models to your development tools.', customApi: 'Custom API connection',
+    clientNote: 'Model availability in each client depends on its supported protocol, client settings, and the groups you can access.',
+    clients: { codex: 'Coding workflows using the OpenAI protocol.', claude: 'Terminal coding with the Anthropic protocol.', opencode: 'An open coding tool with multiple configurable providers.', workbuddy: 'An AI workspace with custom model connections.', codebuddy: 'An IDE with custom OpenAI-compatible models.' },
+    groupsTitle: 'Find the right group', groupsDescription: 'Groups reflect your current configuration. Changes to groups and channels appear automatically.', searchPlaceholder: 'Search groups or models…',
+    loadError: 'The group catalog is temporarily unavailable. Please try again.', retry: 'Try again', noSearchResults: 'No matching groups found.', noGroups: 'No groups are available to show yet.', groupFallback: 'Explore the models available in this group.', modelsPending: 'Models coming soon', groupModelCount: '{count} models', exclusive: 'Exclusive group',
+    billingBalance: 'Balance', billingSubscription: 'Subscription', billingHybrid: 'Subscription + balance',
+    modelsTitle: 'Models that stay in sync', modelsDescription: 'Models from active channels in the groups you can see.', allPlatforms: 'All platforms', noModels: 'No models on this platform yet.', showAllModels: 'View all {count} models',
+    ctaTitle: 'Ready to build?', ctaDescription: 'Sign in, create a key, choose an available group, and connect your workflow.', footer: 'Powering your next build',
+    platforms: { anthropic: 'Anthropic', openai: 'OpenAI', gemini: 'Gemini', antigravity: 'Antigravity', grok: 'Grok', kimi: 'Kimi', zhipu: 'Zhipu', deepseek: 'DeepSeek', minimax: 'MiniMax', composite: 'Multi-platform', opencode_go: 'OpenCode Go' },
+  },
   batchImageGuide: {
     title: 'Batch Image Generation',
     description: 'Submit multiple prompts in one job and download the generated images when complete'

@@ -6703,11 +6703,23 @@
 
               <!-- Home Content -->
               <div>
-                <label
-                  class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
-                >
-                  {{ t("admin.settings.site.homeContent") }}
-                </label>
+                <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t("admin.settings.site.homeContent") }}
+                  </label>
+                  <button
+                    type="button"
+                    class="rounded-lg border px-3 py-1.5 text-xs font-semibold transition"
+                    :class="form.home_content.trim() === DYNAMIC_SHOWCASE_HOME
+                      ? 'border-primary-600 bg-primary-600 text-white dark:border-primary-500 dark:bg-primary-500'
+                      : 'border-primary-200 bg-primary-50 text-primary-700 hover:bg-primary-100 dark:border-primary-800 dark:bg-primary-900/30 dark:text-primary-300 dark:hover:bg-primary-900/50'"
+                    data-testid="use-dynamic-home"
+                    :aria-pressed="form.home_content.trim() === DYNAMIC_SHOWCASE_HOME"
+                    @click="form.home_content = DYNAMIC_SHOWCASE_HOME"
+                  >
+                    {{ t("admin.settings.site.useDynamicHome") }}
+                  </button>
+                </div>
                 <textarea
                   v-model="form.home_content"
                   rows="6"
@@ -6716,6 +6728,9 @@
                 ></textarea>
                 <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
                   {{ t("admin.settings.site.homeContentHint") }}
+                </p>
+                <p v-if="form.home_content.trim() === DYNAMIC_SHOWCASE_HOME" class="mt-1.5 text-xs font-medium text-primary-700 dark:text-primary-300">
+                  {{ t("admin.settings.site.dynamicHomeSelected") }}
                 </p>
                 <!-- iframe CSP Warning -->
                 <p class="mt-2 text-xs text-amber-600 dark:text-amber-400">
@@ -9014,6 +9029,7 @@ import type {
 import type { ProviderInstance } from "@/types/payment";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import Icon from "@/components/icons/Icon.vue";
+import { DYNAMIC_SHOWCASE_HOME } from "@/constants/homeContent";
 import Select, { type SelectOption } from "@/components/common/Select.vue";
 import {
   SITE_BILLING_MODES,
