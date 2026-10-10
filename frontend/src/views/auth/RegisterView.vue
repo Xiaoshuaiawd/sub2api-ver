@@ -76,7 +76,8 @@
               type="button"
               :disabled="registrationActionDisabled"
               @click="showPassword = !showPassword"
-              class="absolute inset-y-0 right-0 flex items-center pr-3.5 text-gray-400 transition-colors hover:text-gray-600 dark:hover:text-dark-300"
+              :aria-label="showPassword ? t('auth.hidePassword') : t('auth.showPassword')"
+              class="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-gray-400 transition-colors hover:text-indigo-600 dark:hover:text-indigo-300"
             >
               <Icon v-if="showPassword" name="eyeOff" size="md" />
               <Icon v-else name="eye" size="md" />
@@ -111,7 +112,8 @@
               type="button"
               :disabled="registrationActionDisabled"
               @click="showConfirmPassword = !showConfirmPassword"
-              class="absolute inset-y-0 right-0 flex items-center pr-3.5 text-gray-400 transition-colors hover:text-gray-600 dark:hover:text-dark-300"
+              :aria-label="showConfirmPassword ? t('auth.hidePassword') : t('auth.showPassword')"
+              class="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-gray-400 transition-colors hover:text-indigo-600 dark:hover:text-indigo-300"
             >
               <Icon v-if="showConfirmPassword" name="eyeOff" size="md" />
               <Icon v-else name="eye" size="md" />
