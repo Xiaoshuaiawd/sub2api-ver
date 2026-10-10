@@ -1,12 +1,12 @@
 export default {
   showcase: {
     navClients: '客户端', navGroups: '分组', navModels: '模型',
-    eyebrow: '为创作和开发而连接', heroLead: '一个入口，连接你的', heroAccent: ' AI 工作流',
+    eyebrow: 'PROGRAMMABLE AI / ONE API', heroLead: '为代码接入', heroAccent: '下一代 AI 能力',
     defaultSubtitle: '为开发者准备的统一 AI API 服务',
-    heroDescription: '从熟悉的编程客户端出发，浏览当前开放的分组与模型，用同一个平台找到适合你的接入方式。',
+    heroDescription: '面向 Codex、Claude Code、OpenCode 与自定义 IDE 的统一编程 API。分组与模型随配置同步，让每次构建都有更多选择。',
     start: '开始使用', exploreGroups: '查看分组', liveCatalog: '分组与模型实时更新', permissionAware: '按访问权限展示', clientFriendly: '面向开发工具',
     catalogTitle: '实时服务目录', groupsCount: '可见分组', modelsCount: '可用模型', activePlatforms: '覆盖平台', noPlatforms: '暂无平台', catalogFootnote: '数据来自当前启用的渠道与分组',
-    clientsTitle: '在熟悉的工具里，接入更多可能', clientsDescription: '通过可配置的 API 地址和密钥，将站点模型接入你常用的开发工具。', customApi: '自定义 API 接入',
+    clientsTitle: '你的开发工具，你的模型栈', clientsDescription: '通过可配置的 API 地址和密钥，把站点模型接入你常用的开发工具。', customApi: 'CUSTOM API READY',
     clientNote: '客户端能否调用某个模型，取决于其支持的协议、客户端设置以及你可访问的分组。',
     clients: { codex: '面向 OpenAI 协议的编码工作流。', claude: '面向 Anthropic 协议的终端编码体验。', opencode: '可配置多种模型提供方的开源编码工具。', workbuddy: '支持自定义模型服务的 AI 工作台。', codebuddy: '支持自定义 OpenAI 接口模型的开发环境。' },
     groupsTitle: '找到适合你的分组', groupsDescription: '分组直接读取当前配置；新增、停用或调整渠道后，无需手工更新首页。', searchPlaceholder: '搜索分组或模型…',
