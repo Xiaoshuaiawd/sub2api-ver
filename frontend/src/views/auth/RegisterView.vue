@@ -1,8 +1,8 @@
 <template>
-  <AuthLayout>
+  <AuthLayout page="register">
     <div class="space-y-6">
       <!-- Title -->
-      <div class="text-center">
+      <div class="auth-form-heading text-center">
         <h2 class="text-2xl font-bold text-gray-900 dark:text-white">
           {{ t('auth.createAccount') }}
         </h2>

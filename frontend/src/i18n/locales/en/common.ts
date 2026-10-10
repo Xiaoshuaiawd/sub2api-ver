@@ -218,6 +218,12 @@ export default {
 
   // Auth
   auth: {
+    showcaseLoginTitle: 'Back to your workflow,\nready for what is next',
+    showcaseRegisterTitle: 'One API gateway,\na new place to build',
+    showcaseLoginDescription: 'Connect the models and groups available to you from the development tools you already use. Stay focused and keep building.',
+    showcaseRegisterDescription: 'Create an account, get a key, and choose the groups and models that fit your work. Keep your attention on code and ideas.',
+    showcaseExample: 'example',
+    showcaseTools: 'Works with',
     backHome: 'Back to home',
     showPassword: 'Show password',
     hidePassword: 'Hide password',

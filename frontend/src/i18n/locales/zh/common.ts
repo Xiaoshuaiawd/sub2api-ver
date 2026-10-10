@@ -218,6 +218,12 @@ export default {
 
   // Auth
   auth: {
+    showcaseLoginTitle: '回到熟悉的工作流，\n继续构建更多可能',
+    showcaseRegisterTitle: '一个 API 入口，\n开启你的下一次构建',
+    showcaseLoginDescription: '从你常用的开发工具出发，通过统一入口连接站点可用的模型与分组。保持专注，让想法继续向前。',
+    showcaseRegisterDescription: '创建账户、获取密钥，按需选择分组与模型。把接入留给平台，把注意力留给代码和创意。',
+    showcaseExample: '接入示意',
+    showcaseTools: '适用于',
     backHome: '返回首页',
     showPassword: '显示密码',
     hidePassword: '隐藏密码',
