@@ -77,7 +77,7 @@
             <h2 class="mt-3 text-3xl font-bold tracking-tight text-slate-950 sm:text-4xl">{{ t('showcase.clientsTitle') }}</h2>
             <p class="mt-5 max-w-xl text-base leading-8 text-slate-600">{{ t('showcase.clientsDescription') }}</p>
             <div class="mt-8 grid gap-3 sm:grid-cols-2">
-              <div v-for="client in clients" :key="client.name" class="client-item rounded-2xl border border-slate-200/80 bg-white/75 p-4 transition"><div class="flex items-center gap-3"><span class="client-symbol flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 font-mono text-xs font-bold text-indigo-600">{{ client.initial }}</span><div class="min-w-0"><h3 class="text-sm font-semibold text-slate-900">{{ client.name }}</h3><p class="mt-0.5 text-xs leading-5 text-slate-500">{{ t(client.descriptionKey) }}</p></div></div></div>
+              <div v-for="client in clients" :key="client.name" class="client-item rounded-2xl border border-slate-200/80 bg-white/75 p-4 transition"><div class="flex items-center gap-3"><span class="client-symbol flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50"><img :src="client.icon" alt="" aria-hidden="true" :class="client.iconClass" class="object-contain" width="28" height="28" loading="lazy" /></span><div class="min-w-0"><h3 class="text-sm font-semibold text-slate-900">{{ client.name }}</h3><p class="mt-0.5 text-xs leading-5 text-slate-500">{{ t(client.descriptionKey) }}</p></div></div></div>
             </div>
             <p class="mt-5 text-xs leading-6 text-slate-500">{{ t('showcase.clientNote') }}</p>
           </div>
@@ -119,6 +119,11 @@ import { useAppStore, useAuthStore } from '@/stores'
 import { getHomeCatalog, type HomeCatalogGroup, type HomeCatalogModel } from '@/api/homeCatalog'
 import { sanitizeUrl } from '@/utils/url'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
+import codexIcon from '@/assets/client-icons/codex.svg'
+import claudeCodeIcon from '@/assets/client-icons/claude-code.svg'
+import openCodeIcon from '@/assets/client-icons/opencode.svg'
+import workBuddyIcon from '@/assets/client-icons/workbuddy.svg'
+import codeBuddyIcon from '@/assets/client-icons/codebuddy.svg'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -158,11 +163,11 @@ const visibleModels = computed(() => showAllModels.value ? filteredModels.value 
 const activeFilterClass = 'bg-indigo-600 text-white shadow-sm'
 const inactiveFilterClass = 'border border-slate-200 bg-white text-slate-600 hover:border-indigo-200 hover:text-indigo-700'
 const clients = [
-  { name: 'Codex', initial: 'CX', descriptionKey: 'showcase.clients.codex' },
-  { name: 'Claude Code', initial: 'CC', descriptionKey: 'showcase.clients.claude' },
-  { name: 'OpenCode', initial: 'OC', descriptionKey: 'showcase.clients.opencode' },
-  { name: 'WorkBuddy', initial: 'WB', descriptionKey: 'showcase.clients.workbuddy' },
-  { name: 'CodeBuddy IDE', initial: 'IDE', descriptionKey: 'showcase.clients.codebuddy' },
+  { name: 'Codex', icon: codexIcon, iconClass: 'h-7 w-7', descriptionKey: 'showcase.clients.codex' },
+  { name: 'Claude Code', icon: claudeCodeIcon, iconClass: 'h-7 w-7', descriptionKey: 'showcase.clients.claude' },
+  { name: 'OpenCode', icon: openCodeIcon, iconClass: 'h-7 w-7', descriptionKey: 'showcase.clients.opencode' },
+  { name: 'WorkBuddy', icon: workBuddyIcon, iconClass: 'h-9 w-9', descriptionKey: 'showcase.clients.workbuddy' },
+  { name: 'CodeBuddy IDE', icon: codeBuddyIcon, iconClass: 'h-7 w-7', descriptionKey: 'showcase.clients.codebuddy' },
 ]
 
 const codeSnippet = [
@@ -249,7 +254,7 @@ onUnmounted(() => { requestController?.abort(); revealObserver?.disconnect(); if
 .section-eyebrow { color: var(--primary); font-size: .75rem; font-weight: 700; letter-spacing: .15em; text-transform: uppercase; }
 .client-item { transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease; }
 .client-item:hover { transform: translateY(-3px); border-color: #c9c9fb; box-shadow: 0 10px 22px rgba(100, 102, 233, .08); }
-.client-item:hover .client-symbol { background: var(--primary); color: white; }
+.client-item:hover .client-symbol { background: #e7e8ff; }
 .catalog-card { box-shadow: 0 4px 20px rgba(31, 36, 76, .04); animation: card-in .55s ease both; transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease; }
 .catalog-card:hover { transform: translateY(-4px); border-color: #cccdf9; box-shadow: 0 16px 35px rgba(54, 55, 117, .1); }
 .models-section { background: #f8f8fc; }
