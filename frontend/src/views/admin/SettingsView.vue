@@ -13354,12 +13354,8 @@ watch(
 }
 
 @media (min-width: 768px) {
-  .settings-tabs {
-    @apply min-w-full;
-  }
-
   .settings-tab {
-    @apply min-w-0 flex-1 basis-0 overflow-hidden px-2 text-[13px];
+    @apply min-w-[6.75rem] flex-none px-3 text-[13px];
   }
 
   .settings-tab-icon {
@@ -13401,7 +13397,7 @@ watch(
   height: 2px;
   border-radius: 9999px;
   content: "";
-  background: linear-gradient(90deg, #14b8a6, #0ea5e9);
+  background: linear-gradient(90deg, #6466e9, #9792f6);
 }
 
 .settings-tab-icon {

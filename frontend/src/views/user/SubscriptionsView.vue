@@ -28,7 +28,7 @@
         <div
           v-for="subscription in subscriptions"
           :key="subscription.id"
-          class="overflow-hidden rounded-2xl border bg-white dark:bg-dark-800"
+          class="subscription-panel overflow-hidden rounded-2xl border bg-white dark:bg-dark-800"
           :class="platformBorderClass(subscription.group?.platform || '')"
         >
           <!-- Header -->
@@ -405,3 +405,9 @@ onMounted(() => {
   loadSubscriptions()
 })
 </script>
+
+<style scoped>
+.subscription-panel { box-shadow: 0 7px 28px rgba(46, 48, 94, .055); transition: transform .25s ease, box-shadow .25s ease; }
+.subscription-panel:hover { transform: translateY(-3px); box-shadow: 0 16px 36px rgba(46, 48, 94, .1); }
+@media (prefers-reduced-motion: reduce) { .subscription-panel { transition: none; } .subscription-panel:hover { transform: none; } }
+</style>

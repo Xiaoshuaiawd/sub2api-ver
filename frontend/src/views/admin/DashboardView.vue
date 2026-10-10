@@ -1,12 +1,36 @@
 <template>
   <AppLayout>
     <div class="space-y-6">
+      <section class="relative isolate overflow-hidden rounded-[28px] border border-primary-100 bg-gradient-to-br from-white via-white to-primary-50 px-6 py-7 shadow-sm dark:border-primary-500/20 dark:from-dark-800 dark:via-dark-800 dark:to-primary-950/30 sm:px-8">
+        <div class="pointer-events-none absolute -right-12 -top-24 h-64 w-64 rounded-full bg-primary-200/45 blur-3xl dark:bg-primary-500/10"></div>
+        <div class="relative flex items-center justify-between gap-6">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-primary-600 dark:text-primary-300">{{ t('admin.dashboard.description') }}</p>
+            <h2 class="mt-2 text-2xl font-bold tracking-tight text-gray-950 dark:text-white sm:text-3xl">{{ t('admin.dashboard.title') }}</h2>
+          </div>
+          <div class="hidden h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-primary-200 bg-white/80 text-primary-600 shadow-sm dark:border-primary-500/20 dark:bg-primary-900/20 dark:text-primary-300 sm:flex">
+            <Icon name="chart" size="lg" />
+          </div>
+        </div>
+      </section>
+
       <!-- Loading State -->
       <div v-if="loading" class="flex items-center justify-center py-12">
         <LoadingSpinner />
       </div>
 
-      <template v-else-if="stats">
+      <div v-else-if="!stats" class="card flex flex-col items-center gap-4 px-6 py-16 text-center">
+        <div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-50 text-primary-600 dark:bg-primary-900/20 dark:text-primary-300">
+          <Icon name="chart" size="lg" />
+        </div>
+        <div>
+          <h2 class="text-lg font-semibold text-gray-900 dark:text-white">{{ t('admin.dashboard.noDataAvailable') }}</h2>
+          <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ t('admin.dashboard.failedToLoad') }}</p>
+        </div>
+        <button class="btn btn-primary" type="button" @click="loadDashboardStats">{{ t('common.refresh') }}</button>
+      </div>
+
+      <template v-else>
         <!-- Row 1: Core Stats -->
         <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <!-- Total API Keys -->
@@ -322,7 +346,7 @@
               <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.dashboard.recentUsage') }} (Top 12)</h3>
               <div class="flex gap-1" role="group" :aria-label="t('admin.dashboard.recentUsage')">
                 <button v-for="metric in (['tokens', 'actual_cost'] as const)" :key="metric" type="button"
-                  class="rounded px-2 py-1 text-xs" :class="userTrendMetric === metric ? 'bg-blue-600 text-white' : 'text-gray-600 dark:text-gray-300'"
+                  class="rounded-lg px-2 py-1 text-xs transition-colors" :class="userTrendMetric === metric ? 'bg-primary-600 text-white' : 'text-gray-600 hover:bg-primary-50 dark:text-gray-300 dark:hover:bg-primary-900/20'"
                   :aria-pressed="userTrendMetric === metric" @click="setUserTrendMetric(metric)">
                   {{ t(metric === 'tokens' ? 'admin.dashboard.tokens' : 'admin.dashboard.actualSpending') }}
                 </button>

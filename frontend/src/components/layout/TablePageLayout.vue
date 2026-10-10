@@ -6,7 +6,7 @@
     </div>
 
     <!-- 固定区域：搜索和过滤器 -->
-    <div v-if="$slots.filters" class="layout-section-fixed">
+    <div v-if="$slots.filters" class="layout-section-fixed table-filter-panel">
       <slot name="filters" />
     </div>
 
@@ -54,6 +54,14 @@ onUnmounted(() => {
   @apply flex-shrink-0;
 }
 
+.table-filter-panel {
+  border: 1px solid #e8e9f2;
+  border-radius: 1.25rem;
+  background: #fff;
+  padding: 1rem;
+  box-shadow: 0 5px 24px rgba(46, 48, 94, .04);
+}
+
 .layout-section-scrollable {
   @apply flex-1 min-h-0 flex flex-col;
 }
@@ -61,6 +69,9 @@ onUnmounted(() => {
 /* 表格滚动容器 - 增强版表体滚动方案 */
 .table-scroll-container {
   @apply flex flex-col overflow-hidden h-full bg-white dark:bg-dark-800 rounded-2xl border border-gray-200 dark:border-dark-700 shadow-sm;
+  border-color: #e8e9f2;
+  border-radius: 1.25rem;
+  box-shadow: 0 6px 28px rgba(46, 48, 94, .05);
 }
 
 .table-scroll-container :deep(.table-wrapper) {
@@ -77,6 +88,7 @@ onUnmounted(() => {
 
 .table-scroll-container :deep(thead) {
   @apply bg-gray-50/80 dark:bg-dark-800/80 backdrop-blur-sm;
+  background: #fafaff;
 }
 
 .table-scroll-container :deep(tbody) {
@@ -105,4 +117,10 @@ onUnmounted(() => {
   display: table;
   min-width: 100%;
 }
+</style>
+
+<style>
+.dark .table-filter-panel { border-color: #2b344b; background: #151f33; box-shadow: none; }
+.dark .table-scroll-container { border-color: #2b344b; box-shadow: none; }
+.dark .table-scroll-container thead { background: #1c2740; }
 </style>

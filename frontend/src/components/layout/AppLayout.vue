@@ -1,7 +1,7 @@
 <template>
-  <div class="min-h-screen bg-gray-50 dark:bg-dark-950" :class="{ 'dashboard-layout': variant === 'dashboard' }">
+  <div class="app-shell min-h-screen" :class="{ 'dashboard-layout': variant === 'dashboard' }">
     <!-- Background Decoration -->
-    <div class="pointer-events-none fixed inset-0 bg-mesh-gradient"></div>
+    <div class="layout-ambient pointer-events-none fixed inset-0"></div>
 
     <!-- Sidebar -->
     <AppSidebar />
@@ -15,7 +15,7 @@
       <AppHeader />
 
       <!-- Main Content -->
-      <main class="p-4 md:p-6 lg:p-8">
+      <main class="page-content p-4 md:p-6 lg:p-8">
         <slot />
       </main>
     </div>
@@ -53,18 +53,26 @@ defineExpose({ replayTour })
 </script>
 
 <style scoped>
+.app-shell { background: #fbfbfe; }
+.layout-ambient { background: radial-gradient(ellipse at 87% 3%, rgba(100, 102, 233, .055), transparent 42%); }
+.app-shell :deep(.sidebar) { border-right-color: #e9eaf2; }
+.app-shell :deep(.sidebar-link-active) { background: #f0efff; color: #595bd6; }
+.app-shell :deep(.sidebar-link-active:hover) { background: #e8e7ff; color: #4b4dc9; }
+.app-shell :deep(.sidebar-logo) { box-shadow: 0 0 18px rgba(100, 102, 233, .18); }
+.app-shell :deep(header.glass) { background: rgba(255, 255, 255, .9); border-bottom-color: #ececf2; }
+.app-shell :deep(.header-balance) { background: #f2f1ff; }
+.app-shell :deep(.header-balance svg), .app-shell :deep(.header-balance > span.font-semibold) { color: #595bd6; }
+.page-content > * { animation: page-enter .36s ease-out both; }
 .dashboard-layout { background: #fff; }
-.dashboard-layout :deep(.sidebar) { border-right-color: #ececf2; }
-.dashboard-layout :deep(.sidebar-link-active) { background: #f0efff; color: #595bd6; }
-.dashboard-layout :deep(.sidebar-link-active:hover) { background: #e8e7ff; color: #4b4dc9; }
-.dashboard-layout :deep(.sidebar-logo) { box-shadow: 0 0 18px rgba(100, 102, 233, .18); }
-.dashboard-layout :deep(header.glass) { background: rgba(255, 255, 255, .9); border-bottom-color: #ececf2; }
-.dashboard-layout :deep(.header-balance) { background: #f2f1ff; }
-.dashboard-layout :deep(.header-balance svg), .dashboard-layout :deep(.header-balance > span) { color: #595bd6; }
-:global(.dark) .dashboard-layout { background: #0b1120; }
-:global(.dark) .dashboard-layout :deep(.sidebar) { border-right-color: #273148; }
-:global(.dark) .dashboard-layout :deep(.sidebar-link-active) { background: rgba(100, 102, 233, .19); color: #b9baff; }
-:global(.dark) .dashboard-layout :deep(header.glass) { background: rgba(14, 22, 38, .9); border-bottom-color: #273148; }
-:global(.dark) .dashboard-layout :deep(.header-balance) { background: rgba(100, 102, 233, .18); }
-:global(.dark) .dashboard-layout :deep(.header-balance svg), :global(.dark) .dashboard-layout :deep(.header-balance > span) { color: #b9baff; }
+@keyframes page-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .page-content > * { animation: none; } }
+</style>
+
+<style>
+.dark .app-shell { background: #0b1120; }
+.dark .app-shell .sidebar { border-right-color: #273148; }
+.dark .app-shell .sidebar-link-active { background: rgba(100, 102, 233, .19); color: #b9baff; }
+.dark .app-shell header.glass { background: rgba(14, 22, 38, .9); border-bottom-color: #273148; }
+.dark .app-shell .header-balance { background: rgba(100, 102, 233, .18); }
+.dark .app-shell .header-balance svg, .dark .app-shell .header-balance > span.font-semibold { color: #b9baff; }
 </style>
