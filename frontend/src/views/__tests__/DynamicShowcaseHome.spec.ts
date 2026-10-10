@@ -62,4 +62,22 @@ describe('DynamicShowcaseHome', () => {
     expect(wrapper.find('[role="alert"]').exists()).toBe(false)
     expect(wrapper.text()).toContain('showcase.noGroups')
   })
+
+  it('copies the API example and confirms the action', async () => {
+    getHomeCatalog.mockResolvedValue([])
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    const originalClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    try {
+      const wrapper = mountShowcase()
+      await wrapper.get('.copy-button').trigger('click')
+      await flushPromises()
+      expect(writeText).toHaveBeenCalledWith(expect.stringContaining('API_BASE_URL/v1/responses'))
+      expect(wrapper.get('.copy-button').text()).toContain('showcase.copied')
+      wrapper.unmount()
+    } finally {
+      if (originalClipboard) Object.defineProperty(navigator, 'clipboard', originalClipboard)
+      else Reflect.deleteProperty(navigator, 'clipboard')
+    }
+  })
 })

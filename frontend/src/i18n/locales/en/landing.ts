@@ -1,11 +1,11 @@
 export default {
   showcase: {
     navClients: 'Clients', navGroups: 'Groups', navModels: 'Models',
-    eyebrow: 'PROGRAMMABLE AI / ONE API', heroLead: 'Power your code with', heroAccent: ' next-generation AI',
+    eyebrow: 'AI API FOR DEVELOPERS', heroLead: 'One API.', heroAccent: 'More models to build with.',
     defaultSubtitle: 'A unified AI API service for developers',
     heroDescription: 'One programmable API for Codex, Claude Code, OpenCode, and custom IDEs. Groups and models stay in sync with your configuration.',
     start: 'Get started', exploreGroups: 'Explore groups', liveCatalog: 'Live group and model catalog', permissionAware: 'Access-aware visibility', clientFriendly: 'Built for developer tools',
-    catalogTitle: 'Live catalog', groupsCount: 'Visible groups', modelsCount: 'Available models', activePlatforms: 'Platforms', noPlatforms: 'No platforms yet', catalogFootnote: 'Based on active channels and groups',
+    catalogTitle: 'Live catalog', groupsCount: 'Visible groups', modelsCount: 'Available models', activePlatforms: 'Platforms', noPlatforms: 'No platforms yet', catalogFootnote: 'Based on active channels and groups', featuredModel: 'Featured model', copyCode: 'Copy example', copied: 'Copied', copyFailed: 'Copy failed',
     clientsTitle: 'Your tools. Your model stack.', clientsDescription: 'Use a configurable API URL and key to connect site models to your development tools.', customApi: 'CUSTOM API READY',
     clientNote: 'Model availability in each client depends on its supported protocol, client settings, and the groups you can access.',
     clients: { codex: 'Coding workflows using the OpenAI protocol.', claude: 'Terminal coding with the Anthropic protocol.', opencode: 'An open coding tool with multiple configurable providers.', workbuddy: 'An AI workspace with custom model connections.', codebuddy: 'An IDE with custom OpenAI-compatible models.' },
