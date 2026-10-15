@@ -783,6 +783,15 @@ func (s *AccountTestService) testBedrockAccountConnection(c *gin.Context, ctx co
 	return nil
 }
 
+// An explicit Luna connectivity test must probe Luna even when an OAuth
+// account's ordinary model mapping points that name elsewhere.
+func resolveOpenAIAccountTestModel(account *Account, modelID string) string {
+	if account.IsOpenAIOAuth() && modelID == "gpt-6-luna" {
+		return modelID
+	}
+	return account.GetMappedModel(modelID)
+}
+
 // testOpenAIAccountConnection tests an OpenAI account's connection
 func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account *Account, modelID string, prompt string, mode string) error {
 	ctx := c.Request.Context()
@@ -798,7 +807,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	// account model mapping. Native remote compaction v2 rides the ordinary
 	// /responses wire and does NOT apply the legacy compact-only mapping
 	// (post-#5641 semantics: compact_model_mapping is /responses/compact-only).
-	testModelID = account.GetMappedModel(testModelID)
+	testModelID = resolveOpenAIAccountTestModel(account, testModelID)
 	if mode == AccountTestModeCompact {
 		return s.testOpenAICompactConnection(c, account, testModelID)
 	}

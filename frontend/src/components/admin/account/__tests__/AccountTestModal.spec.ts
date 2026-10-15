@@ -77,7 +77,10 @@ function mountModal(account: Record<string, unknown> = {
     global: {
       stubs: {
         BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' },
-        Select: { template: '<div class="select-stub"></div>' },
+        Select: {
+          props: ['options'],
+          template: '<div class="select-stub"><span v-for="option in options" :key="option.id || option.value" :data-model-id="option.id"></span></div>'
+        },
         TextArea: {
           props: ['modelValue'],
           emits: ['update:modelValue'],
@@ -117,6 +120,30 @@ describe('AccountTestModal', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+  })
+
+  it('PRO 模式下 OpenAI OAuth 测试展示固定模型并请求 gpt-6-luna', async () => {
+    vi.mocked(localStorage.getItem).mockImplementation((key) => {
+      if (key === 'admin-accounts-pro-mode') return 'true'
+      if (key === 'auth_token') return 'test-token'
+      return null
+    })
+    getAvailableModels.mockClear()
+    const wrapper = mountModal({ id: 7, name: 'OpenAI OAuth', platform: 'openai', type: 'oauth', status: 'active' })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    expect(getAvailableModels).not.toHaveBeenCalled()
+    expect(wrapper.findAll('[data-model-id]').map((node) => node.attributes('data-model-id'))).toEqual([
+      'gpt-5.6-sol', 'gpt-5.6-terra', 'codex-auto-review', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-5.5'
+    ])
+
+    ;(wrapper.vm as any).selectedModelId = 'gpt-5.5'
+    const startButton = wrapper.findAll('button').find((button) => button.text().includes('admin.accounts.startTest'))
+    await startButton!.trigger('click')
+    await flushPromises()
+    const [, request] = vi.mocked(global.fetch).mock.calls[0]
+    expect(JSON.parse(request!.body as string)).toEqual({ model_id: 'gpt-6-luna', prompt: '', mode: 'default' })
   })
 
   it('gemini 图片模型测试会携带提示词并渲染图片预览', async () => {

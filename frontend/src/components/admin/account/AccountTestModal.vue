@@ -375,6 +375,7 @@ import { useClipboard } from '@/composables/useClipboard'
 import { buildApiUrl } from '@/api/client'
 import { ADMIN_UI_REQUEST_HEADER } from '@/api/adminUIRequest'
 import { adminAPI } from '@/api/admin'
+import { readProModeEnabled } from '@/utils/proMode'
 import type { Account, ClaudeModel } from '@/types'
 
 const { t } = useI18n()
@@ -423,6 +424,15 @@ const uploadAudioName = ref('')
 const imageFileInput = ref<HTMLInputElement | null>(null)
 const audioFileInput = ref<HTMLInputElement | null>(null)
 const isOpenAIAccount = computed(() => props.account?.platform === 'openai')
+const proModeOpenAIOAuth = () => props.account?.platform === 'openai' && props.account?.type === 'oauth' && readProModeEnabled()
+const proModeTestModels: ClaudeModel[] = [
+  'gpt-5.6-sol',
+  'gpt-5.6-terra',
+  'codex-auto-review',
+  'gpt-6-sol',
+  'gpt-6.1-sol',
+  'gpt-5.5'
+].map((id) => ({ id, type: 'model', display_name: id, created_at: '' }))
 const isGrokAccount = computed(() => props.account?.platform === 'grok')
 const openAITestModeOptions = computed(() => [
   { value: 'default', label: t('admin.accounts.openai.testModeDefault') },
@@ -766,7 +776,9 @@ const loadAvailableModels = async () => {
   loadingModels.value = true
   selectedModelId.value = '' // Reset selection before loading
   try {
-    const models = await adminAPI.accounts.getAvailableModels(props.account.id)
+    const models = proModeOpenAIOAuth()
+      ? proModeTestModels
+      : await adminAPI.accounts.getAvailableModels(props.account.id)
     availableModels.value = props.account.platform === 'gemini' || props.account.platform === 'antigravity'
       ? sortTestModels(models)
       : models
@@ -853,6 +865,9 @@ const startTest = async () => {
     } = {
       model_id: showModelSelect.value ? selectedModelId.value : '',
       prompt: supportsPromptInput.value ? testPrompt.value.trim() : ''
+    }
+    if (proModeOpenAIOAuth()) {
+      requestBody.model_id = 'gpt-6-luna'
     }
     if (isOpenAIAccount.value) {
       requestBody.mode = testMode.value
