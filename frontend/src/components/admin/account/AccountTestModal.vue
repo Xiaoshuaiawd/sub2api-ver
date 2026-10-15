@@ -965,10 +965,11 @@ const handleEvent = (event: {
   mime_type?: string
 }) => {
   switch (event.type) {
-    case 'test_start':
+    case 'test_start': {
       addLine(t('admin.accounts.connectedToApi'), 'text-green-400')
-      if (event.model) {
-        addLine(t('admin.accounts.usingModel', { model: event.model }), 'text-cyan-400')
+      const displayModel = proModeOpenAIOAuth() && selectedModelId.value ? selectedModelId.value : event.model
+      if (displayModel) {
+        addLine(t('admin.accounts.usingModel', { model: displayModel }), 'text-cyan-400')
       }
       addLine(
         isGrokAccount.value
@@ -993,6 +994,7 @@ const handleEvent = (event: {
       addLine('', 'text-gray-300')
       addLine(t('admin.accounts.response'), 'text-yellow-400')
       break
+    }
 
     case 'content':
       if (event.text) {

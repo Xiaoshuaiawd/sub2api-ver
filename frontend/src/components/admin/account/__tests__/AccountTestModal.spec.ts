@@ -36,6 +36,9 @@ vi.mock('vue-i18n', async () => {
         if (key === 'admin.accounts.imagePreviewAlt' && params?.index) {
           return `test-image-${params.index}`
         }
+        if (key === 'admin.accounts.usingModel' && params?.model) {
+          return `using-model-${params.model}`
+        }
         return messages[key] || key
       }
     })
@@ -129,6 +132,13 @@ describe('AccountTestModal', () => {
       return null
     })
     getAvailableModels.mockClear()
+    global.fetch = vi.fn().mockResolvedValue(
+      createStreamResponse([
+        'data: {"type":"test_start","model":"gpt-6-luna"}\n',
+        'data: {"type":"content","text":"Hi"}\n',
+        'data: {"type":"test_complete","success":true}\n'
+      ])
+    ) as any
     const wrapper = mountModal({ id: 7, name: 'OpenAI OAuth', platform: 'openai', type: 'oauth', status: 'active' })
     await wrapper.setProps({ show: true })
     await flushPromises()
@@ -144,6 +154,8 @@ describe('AccountTestModal', () => {
     await flushPromises()
     const [, request] = vi.mocked(global.fetch).mock.calls[0]
     expect(JSON.parse(request!.body as string)).toEqual({ model_id: 'gpt-6-luna', prompt: '', mode: 'default' })
+    expect(wrapper.text()).toContain('using-model-gpt-5.5')
+    expect(wrapper.text()).not.toContain('using-model-gpt-6-luna')
   })
 
   it('gemini 图片模型测试会携带提示词并渲染图片预览', async () => {
