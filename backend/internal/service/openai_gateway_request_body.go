@@ -109,6 +109,26 @@ func filterOpenAIResponsesNoneReasoningEffortForAccount(account *Account, body [
 	return out, nil
 }
 
+// stripOpenAIResponsesOutputTokenLimitsForAccount keeps client output limits
+// out of OpenAI Responses upstream requests, including the legacy max_tokens
+// alias that would otherwise be normalized into max_output_tokens.
+func stripOpenAIResponsesOutputTokenLimitsForAccount(account *Account, body []byte) ([]byte, error) {
+	if account == nil || !account.IsOpenAI() {
+		return body, nil
+	}
+	for _, field := range []string{"max_output_tokens", "max_tokens"} {
+		if !gjson.GetBytes(body, field).Exists() {
+			continue
+		}
+		next, err := sjson.DeleteBytes(body, field)
+		if err != nil {
+			return nil, fmt.Errorf("strip OpenAI Responses %s: %w", field, err)
+		}
+		body = next
+	}
+	return body, nil
+}
+
 func deleteOpenAIResponsesNoneReasoningEffortFromObject(account *Account, body map[string]any) {
 	if body == nil || shouldPreserveOpenAIResponsesNoneReasoningEffort(account) {
 		return

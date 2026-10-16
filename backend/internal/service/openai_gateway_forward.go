@@ -82,6 +82,10 @@ func (s *OpenAIGatewayService) forward(ctx context.Context, c *gin.Context, acco
 	if legacyIngressChanged {
 		body = legacyIngressBody
 	}
+	body, err = stripOpenAIResponsesOutputTokenLimitsForAccount(account, body)
+	if err != nil {
+		return nil, err
+	}
 	// 在分流到 passthrough / Codex transform / 原生 ChatCompletions 之前统一修正
 	// 显式为 null 的工具 Schema type，否则 upstream 的 400 会被归一成可重试的 502，
 	// 同一份坏定义在账号池里反复重放。
@@ -604,7 +608,9 @@ func (s *OpenAIGatewayService) forward(ctx context.Context, c *gin.Context, acco
 		maxOutputTokens := gjson.GetBytes(body, "max_output_tokens")
 		if maxOutputTokens.Exists() {
 			switch account.Platform {
-			case PlatformOpenAI, PlatformDeepseek:
+			case PlatformOpenAI:
+				markPatchDelete("max_output_tokens")
+			case PlatformDeepseek:
 				// Preserve Responses-native output limits unless the selected upstream
 				// explicitly rejects the field in the bounded HTTP retry loop below.
 			case PlatformAnthropic:
@@ -621,18 +627,6 @@ func (s *OpenAIGatewayService) forward(ctx context.Context, c *gin.Context, acco
 				markPatchDelete("max_output_tokens")
 			default:
 				markPatchDelete("max_output_tokens")
-			}
-		}
-		// /v1/responses 的规范输出上限字段是 max_output_tokens；部分客户端仍按
-		// Chat Completions 习惯发送 max_tokens，兼容 Responses 上游会拒绝该字段（#4417）。
-		// 仅对 OpenAI 平台归一化：Anthropic 合法使用 max_tokens，其 max_output_tokens
-		// 反向转换已在上方 switch 中处理。
-		if account.Platform == PlatformOpenAI {
-			if maxTokens := gjson.GetBytes(body, "max_tokens"); maxTokens.Exists() {
-				if !gjson.GetBytes(body, "max_output_tokens").Exists() {
-					markPatchSet("max_output_tokens", maxTokens.Value())
-				}
-				markPatchDelete("max_tokens")
 			}
 		}
 		if gjson.GetBytes(body, "max_completion_tokens").Exists() && (account.Type == AccountTypeAPIKey || account.Platform != PlatformOpenAI) {
@@ -745,6 +739,13 @@ func (s *OpenAIGatewayService) forward(ctx context.Context, c *gin.Context, acco
 			}
 			requestView = newOpenAIRequestView(body)
 		}
+	}
+	if strippedBody, stripErr := stripOpenAIResponsesOutputTokenLimitsForAccount(account, body); stripErr != nil {
+		return nil, stripErr
+	} else if !bytes.Equal(strippedBody, body) {
+		body = strippedBody
+		requestView = newOpenAIRequestView(body)
+		reqBody = nil
 	}
 	// Run after orphan-output filtering and all request-map rebuilds so a
 	// compaction trigger cannot remain ahead of surviving history items.
