@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
@@ -146,4 +147,74 @@ func TestForwardAsRawChatCompletions_JuiceWithoutResolutionPassesThrough(t *test
 	require.NotNil(t, result)
 	require.Contains(t, rec.Body.String(), `"content":"The Juice number is 1"`)
 	require.Contains(t, rec.Body.String(), `"content":"2."`)
+}
+
+func TestResponsesJuiceStreamReplaysOnlyTransformedEvents(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	SetJuiceResolvedValue(c, JuiceResolvedValue{Value: 8, OK: true})
+	resp := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+		"event: response.created",
+		`data: {"type":"response.created","response":{"id":"resp_juice","model":"gpt-5.4"}}`,
+		"",
+		"event: response.output_text.delta",
+		`data: {"type":"response.output_text.delta","delta":"Juice: 12"}`,
+		"",
+		"event: response.completed",
+		`data: {"type":"response.completed","response":{"id":"resp_juice","model":"gpt-5.4","usage":{"input_tokens":1,"output_tokens":1}}}`,
+		"",
+	}, "\n")))}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+
+	_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI}, time.Now(), "gpt-5.4", "gpt-5.4")
+
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(rec.Body.String(), "event: response.created"), "Juice replay must not start with an empty SSE event: %q", rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"delta":"Juice: 8"`)
+	require.NotContains(t, rec.Body.String(), "Juice: 12")
+}
+
+func TestResponsesJuiceStreamTruncationKeepsFailoverClean(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	SetJuiceResolvedValue(c, JuiceResolvedValue{Value: 8, OK: true})
+	resp := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+		"event: response.output_text.delta",
+		`data: {"type":"response.output_text.delta","delta":"Juice: 12"}`,
+		"",
+	}, "\n")))}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+
+	_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI}, time.Now(), "gpt-5.4", "gpt-5.4")
+
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.False(t, c.Writer.Written())
+	require.Empty(t, rec.Body.String())
+}
+
+func TestGrokResponsesJuiceStreamTruncationKeepsFailoverClean(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	SetJuiceResolvedValue(c, JuiceResolvedValue{Value: 8, OK: true})
+	resp := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+		"event: response.output_text.delta",
+		`data: {"type":"response.output_text.delta","delta":"Juice: 12"}`,
+		"",
+		"",
+	}, "\n")))}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+
+	_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformGrok}, time.Now(), "grok-4", "grok-4")
+
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.False(t, c.Writer.Written())
+	require.Empty(t, rec.Body.String())
 }

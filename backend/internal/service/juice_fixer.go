@@ -287,14 +287,27 @@ func TransformChatStreamChunks(chunks []string, value int) []string {
 }
 
 // TransformResponsesStreamChunks 变换 Responses 流式 chunk（JSON 字符串数组）。
-// 仅处理 response.output_text.delta 事件的 delta 字段。
+// 修正 output_text.delta 和终止事件中的最终 output，避免两种视图回显不同数值。
 func TransformResponsesStreamChunks(chunks []string, value int) []string {
 	transformer := NewJuiceStreamTransformer(value)
 	transformed := make([]string, len(chunks))
 	lastDeltaChunk := -1
 	for i, chunk := range chunks {
 		transformed[i] = chunk
-		if strings.TrimSpace(gjson.Get(chunk, "type").String()) != "response.output_text.delta" {
+		eventType := strings.TrimSpace(gjson.Get(chunk, "type").String())
+		if eventType == "response.completed" || eventType == "response.done" {
+			response := gjson.Get(chunk, "response")
+			if response.Exists() {
+				updatedResponse := TransformResponsesBody([]byte(response.Raw), value)
+				if string(updatedResponse) != response.Raw {
+					if updated, err := sjson.SetRaw(chunk, "response", string(updatedResponse)); err == nil {
+						transformed[i] = updated
+					}
+				}
+			}
+			continue
+		}
+		if eventType != "response.output_text.delta" {
 			continue
 		}
 		delta := gjson.Get(chunk, "delta")
