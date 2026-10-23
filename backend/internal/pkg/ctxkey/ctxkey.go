@@ -8,6 +8,9 @@ const (
 	// ForcePlatform 强制平台（用于 /antigravity 路由），由 middleware.ForcePlatform 设置
 	ForcePlatform Key = "ctx_force_platform"
 
+	// VcodeSelectedGroupOnly 禁止 Vcode 委托请求通过调度器切换到其他计费分组。
+	VcodeSelectedGroupOnly Key = "ctx_vcode_selected_group_only"
+
 	// ResolvedTargetPlatform 是 composite 分组按请求模型解析出的真实目标平台。
 	ResolvedTargetPlatform Key = "ctx_resolved_target_platform"
 

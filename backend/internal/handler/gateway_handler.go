@@ -632,7 +632,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	currentAPIKey := apiKey
 	currentSubscription := subscription
 	var fallbackGroupID *int64
-	if apiKey.Group != nil {
+	// Vcode 委托指定的分组必须是实际结算分组，不能沿用普通请求的跨组兜底。
+	if apiKey.Group != nil && !c.GetBool("vcode_delegated") {
 		fallbackGroupID = apiKey.Group.FallbackGroupIDOnInvalidRequest
 	}
 	fallbackUsed := false

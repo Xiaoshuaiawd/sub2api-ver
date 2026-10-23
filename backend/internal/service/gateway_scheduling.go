@@ -941,7 +941,7 @@ func (s *GatewayService) resolveGatewayGroup(ctx context.Context, groupID *int64
 			return group, &currentID, nil
 		}
 
-		if group.FallbackGroupID == nil {
+		if group.FallbackGroupID == nil || ctx.Value(ctxkey.VcodeSelectedGroupOnly) == true {
 			return nil, nil, ErrClaudeCodeOnly
 		}
 		currentID = *group.FallbackGroupID

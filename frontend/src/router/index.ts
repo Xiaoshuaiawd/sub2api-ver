@@ -50,6 +50,12 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/vcode/authorize',
+    name: 'VcodeAuthorize',
+    component: () => import('@/views/auth/VcodeAuthorizeView.vue'),
+    meta: { requiresAuth: true, title: 'Connect Vcode' }
+  },
+  {
     path: '/register',
     name: 'Register',
     component: () => import('@/views/auth/RegisterView.vue'),

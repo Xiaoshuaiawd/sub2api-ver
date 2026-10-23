@@ -3,6 +3,7 @@ package routes
 import (
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -14,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -29,6 +31,7 @@ func RegisterGatewayRoutes(
 	settingService *service.SettingService,
 	compositeResolver *service.CompositeRouteResolver,
 	cfg *config.Config,
+	redisClients ...*redis.Client,
 ) {
 	bodyLimit := middleware.RequestBodyLimit(cfg.Gateway.MaxBodySize)
 	textBodyLimit := middleware.RequestBodyLimit(cfg.Gateway.TextMaxBodySize)
@@ -182,6 +185,11 @@ func RegisterGatewayRoutes(
 	gateway.Use(clientRequestID)
 	gateway.Use(opsErrorLogger)
 	gateway.Use(endpointNorm)
+	var vcodeRedis *redis.Client
+	if len(redisClients) > 0 {
+		vcodeRedis = redisClients[0]
+	}
+	gateway.Use(middleware.NewVcodeDelegationMiddleware(apiKeyService, vcodeRedis, os.Getenv("VCODE_INTEGRATION_SECRET"), os.Getenv("VCODE_MANAGED_KEY_SECRET")))
 	gateway.Use(gin.HandlerFunc(apiKeyAuth))
 	gateway.GET("/sub2api/billing", h.Gateway.KeyBillingInfo)
 	gateway.Use(groupModelAllowlist)

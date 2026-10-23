@@ -216,6 +216,7 @@ type CreateAPIKeyRequest struct {
 	Name        string   `json:"name"`
 	GroupID     *int64   `json:"group_id"`
 	CustomKey   *string  `json:"custom_key"`   // 可选的自定义key
+	Managed     bool     `json:"-"`            // 仅服务端内部创建 Vcode 受管 Key 时使用
 	IPWhitelist []string `json:"ip_whitelist"` // IP 白名单
 	IPBlacklist []string `json:"ip_blacklist"` // IP 黑名单
 
@@ -537,8 +538,10 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 	// 判断是否使用自定义Key
 	if req.CustomKey != nil && *req.CustomKey != "" {
 		// 检查限流（仅对自定义key进行限流）
-		if err := s.checkAPIKeyRateLimit(ctx, userID); err != nil {
-			return nil, err
+		if !req.Managed {
+			if err := s.checkAPIKeyRateLimit(ctx, userID); err != nil {
+				return nil, err
+			}
 		}
 
 		// 验证自定义Key格式
@@ -567,8 +570,10 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 		}
 	}
 
-	if err := s.checkAPIKeyCreateLimits(ctx, userID); err != nil {
-		return nil, err
+	if !req.Managed {
+		if err := s.checkAPIKeyCreateLimits(ctx, userID); err != nil {
+			return nil, err
+		}
 	}
 
 	// 创建API Key记录

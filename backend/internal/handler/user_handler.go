@@ -24,6 +24,11 @@ type UserHandler struct {
 	userPlatformQuotaRepo service.UserPlatformQuotaRepository
 }
 
+// LookupVcodeIdentity 供服务间授权码兑换时读取最新用户状态，避免只信任签发时的登录态。
+func (h *UserHandler) LookupVcodeIdentity(ctx context.Context, userID int64) (*service.User, error) {
+	return h.userService.GetByID(ctx, userID)
+}
+
 // NewUserHandler creates a new UserHandler
 func NewUserHandler(
 	userService *service.UserService,
