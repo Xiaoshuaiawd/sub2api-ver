@@ -38,6 +38,20 @@ func TestVcodeAuthorizationCodeIsOneUseAndBoundToVerifier(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestWriteVcodeIdentityUsesEmailWhenUsernameIsEmpty(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/identity", func(c *gin.Context) {
+		writeVcodeIdentity(c, func(_ context.Context, id int64) (*service.User, error) {
+			return &service.User{ID: id, Email: "alice@example.com", Status: service.StatusActive}, nil
+		}, 42)
+	})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/identity", nil))
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Contains(t, response.Body.String(), `"username":"alice@example.com"`)
+}
+
 func TestVcodeAuthRoutesExchangeCodeForActiveUserOnce(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	mr := miniredis.RunT(t)

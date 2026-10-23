@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -197,5 +198,13 @@ func writeVcodeIdentity(c *gin.Context, lookup vcodeUserLookup, userID int64) {
 		return
 	}
 	c.Header("Cache-Control", "no-store")
-	response.Success(c, gin.H{"user_id": user.ID, "username": user.Username})
+	// 邮箱注册的真实账号可能没有用户名；展示名不能阻断以数字 ID 为准的登录。
+	name := strings.TrimSpace(user.Username)
+	if name == "" {
+		name = strings.TrimSpace(user.Email)
+	}
+	if name == "" {
+		name = fmt.Sprintf("用户 #%d", user.ID)
+	}
+	response.Success(c, gin.H{"user_id": user.ID, "username": name})
 }

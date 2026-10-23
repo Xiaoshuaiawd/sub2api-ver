@@ -2,6 +2,8 @@
 
 Vcode 使用本实例的用户、分组权限、模型目录、余额和用量流水。Vcode 客户端及 Agent 不持有本实例 API Key；只有 sub2api 网关内部按 `(user_id, group_id)` 使用受管 Key，账单仍走原网关链路。
 
+Vcode 的账号归属使用不可变的数字用户 ID。用于展示的名字优先取用户名，其次取邮箱；若两者都未填写，则显示用户编号，不能因用户名为空拒绝登录。
+
 ## 服务端设置
 
 sub2api 后端设置 `VCODE_INTEGRATION_SECRET`，值为独立生成的高熵随机字符串，至少 32 字节。Vcode 控制服务设置相同的 `VCODE_INTEGRATION_SECRET`，并设置 `SUB2API_ORIGIN` 为本实例固定 HTTPS origin。两者必须使用单独的受保护环境文件，不得编入前端、CLI、镜像默认值或仓库。
