@@ -211,27 +211,17 @@
             </template>
             <!-- Plan list -->
             <template v-else>
-              <section v-if="checkout.plans.length > 0" class="relative isolate overflow-hidden rounded-[30px] bg-slate-950 px-6 py-10 text-white shadow-[0_30px_80px_-45px_rgba(15,23,42,0.65)] sm:px-10 sm:py-12 lg:px-14">
-                <div class="pointer-events-none absolute -right-16 -top-28 -z-10 h-72 w-72 rounded-full bg-blue-500/25 blur-3xl" aria-hidden="true" />
-                <div class="pointer-events-none absolute -bottom-36 left-1/3 -z-10 h-72 w-72 rounded-full bg-teal-400/20 blur-3xl" aria-hidden="true" />
-                <div class="max-w-3xl">
-                  <p class="mb-4 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-sky-200">
-                    <span class="h-1.5 w-1.5 rounded-full bg-teal-300" aria-hidden="true" />{{ t('payment.subscriptionHeroEyebrow') }}
-                  </p>
-                  <h1 class="text-3xl font-bold tracking-tight sm:text-4xl lg:text-5xl">{{ t('payment.subscriptionHeroTitle') }}</h1>
-                  <p class="mt-4 max-w-2xl text-sm leading-7 text-slate-300 sm:text-base">{{ t('payment.subscriptionHeroDescription') }}</p>
-                </div>
-                <div class="mt-8 flex flex-wrap gap-2 text-xs font-medium text-slate-200">
-                  <span class="rounded-full border border-white/15 bg-white/10 px-3 py-1.5">{{ t('payment.planCard.availableGroups') }}</span>
-                  <span class="rounded-full border border-white/15 bg-white/10 px-3 py-1.5">{{ t('payment.planCard.dailyLimit') }} / {{ t('payment.planCard.weeklyLimit') }} / {{ t('payment.planCard.monthlyLimit') }}</span>
-                </div>
+              <section v-if="checkout.plans.length > 0" class="mx-auto max-w-3xl pb-2 pt-4 text-center sm:pb-4 sm:pt-7">
+                <p class="text-xs font-semibold uppercase tracking-[0.2em] text-teal-700 dark:text-teal-400">{{ t('payment.subscriptionHeroEyebrow') }}</p>
+                <h1 class="mt-3 text-3xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-4xl">{{ t('payment.subscriptionHeroTitle') }}</h1>
+                <p class="mx-auto mt-3 max-w-2xl text-sm leading-6 text-slate-500 dark:text-dark-300 sm:text-base">{{ t('payment.subscriptionHeroDescription') }}</p>
               </section>
               <div v-if="checkout.plans.length === 0" class="card py-16 text-center">
                 <Icon name="gift" size="xl" class="mx-auto mb-3 text-gray-300 dark:text-dark-600" />
                 <p class="text-gray-500 dark:text-gray-400">{{ t('payment.noPlans') }}</p>
               </div>
               <div v-else :class="planGridClass">
-                <SubscriptionPlanCard v-for="(plan, index) in checkout.plans" :key="plan.id" :plan="plan" :tier-index="index" :active-subscriptions="activeSubscriptions" @select="selectPlan" />
+                <SubscriptionPlanCard v-for="plan in checkout.plans" :key="plan.id" :plan="plan" :active-subscriptions="activeSubscriptions" @select="selectPlan" />
               </div>
               <!-- Active subscriptions (compact, below plan list) -->
               <div v-if="activeSubscriptions.length > 0">

@@ -64,6 +64,19 @@ describe("SubscriptionPlanCard", () => {
     expect(wrapper.text()).toContain("Gemini")
     expect(wrapper.text()).toContain("payment.planCard.variesByGroup")
   })
+
+  it("shows the monthly allowance once and hides duplicated admin metadata", () => {
+    const wrapper = mountPlanCard("openai", {
+      description: "可用分组：Codex-Pro 周限额：100$ 月限额：435$",
+      group_name: "Codex-Pro",
+      weekly_limit_usd: 100,
+      monthly_limit_usd: 435,
+    });
+
+    expect(wrapper.get('[data-testid="primary-quota"]').text()).toContain("$435");
+    expect(wrapper.text()).toContain("$100");
+    expect(wrapper.text()).not.toContain("可用分组：Codex-Pro 周限额：100$ 月限额：435$");
+  });
   it("does not show Antigravity model scopes for OpenAI plans", () => {
     const text = mountPlanCard("openai").text();
 
