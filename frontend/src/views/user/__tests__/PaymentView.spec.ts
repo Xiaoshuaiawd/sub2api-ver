@@ -360,7 +360,7 @@ describe('PaymentView help text', () => {
 })
 
 describe('PaymentView subscription plan grid', () => {
-  it.each([3, 4, 6])('keeps %i plans on the existing mobile/tablet/desktop grid', async (planCount) => {
+  it.each([3, 4, 6])('keeps %i plans on the responsive pricing grid', async (planCount) => {
     const wrapper = await mountSubscriptionPlanList(planCount)
     const cards = wrapper.findAllComponents(SubscriptionPlanCard)
 
@@ -368,9 +368,10 @@ describe('PaymentView subscription plan grid', () => {
     expect([...(cards[0].element.parentElement?.classList ?? [])]).toEqual(expect.arrayContaining([
       'grid',
       'grid-cols-1',
-      'sm:grid-cols-2',
-      'lg:grid-cols-3',
+      'md:grid-cols-2',
+      planCount === 3 ? 'xl:grid-cols-3' : 'xl:grid-cols-4',
     ]))
+    expect(wrapper.text()).toContain('payment.subscriptionHeroTitle')
   })
 })
 

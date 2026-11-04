@@ -111,7 +111,7 @@ describe("SubscriptionPlanCard", () => {
     expect(title.attributes("title")).toBe(name);
     expect(title.classes()).toEqual(expect.arrayContaining([
       "min-w-0",
-      "h-12",
+      "h-14",
       "break-words",
       "line-clamp-2",
       "[overflow-wrap:anywhere]",
@@ -119,45 +119,30 @@ describe("SubscriptionPlanCard", () => {
     expect(title.classes()).not.toContain("truncate");
   });
 
-  it("keeps title, badge, price, description, and purchase action in separate bounded regions", () => {
+  it("shows plan details and emits the selected plan from the purchase action", async () => {
     const wrapper = mountPlanCard("openai", {
       name: "Enterprise Global Acceleration Subscription with Priority Support",
       price: 123.45,
       currency: "USD",
       description: "Includes advanced models and priority support.",
     });
-    const title = wrapper.get("h3");
-    const badge = wrapper.findAll("span").find((node) => node.text() === "OpenAI");
-    const price = wrapper.findAll("span").find((node) => node.text() === "123.45");
-
-    expect(title.element.parentElement?.classList).toContain("min-w-0");
-    expect(title.element.parentElement?.classList).toContain("flex-1");
-    expect(badge?.classes()).toContain("shrink-0");
-    expect([...(badge?.element.parentElement?.classList ?? [])]).toEqual(expect.arrayContaining([
-      "flex",
-      "items-center",
-      "justify-end",
-    ]));
-    expect(badge?.element.parentElement?.textContent).toContain("/ 30payment.days");
-    expect(badge?.element.parentElement?.parentElement?.classList).toContain("shrink-0");
-    expect(price?.element.parentElement?.parentElement?.classList).toContain("shrink-0");
-    expect(wrapper.get("p").text()).toBe("Includes advanced models and priority support.");
+    expect(wrapper.get("h3").text()).toBe("Enterprise Global Acceleration Subscription with Priority Support");
+    expect(wrapper.text()).toContain("OpenAI");
+    expect(wrapper.text()).toContain("$123.45USD/ 30payment.days");
+    expect(wrapper.text()).toContain("Includes advanced models and priority support.");
     expect(wrapper.get("button").text()).toBe("payment.subscribeNow");
+    await wrapper.get("button").trigger("click");
+    expect(wrapper.emitted("select")?.[0]?.[0]).toMatchObject({ name: "Enterprise Global Acceleration Subscription with Priority Support", price: 123.45 });
   });
 
-  it("keeps short plan titles compact and aligned", () => {
+  it("keeps short plan titles readable beside the platform badge", () => {
     const wrapper = mountPlanCard("openai", { name: "Pro", description: "" });
     const title = wrapper.get("h3");
-    const badge = wrapper.findAll("span").find((node) => node.text() === "OpenAI");
 
     expect(title.text()).toBe("Pro");
     expect(title.attributes("title")).toBe("Pro");
-    expect(title.classes()).toEqual(expect.arrayContaining(["text-base", "font-bold", "h-12"]));
-    expect([...(badge?.element.parentElement?.classList ?? [])]).toEqual(expect.arrayContaining([
-      "flex",
-      "items-center",
-      "justify-end",
-    ]));
-    expect(badge?.element.parentElement?.textContent).toContain("/ 30payment.days");
+    expect(title.classes()).toEqual(expect.arrayContaining(["text-xl", "font-bold", "h-14"]));
+    expect(wrapper.text()).toContain("OpenAI");
+    expect(wrapper.text()).toContain("/ 30payment.days");
   });
 });

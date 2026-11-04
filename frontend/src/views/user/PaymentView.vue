@@ -1,15 +1,15 @@
 <template>
   <AppLayout>
-    <div class="mx-auto max-w-4xl space-y-6">
+    <div :class="['mx-auto space-y-6 transition-[max-width] duration-300 motion-reduce:transition-none', activeTab === 'subscription' && paymentPhase === 'select' && !selectedPlan ? 'max-w-7xl' : 'max-w-4xl']">
       <div v-if="loading" class="flex items-center justify-center py-20">
         <div class="h-8 w-8 animate-spin rounded-full border-4 border-primary-500 border-t-transparent"></div>
       </div>
       <template v-else>
         <!-- Tab Switcher (hide during payment and subscription confirm) -->
-        <div v-if="tabs.length > 1 && paymentPhase === 'select' && !selectedPlan" class="member-tab-list flex space-x-1 rounded-xl bg-primary-50 p-1 dark:bg-dark-800">
+        <div v-if="tabs.length > 1 && paymentPhase === 'select' && !selectedPlan" class="member-tab-list mx-auto flex w-full max-w-xl space-x-1 rounded-2xl border border-slate-200/70 bg-slate-100/80 p-1.5 dark:border-dark-600 dark:bg-dark-800">
           <button v-for="tab in tabs" :key="tab.key"
-            class="flex-1 rounded-lg px-4 py-2.5 text-sm font-medium transition-all"
-            :class="activeTab === tab.key ? 'bg-white text-gray-900 shadow dark:bg-dark-700 dark:text-white' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'"
+            class="min-h-11 flex-1 rounded-xl px-4 py-2.5 text-sm font-semibold transition-[background-color,color,box-shadow] duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 motion-reduce:transition-none"
+            :class="activeTab === tab.key ? 'bg-white text-slate-950 shadow-sm dark:bg-dark-700 dark:text-white' : 'text-slate-500 hover:text-slate-800 dark:text-dark-300 dark:hover:text-white'"
             @click="activeTab = tab.key">{{ tab.label }}</button>
         </div>
         <!-- Payment in progress (shared by recharge and subscription) -->
@@ -211,12 +211,27 @@
             </template>
             <!-- Plan list -->
             <template v-else>
+              <section v-if="checkout.plans.length > 0" class="relative isolate overflow-hidden rounded-[30px] bg-slate-950 px-6 py-10 text-white shadow-[0_30px_80px_-45px_rgba(15,23,42,0.65)] sm:px-10 sm:py-12 lg:px-14">
+                <div class="pointer-events-none absolute -right-16 -top-28 -z-10 h-72 w-72 rounded-full bg-blue-500/25 blur-3xl" aria-hidden="true" />
+                <div class="pointer-events-none absolute -bottom-36 left-1/3 -z-10 h-72 w-72 rounded-full bg-teal-400/20 blur-3xl" aria-hidden="true" />
+                <div class="max-w-3xl">
+                  <p class="mb-4 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-sky-200">
+                    <span class="h-1.5 w-1.5 rounded-full bg-teal-300" aria-hidden="true" />{{ t('payment.subscriptionHeroEyebrow') }}
+                  </p>
+                  <h1 class="text-3xl font-bold tracking-tight sm:text-4xl lg:text-5xl">{{ t('payment.subscriptionHeroTitle') }}</h1>
+                  <p class="mt-4 max-w-2xl text-sm leading-7 text-slate-300 sm:text-base">{{ t('payment.subscriptionHeroDescription') }}</p>
+                </div>
+                <div class="mt-8 flex flex-wrap gap-2 text-xs font-medium text-slate-200">
+                  <span class="rounded-full border border-white/15 bg-white/10 px-3 py-1.5">{{ t('payment.planCard.availableGroups') }}</span>
+                  <span class="rounded-full border border-white/15 bg-white/10 px-3 py-1.5">{{ t('payment.planCard.dailyLimit') }} / {{ t('payment.planCard.weeklyLimit') }} / {{ t('payment.planCard.monthlyLimit') }}</span>
+                </div>
+              </section>
               <div v-if="checkout.plans.length === 0" class="card py-16 text-center">
                 <Icon name="gift" size="xl" class="mx-auto mb-3 text-gray-300 dark:text-dark-600" />
                 <p class="text-gray-500 dark:text-gray-400">{{ t('payment.noPlans') }}</p>
               </div>
               <div v-else :class="planGridClass">
-                <SubscriptionPlanCard v-for="plan in checkout.plans" :key="plan.id" :plan="plan" :active-subscriptions="activeSubscriptions" @select="selectPlan" />
+                <SubscriptionPlanCard v-for="(plan, index) in checkout.plans" :key="plan.id" :plan="plan" :tier-index="index" :active-subscriptions="activeSubscriptions" @select="selectPlan" />
               </div>
               <!-- Active subscriptions (compact, below plan list) -->
               <div v-if="activeSubscriptions.length > 0">
@@ -588,8 +603,10 @@ const rechargeBonusMode = computed(() => normalizeRechargeBonusMode(checkout.val
 // Adaptive grid: center single card, 2-col for 2 plans, 3-col for 3+
 const planGridClass = computed(() => {
   const n = checkout.value.plans.length
-  if (n <= 2) return 'grid grid-cols-1 gap-5 sm:grid-cols-2'
-  return 'grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3'
+  if (n === 1) return 'mx-auto grid w-full max-w-md grid-cols-1 gap-6'
+  if (n === 2) return 'mx-auto grid w-full max-w-4xl grid-cols-1 gap-6 md:grid-cols-2'
+  if (n === 3) return 'grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3'
+  return 'grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4'
 })
 
 // Check if an amount fits a method's [min, max]. 0 = no limit.
