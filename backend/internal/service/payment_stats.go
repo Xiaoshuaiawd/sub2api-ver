@@ -12,6 +12,7 @@ import (
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/paymentauditlog"
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
+	"github.com/Wei-Shaw/sub2api/internal/payment"
 )
 
 // --- Dashboard & Analytics ---
@@ -35,6 +36,7 @@ func (s *PaymentService) GetDashboardStats(ctx context.Context, days int) (*Dash
 	if err != nil {
 		return nil, err
 	}
+	orders = externalPaymentOrders(orders)
 
 	st := &DashboardStats{}
 	computeBasicStats(st, orders, todayStart)
@@ -51,6 +53,18 @@ func (s *PaymentService) GetDashboardStats(ctx context.Context, days int) (*Dash
 	st.TopUsers = buildTopUsers(orders)
 
 	return st, nil
+}
+
+// Wallet purchases move previously credited balance into a subscription and
+// must not be reported as a second external payment.
+func externalPaymentOrders(orders []*dbent.PaymentOrder) []*dbent.PaymentOrder {
+	result := make([]*dbent.PaymentOrder, 0, len(orders))
+	for _, order := range orders {
+		if order.PaymentType != payment.TypeWallet {
+			result = append(result, order)
+		}
+	}
+	return result
 }
 
 func computeBasicStats(st *DashboardStats, orders []*dbent.PaymentOrder, todayStart time.Time) {

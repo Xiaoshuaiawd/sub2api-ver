@@ -293,6 +293,23 @@ describe('decidePaymentLaunch', () => {
 })
 
 describe('buildCreateOrderPayload', () => {
+  it('marks wallet subscription purchases as internal balance transfers', () => {
+    expect(buildCreateOrderPayload({
+      amount: 5,
+      paymentType: 'wallet',
+      orderType: 'subscription',
+      planId: 7,
+      origin: 'https://app.example.com',
+      isMobile: false,
+      isWechatBrowser: false,
+    })).toMatchObject({
+      payment_type: 'wallet',
+      order_type: 'subscription',
+      plan_id: 7,
+      payment_source: 'wallet_balance',
+    })
+  })
+
   it('normalizes visible method aliases and attaches a canonical result URL', () => {
     expect(buildCreateOrderPayload({
       amount: 88,

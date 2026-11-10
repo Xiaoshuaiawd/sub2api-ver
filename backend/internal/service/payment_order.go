@@ -33,6 +33,9 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	if err != nil {
 		return nil, fmt.Errorf("get payment config: %w", err)
 	}
+	if req.PaymentType == payment.TypeWallet {
+		return s.createWalletSubscriptionOrder(ctx, req, cfg)
+	}
 	if !cfg.Enabled {
 		return nil, infraerrors.Forbidden("PAYMENT_DISABLED", "payment system is disabled")
 	}

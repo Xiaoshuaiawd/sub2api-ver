@@ -177,14 +177,23 @@
                   </div>
                 </div>
               </div>
-              <div v-if="enabledMethods.length >= 1" class="card p-6">
+              <div v-if="subMethodOptions.length > 0" class="card p-6">
                 <PaymentMethodSelector
                   :methods="subMethodOptions"
                   :selected="selectedMethod"
                   @select="selectedMethod = $event"
                 />
+                <div v-if="selectedMethod === 'wallet' || !walletCanPay" class="mt-4 rounded-xl bg-slate-50 px-4 py-3 text-sm dark:bg-dark-700/60" data-testid="wallet-balance-info">
+                  <div class="flex items-center justify-between gap-3 text-slate-600 dark:text-dark-200">
+                    <span>{{ t('payment.walletBalance') }}</span>
+                    <span class="font-semibold tabular-nums text-slate-900 dark:text-white">${{ walletBalance.toFixed(2) }}</span>
+                  </div>
+                  <p v-if="selectedMethod === 'wallet'" class="mt-2 text-xs text-slate-500 dark:text-dark-300">{{ t('payment.walletDeductionHint') }}</p>
+                  <p v-if="!walletCanPay" class="mt-2 text-red-600 dark:text-red-400">{{ t('payment.walletInsufficient') }}</p>
+                  <button v-if="!walletCanPay && !checkout.balance_disabled" type="button" class="mt-2 text-sm font-semibold text-primary-600 underline-offset-2 hover:underline dark:text-primary-400" @click="selectedPlan = null; activeTab = 'recharge'">{{ t('payment.walletRecharge') }}</button>
+                </div>
               </div>
-              <div v-if="feeRate > 0 && selectedPlan.price > 0" class="card p-6">
+              <div v-if="selectedMethod !== 'wallet' && feeRate > 0 && selectedPlan.price > 0" class="card p-6">
                 <div class="space-y-2 text-sm">
                   <div class="flex justify-between">
                     <span class="text-gray-500 dark:text-gray-400">{{ t('payment.amountLabel') }}</span>
@@ -205,7 +214,7 @@
                   <span class="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></span>
                   {{ t('common.processing') }}
                 </span>
-                <span v-else>{{ t('payment.createOrder') }} {{ formatSelectedPaymentAmount(subTotalAmount) }}</span>
+                <span v-else>{{ selectedMethod === 'wallet' ? t('payment.walletPay') : t('payment.createOrder') }} {{ formatSelectedPaymentAmount(subTotalAmount) }}</span>
               </button>
               <button class="btn btn-secondary w-full" @click="selectedPlan = null">{{ t('common.cancel') }}</button>
             </template>
@@ -364,6 +373,8 @@ const activeTab = ref<'recharge' | 'subscription'>('recharge')
 const amount = ref<number | null>(null)
 const selectedMethod = ref('')
 const selectedPlan = ref<SubscriptionPlan | null>(null)
+const walletPurchaseKey = ref('')
+const walletPurchasePlanID = ref<number | null>(null)
 const previewImage = ref('')
 
 const paymentPhase = ref<'select' | 'paying'>('select')
@@ -625,7 +636,7 @@ const globalMaxAmount = computed(() => {
 
 // Selected method's limits (for validation and error messages)
 const selectedLimit = computed(() => visibleMethods.value[selectedMethod.value])
-const selectedCurrency = computed(() => normalizePaymentCurrency(selectedLimit.value?.currency))
+const selectedCurrency = computed(() => selectedMethod.value === 'wallet' ? 'USD' : normalizePaymentCurrency(selectedLimit.value?.currency))
 const localeCode = computed(() => {
   const raw = i18n.locale as unknown
   if (typeof raw === 'string') return raw
@@ -733,10 +744,12 @@ const canSubmit = computed(() =>
 
 const subPaymentAmount = computed(() => {
   const price = selectedPlan.value?.price ?? 0
+  if (selectedMethod.value === 'wallet') return price
   return subscriptionPaymentAmountForCurrency(price, selectedCurrency.value)
 })
 
 const subFeeAmount = computed(() => {
+  if (selectedMethod.value === 'wallet') return 0
   if (feeRate.value <= 0 || subPaymentAmount.value <= 0) return 0
   return ceilPaymentAmount((subPaymentAmount.value * feeRate.value) / 100, selectedCurrency.value)
 })
@@ -753,10 +766,17 @@ function subscriptionTotalAmountForCurrency(value: number, currency: string): nu
   return roundPaymentAmount(paymentAmount + fee, currency)
 }
 
-// Subscription-specific: method options based on gateway pay amount
+const walletBalance = computed(() => user.value?.balance ?? 0)
+const walletCanPay = computed(() => selectedPlan.value !== null && selectedPlan.value.price > 0 && walletBalance.value >= selectedPlan.value.price)
+
+// Subscription-specific: method options based on gateway pay amount.
 const subMethodOptions = computed<PaymentMethodOption[]>(() => {
   const price = selectedPlan.value?.price ?? 0
-  return enabledMethods.value.map((type) => {
+  const methods: PaymentMethodOption[] = [{
+    type: 'wallet', display_name: t('payment.methods.wallet'), fee_rate: 0,
+    available: walletCanPay.value,
+  }]
+  return methods.concat(enabledMethods.value.map((type) => {
     const ml = visibleMethods.value[type]
     const currency = normalizePaymentCurrency(ml?.currency)
     return {
@@ -765,14 +785,21 @@ const subMethodOptions = computed<PaymentMethodOption[]>(() => {
       fee_rate: ml?.fee_rate ?? 0,
       available: ml?.available !== false && amountFitsMethod(subscriptionTotalAmountForCurrency(price, currency), type),
     }
-  })
+  }))
 })
 
 const canSubmitSubscription = computed(() =>
   selectedPlan.value !== null
-    && amountFitsMethod(subTotalAmount.value, selectedMethod.value)
-    && selectedLimit.value?.available !== false
+    && (selectedMethod.value === 'wallet'
+      ? walletCanPay.value
+      : amountFitsMethod(subTotalAmount.value, selectedMethod.value)
+        && selectedLimit.value?.available !== false)
 )
+
+watch(activeTab, (tab) => {
+  if (tab === 'recharge' && selectedMethod.value === 'wallet') selectedMethod.value = enabledMethods.value[0] || ''
+  if (tab === 'subscription' && !selectedMethod.value) selectedMethod.value = 'wallet'
+})
 
 // Auto-switch to first available method when current selection can't handle the amount
 watch(() => [payBaseAmount.value, selectedMethod.value] as const, ([amt, method]) => {
@@ -823,14 +850,18 @@ function planPeakRateLabel(plan: SubscriptionPlan): string {
 }
 
 function selectPlan(plan: SubscriptionPlan) {
+  if (walletPurchasePlanID.value !== plan.id) walletPurchaseKey.value = ''
   selectedPlan.value = plan
+  if (!enabledMethods.value.length) selectedMethod.value = 'wallet'
   errorMessage.value = ''
 }
 
 function selectPlanFromModal(plan: SubscriptionPlan) {
   showRenewalModal.value = false
   renewGroupId.value = null
+  if (walletPurchasePlanID.value !== plan.id) walletPurchaseKey.value = ''
   selectedPlan.value = plan
+  if (!enabledMethods.value.length) selectedMethod.value = 'wallet'
   errorMessage.value = ''
 }
 
@@ -847,6 +878,15 @@ async function handleSubmitRecharge() {
 async function confirmSubscribe() {
   if (!selectedPlan.value || submitting.value) return
   await createOrder(selectedPlan.value.price, 'subscription', selectedPlan.value.id)
+}
+
+function newWalletPurchaseKey(): string {
+  if (crypto.randomUUID) return crypto.randomUUID()
+  const bytes = crypto.getRandomValues(new Uint8Array(16))
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80
+  const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
 }
 
 async function createOrder(orderAmount: number, orderType: OrderType, planId?: number, options: CreateOrderOptions = {}) {
@@ -872,8 +912,23 @@ async function createOrder(orderAmount: number, orderType: OrderType, planId?: n
     if (options.wechatResumeToken) {
       payload.wechat_resume_token = options.wechatResumeToken
     }
+    if (orderType === 'subscription' && requestType === 'wallet') {
+      if (walletPurchasePlanID.value !== planId) walletPurchaseKey.value = ''
+      walletPurchasePlanID.value = planId ?? null
+      walletPurchaseKey.value ||= newWalletPurchaseKey()
+      payload.idempotency_key = walletPurchaseKey.value
+    }
 
     const result = await paymentStore.createOrder(payload) as CreateOrderResult & { resume_token?: string }
+    if (requestType === 'wallet' && orderType === 'subscription') {
+      if (result.status !== 'COMPLETED') throw new Error('Wallet purchase did not complete')
+      void authStore.refreshUser().catch(() => {})
+      void subscriptionStore.fetchActiveSubscriptions(true).catch(() => {})
+      await router.push({ path: '/payment/result', query: { order_id: String(result.order_id) } })
+      walletPurchaseKey.value = ''
+      walletPurchasePlanID.value = null
+      return
+    }
     const openWindow = (url: string) => {
       const win = window.open(url, 'paymentPopup', getPaymentPopupFeatures())
       if (!win || win.closed) {
@@ -1001,7 +1056,11 @@ async function createOrder(orderAmount: number, orderType: OrderType, planId?: n
     }
   } catch (err: unknown) {
     const apiErr = err as Record<string, unknown>
-    if (apiErr.reason === 'TOO_MANY_PENDING') {
+    if (requestType === 'wallet' && apiErr.reason === 'INSUFFICIENT_BALANCE') {
+      errorMessage.value = t('payment.walletInsufficient')
+      errorHintMessage.value = ''
+      authStore.refreshUser().catch(() => {})
+    } else if (apiErr.reason === 'TOO_MANY_PENDING') {
       const metadata = apiErr.metadata as Record<string, unknown> | undefined
       errorMessage.value = t('payment.errors.tooManyPending', { max: metadata?.max || '' })
       errorHintMessage.value = ''

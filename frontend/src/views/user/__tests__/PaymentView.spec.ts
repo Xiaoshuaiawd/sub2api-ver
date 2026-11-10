@@ -5,6 +5,7 @@ import { PAYMENT_RECOVERY_STORAGE_KEY } from '@/components/payment/paymentFlow'
 import { formatPaymentAmount } from '@/components/payment/currency'
 import AmountInput from '@/components/payment/AmountInput.vue'
 import SubscriptionPlanCard from '@/components/payment/SubscriptionPlanCard.vue'
+import PaymentMethodSelector from '@/components/payment/PaymentMethodSelector.vue'
 import en from '@/i18n/locales/en'
 import zh from '@/i18n/locales/zh'
 import type { CheckoutInfoResponse, MethodLimit, SubscriptionPlan } from '@/types/payment'
@@ -31,6 +32,7 @@ const translate = vi.hoisted(() => vi.fn((key: string) => key))
 const appStoreState = vi.hoisted(() => ({
   setPublicSettings: (_value: Record<string, unknown> | undefined) => {},
 }))
+const authBalance = vi.hoisted(() => ({ value: 0 }))
 
 vi.mock('vue-router', async () => {
   const actual = await vi.importActual<typeof import('vue-router')>('vue-router')
@@ -59,7 +61,7 @@ vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({
     user: {
       username: 'demo-user',
-      balance: 0,
+      balance: authBalance.value,
     },
     refreshUser,
   }),
@@ -230,7 +232,7 @@ async function mountSubscriptionConfirm(options: Parameters<typeof checkoutInfoW
   routerPush.mockReset().mockResolvedValue(undefined)
   routerResolve.mockClear()
   createOrder.mockReset()
-  refreshUser.mockReset()
+  refreshUser.mockReset().mockResolvedValue(undefined)
   fetchActiveSubscriptions.mockReset().mockResolvedValue(undefined)
   showError.mockReset()
   showInfo.mockReset()
@@ -256,7 +258,8 @@ async function mountSubscriptionConfirm(options: Parameters<typeof checkoutInfoW
   return wrapper
 }
 
-async function mountSubscriptionPlanList(planCount: number) {
+async function mountSubscriptionPlanList(planCount: number, balance = 0, methods?: Record<string, MethodLimit>) {
+	authBalance.value = balance
   vi.useRealTimers()
   routeState.path = '/purchase'
   routeState.query = { tab: 'subscription' }
@@ -264,7 +267,7 @@ async function mountSubscriptionPlanList(planCount: number) {
   routerPush.mockReset().mockResolvedValue(undefined)
   routerResolve.mockClear()
   createOrder.mockReset()
-  refreshUser.mockReset()
+  refreshUser.mockReset().mockResolvedValue(undefined)
   fetchActiveSubscriptions.mockReset().mockResolvedValue(undefined)
   showError.mockReset()
   showInfo.mockReset()
@@ -275,7 +278,7 @@ async function mountSubscriptionPlanList(planCount: number) {
     id: index + 1,
     name: `Plan ${index + 1}`,
   }))
-  getCheckoutInfo.mockReset().mockResolvedValue(checkoutInfoFixture({ plans }))
+  getCheckoutInfo.mockReset().mockResolvedValue(checkoutInfoFixture({ plans, ...(methods ? { methods } : {}) }))
   bridgeInvoke.mockReset()
   window.localStorage.clear()
   ;(window as Window & { WeixinJSBridge?: { invoke: typeof bridgeInvoke } }).WeixinJSBridge = undefined
@@ -372,6 +375,71 @@ describe('PaymentView subscription plan grid', () => {
       planCount === 3 ? 'xl:grid-cols-3' : 'xl:grid-cols-4',
     ]))
     expect(wrapper.text()).toContain('payment.subscriptionHeroTitle')
+  })
+})
+
+describe('PaymentView wallet subscription purchase', () => {
+  it('shows wallet balance and completes a subscription without launching a provider', async () => {
+    const wrapper = await mountSubscriptionPlanList(1, 200)
+    const plan = checkoutInfoWithPlansFixture().data.plans[0]
+    createOrder.mockResolvedValue({ order_id: 91, amount: 128, pay_amount: 128, status: 'COMPLETED', payment_type: 'wallet' })
+    wrapper.getComponent(SubscriptionPlanCard).vm.$emit('select', plan)
+    await flushPromises()
+
+    const selector = wrapper.getComponent(PaymentMethodSelector)
+    expect(selector.props('methods')).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'wallet', available: true })]))
+    selector.vm.$emit('select', 'wallet')
+    await flushPromises()
+    expect(wrapper.text()).toContain('payment.walletBalance')
+    const confirm = wrapper.findAll('button').find(button => button.text().includes('payment.walletPay'))
+    expect(confirm).toBeDefined()
+    await confirm!.trigger('click')
+    await flushPromises()
+
+    expect(createOrder).toHaveBeenCalledWith(expect.objectContaining({
+      order_type: 'subscription', payment_type: 'wallet', plan_id: plan.id,
+      idempotency_key: expect.any(String),
+    }))
+    expect(routerPush).toHaveBeenCalledWith({ path: '/payment/result', query: { order_id: '91' } })
+    expect(refreshUser).toHaveBeenCalled()
+    expect(fetchActiveSubscriptions).toHaveBeenCalled()
+  })
+
+  it('disables wallet payment when the balance cannot cover the plan', async () => {
+    const wrapper = await mountSubscriptionPlanList(1, 50)
+    wrapper.getComponent(SubscriptionPlanCard).vm.$emit('select', checkoutInfoWithPlansFixture().data.plans[0])
+    await flushPromises()
+    const selector = wrapper.getComponent(PaymentMethodSelector)
+    expect(selector.props('methods')).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'wallet', available: false })]))
+    expect(wrapper.text()).toContain('payment.walletInsufficient')
+  })
+
+  it('offers wallet checkout when no external gateway is configured', async () => {
+    const wrapper = await mountSubscriptionPlanList(1, 200, {})
+    wrapper.getComponent(SubscriptionPlanCard).vm.$emit('select', checkoutInfoWithPlansFixture().data.plans[0])
+    await flushPromises()
+    expect(wrapper.getComponent(PaymentMethodSelector).props('methods')).toEqual([
+      expect.objectContaining({ type: 'wallet', available: true }),
+    ])
+    expect(wrapper.text()).toContain('payment.walletPay')
+  })
+
+  it('reuses the wallet purchase key after an uncertain network failure', async () => {
+    const wrapper = await mountSubscriptionPlanList(1, 200)
+    wrapper.getComponent(SubscriptionPlanCard).vm.$emit('select', checkoutInfoWithPlansFixture().data.plans[0])
+    await flushPromises()
+    wrapper.getComponent(PaymentMethodSelector).vm.$emit('select', 'wallet')
+    await flushPromises()
+    createOrder.mockRejectedValueOnce(new Error('network')).mockResolvedValue({
+      order_id: 92, amount: 128, pay_amount: 128, status: 'COMPLETED', payment_type: 'wallet',
+    })
+    const confirm = wrapper.findAll('button').find(button => button.text().includes('payment.walletPay'))!
+    await confirm.trigger('click')
+    await flushPromises()
+    await confirm.trigger('click')
+    await flushPromises()
+    expect(createOrder).toHaveBeenCalledTimes(2)
+    expect(createOrder.mock.calls[0][0].idempotency_key).toBe(createOrder.mock.calls[1][0].idempotency_key)
   })
 })
 

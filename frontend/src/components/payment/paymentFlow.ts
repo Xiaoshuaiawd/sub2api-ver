@@ -131,9 +131,11 @@ export function buildCreateOrderPayload(input: BuildCreateOrderPayloadInput): Cr
     payment_type: visibleMethod,
     order_type: input.orderType,
     is_mobile: effectiveMobile,
-    payment_source: visibleMethod === 'wxpay' && input.isWechatBrowser
-      ? 'wechat_in_app_resume'
-      : 'hosted_redirect',
+    payment_source: visibleMethod === 'wallet'
+      ? 'wallet_balance'
+      : visibleMethod === 'wxpay' && input.isWechatBrowser
+        ? 'wechat_in_app_resume'
+        : 'hosted_redirect',
   }
 
   if (input.planId) {
