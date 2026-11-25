@@ -1401,6 +1401,15 @@ export default {
         pleaseEnterSessionKey: '请输入至少一个有效的 sessionKey',
         authFailed: '授权失败',
         cookieAuthFailed: 'Cookie 授权失败',
+        accessTokenAuth: '导入已有 Setup Token',
+        accessTokenDesc:
+          '粘贴 claude setup-token 命令生成的 token（sk-ant-oat01-...），直接创建账号，无需再走授权流程。',
+        accessTokenInputLabel: 'Setup Token',
+        accessTokenPlaceholder: 'sk-ant-oat01-...',
+        accessTokenHint:
+          '仅保存 access_token，不写入 refresh_token / expires_at；该 token 长期有效，无需自动续期。',
+        accessTokenImporting: '创建中...',
+        accessTokenImportAndCreate: '导入并创建账号',
         keyAuthFailed: '密钥 {index}: {error}',
         successCreated: '成功创建 {count} 个账号',
         batchSuccess: '成功创建 {count} 个账号',

@@ -88,13 +88,14 @@ const OAuthAuthorizationFlowStub = defineComponent({
   name: 'OAuthAuthorizationFlow',
   props: {
     showManualOption: Boolean,
+    showAccessTokenOption: Boolean,
     showCodexSessionImportOption: Boolean,
     showAgentIdentityOption: Boolean,
     showCodexPatOption: Boolean,
     initialInputMethod: String,
   },
   data: () => ({ inputMethod: 'manual' }),
-  emits: ['import-codex-session', 'import-codex-pat'],
+  emits: ['import-codex-session', 'import-codex-pat', 'import-access-token'],
   template: `
     <div>
       <button data-testid="import-codex-session" @click="$emit('import-codex-session', 'session-json')">session</button>
@@ -973,6 +974,39 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     await flushPromises()
 
     expect(createOpenAICodexPATMock.mock.calls[0]?.[0]?.extra?.openai_long_context_billing_enabled).toBe(false)
+  })
+
+  it('imports an existing Claude setup token without an OAuth authorization flow', async () => {
+    const wrapper = mountModal()
+    await wrapper.get('[data-tour="account-form-name"]').setValue('imported setup token')
+    await wrapper.get('input[type="radio"][value="setup-token"]').setChecked()
+    await wrapper.get('#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    const flow = wrapper.getComponent(OAuthAuthorizationFlowStub)
+    expect(flow.props('showAccessTokenOption')).toBe(true)
+
+    flow.vm.$emit('import-access-token', '  sk-ant-oat01-test-token  ')
+    await flushPromises()
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]).toMatchObject({
+      name: 'imported setup token',
+      platform: 'anthropic',
+      type: 'setup-token',
+      credentials: { access_token: 'sk-ant-oat01-test-token' }
+    })
+    expect(createAccountMock.mock.calls[0]?.[0]?.credentials).not.toHaveProperty('expires_at')
+    expect(createAccountMock.mock.calls[0]?.[0]?.credentials).not.toHaveProperty('refresh_token')
+  })
+
+  it('does not offer setup token import for the OAuth add method', async () => {
+    const wrapper = mountModal()
+    await wrapper.get('[data-tour="account-form-name"]').setValue('oauth account')
+    await wrapper.get('#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(wrapper.getComponent(OAuthAuthorizationFlowStub).props('showAccessTokenOption')).toBe(false)
   })
 })
 
