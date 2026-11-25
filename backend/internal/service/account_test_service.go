@@ -356,6 +356,25 @@ func createTestPayload(modelID string) (map[string]any, error) {
 	return payload, nil
 }
 
+// prepareClaudeOAuthTestPayload 让测试请求体与网关 OAuth mimic 路径一致。
+// Claude Code 的 OAuth 凭据（含 setup-token）只被上游认可为官方 CLI 流量；
+// 仅带 "You are Claude Code" prompt 而缺少 billing attribution block 会被判为
+// 第三方请求并返回 403 "Request not allowed"。
+func (s *AccountTestService) prepareClaudeOAuthTestPayload(ctx context.Context, payloadBytes []byte, modelID string) []byte {
+	injectionEnabled := true
+	expansionPrompt := ""
+	blocksConfig := ""
+	if s != nil && s.settingService != nil {
+		injectionEnabled, expansionPrompt, blocksConfig = s.settingService.GetClaudeOAuthSystemPromptInjectionSettings(ctx)
+	}
+	if injectionEnabled {
+		system := gjson.GetBytes(payloadBytes, "system").Value()
+		payloadBytes = rewriteSystemForNonClaudeCodeWithPromptBlocks(payloadBytes, system, expansionPrompt, blocksConfig)
+	}
+	normalized, _ := normalizeClaudeOAuthRequestBody(payloadBytes, modelID, claudeOAuthNormalizeOptions{})
+	return normalized
+}
+
 // TestAccountConnection tests an account's connection by sending a test request
 // All account types use full Claude Code client characteristics, only auth header differs
 // modelID is optional - if empty, defaults to claude.DefaultTestModel
@@ -568,6 +587,9 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 		return s.sendErrorAndEnd(c, "Failed to create test payload")
 	}
 	payloadBytes, _ := json.Marshal(payload)
+	if account.IsOAuth() {
+		payloadBytes = s.prepareClaudeOAuthTestPayload(ctx, payloadBytes, testModelID)
+	}
 
 	// Send test_start event
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
@@ -588,7 +610,10 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 
 	// Set authentication header
 	if account.IsOAuth() {
-		req.Header.Set("anthropic-beta", claude.DefaultBetaHeader)
+		// 测试请求与真实 OAuth 转发保持一致：Claude Code 会将 OAuth 凭据限定给
+		// 官方 CLI，缺少完整客户端指纹时上游会返回 403 "Request not allowed"。
+		applyClaudeCodeMimicHeaders(req, true, claude.DefaultHeaders()["User-Agent"])
+		req.Header.Set("anthropic-beta", strings.Join(claude.FullClaudeCodeMimicryBetas(), ","))
 		req.Header.Set("Authorization", "Bearer "+authToken)
 	} else {
 		req.Header.Set("anthropic-beta", claude.APIKeyBetaHeader)
@@ -625,7 +650,15 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 	}
 
 	// Process SSE stream
-	return s.processClaudeStream(c, resp.Body)
+	if err := s.processClaudeStream(c, resp.Body); err != nil {
+		return err
+	}
+	// 测试成功说明凭据可用：清除此前 401/403 测试写入的 error 状态，
+	// 避免账号在管理端测试通过后仍被调度排除。
+	if account.Status == StatusError && s.accountRepo != nil {
+		_ = s.accountRepo.ClearError(ctx, account.ID)
+	}
+	return nil
 }
 
 func (s *AccountTestService) testClaudeVertexServiceAccountConnection(c *gin.Context, ctx context.Context, account *Account, testModelID string) error {
